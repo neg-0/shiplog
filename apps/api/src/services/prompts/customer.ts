@@ -1,4 +1,4 @@
-import type { ReleaseInput } from '../types';
+import type { ReleaseInput } from '../generator';
 
 export function buildCustomerMessages(input: ReleaseInput) {
   const companyName = input.repoConfig.companyName || 'the team';
