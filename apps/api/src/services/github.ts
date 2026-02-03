@@ -92,7 +92,7 @@ export async function fetchReleaseData(
     throw new Error(`Failed to fetch release: ${releaseRes.status}`);
   }
   
-  const release: GitHubRelease = await releaseRes.json();
+  const release = (await releaseRes.json()) as GitHubRelease;
 
   // 2. Get previous release tag
   const releasesRes = await fetch(
@@ -100,7 +100,7 @@ export async function fetchReleaseData(
     { headers }
   );
   
-  const releases: GitHubRelease[] = await releasesRes.json();
+  const releases = (await releasesRes.json()) as GitHubRelease[];
   const currentIndex = releases.findIndex(r => r.tag_name === tagName);
   const previousTag = currentIndex < releases.length - 1 
     ? releases[currentIndex + 1]?.tag_name 
@@ -116,8 +116,8 @@ export async function fetchReleaseData(
     );
     
     if (compareRes.ok) {
-      const compareData = await compareRes.json();
-      commits = (compareData.commits || []).map((c: GitHubCommit) => ({
+      const compareData = (await compareRes.json()) as any;
+      commits = ((compareData.commits as GitHubCommit[]) || []).map((c: GitHubCommit) => ({
         sha: c.sha,
         message: c.commit.message,
         author: c.author?.login || c.commit.author.name,
@@ -139,7 +139,7 @@ export async function fetchReleaseData(
       );
       
       if (prRes.ok) {
-        const pr: GitHubPR = await prRes.json();
+        const pr = (await prRes.json()) as GitHubPR;
         pullRequests.push({
           number: pr.number,
           title: pr.title,
@@ -232,8 +232,8 @@ export async function createWebhook(
     throw new Error(`Failed to create webhook: ${response.status} ${error}`);
   }
 
-  const data = await response.json();
-  return { id: data.id };
+  const data = (await response.json()) as any;
+  return { id: data.id as number };
 }
 
 /**
@@ -281,7 +281,7 @@ export async function listUserRepos(
     throw new Error(`Failed to list repos: ${response.status}`);
   }
 
-  const repos = await response.json();
+  const repos = (await response.json()) as any[];
   
   return repos.map((r: any) => ({
     id: r.id,
