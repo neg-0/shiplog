@@ -1,12 +1,13 @@
 'use client';
 
+import { Suspense } from 'react';
 import { Ship, Settings, GitBranch, Bell, LogOut, Plus, Menu, X, Loader2, AlertCircle, RefreshCw } from 'lucide-react';
 import Link from 'next/link';
 import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { getRepos, setToken, isAuthenticated, clearToken, type Repo } from '../../lib/api';
 
-export default function DashboardPage() {
+function DashboardContent() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [repos, setRepos] = useState<Repo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -266,5 +267,17 @@ export default function DashboardPage() {
         </div>
       </main>
     </div>
+  );
+}
+
+export default function DashboardPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-navy-50 flex items-center justify-center">
+        <Loader2 className="w-8 h-8 text-teal-600 animate-spin" />
+      </div>
+    }>
+      <DashboardContent />
+    </Suspense>
   );
 }
