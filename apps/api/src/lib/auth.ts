@@ -78,8 +78,8 @@ export async function decrypt(encrypted: string): Promise<string> {
   }
 
   const [, ivStr, ciphertextStr] = parts;
-  const iv = base64UrlDecode(ivStr);
-  const ciphertext = base64UrlDecode(ciphertextStr);
+  const iv = base64UrlDecode(ivStr) as Uint8Array<ArrayBuffer>;
+  const ciphertext = base64UrlDecode(ciphertextStr) as Uint8Array<ArrayBuffer>;
 
   const key = await deriveAesKey();
   const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext);
