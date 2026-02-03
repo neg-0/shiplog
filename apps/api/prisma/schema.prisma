@@ -1,0 +1,288 @@
+// ShipLog Database Schema
+// PostgreSQL via Prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// USERS & AUTH
+// ============================================
+
+model User {
+  id              String   @id @default(cuid())
+  githubId        Int      @unique
+  login           String   // GitHub username
+  name            String?
+  email           String?
+  avatarUrl       String?
+  accessToken     String   // Encrypted GitHub access token
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  // Relations
+  repos           Repo[]
+  
+  @@map("users")
+}
+
+// ============================================
+// REPOSITORIES
+// ============================================
+
+model Repo {
+  id              String   @id @default(cuid())
+  githubId        Int      @unique
+  name            String   // e.g., "shiplog"
+  fullName        String   // e.g., "neg-0/shiplog"
+  owner           String   // e.g., "neg-0"
+  description     String?
+  defaultBranch   String   @default("main")
+  
+  // Webhook
+  webhookId       Int?     // GitHub webhook ID
+  webhookSecret   String?  // Secret for verifying webhook payloads
+  webhookActive   Boolean  @default(false)
+  
+  // Status
+  status          RepoStatus @default(PENDING)
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  // Relations
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  config          RepoConfig?
+  releases        Release[]
+  
+  @@map("repos")
+}
+
+enum RepoStatus {
+  PENDING    // Connected but not fully configured
+  ACTIVE     // Webhook active, ready to receive releases
+  PAUSED     // Temporarily disabled
+  ERROR      // Webhook or config error
+}
+
+// ============================================
+// REPO CONFIGURATION
+// ============================================
+
+model RepoConfig {
+  id              String   @id @default(cuid())
+  
+  // Generation settings
+  autoGenerate    Boolean  @default(true)    // Generate on release
+  autoPublish     Boolean  @default(false)   // Publish without review
+  
+  // Audience toggles
+  generateCustomer    Boolean @default(true)
+  generateDeveloper   Boolean @default(true)
+  generateStakeholder Boolean @default(true)
+  
+  // Tone/style preferences (for LLM prompts)
+  customerTone    String?  // e.g., "friendly", "professional"
+  companyName     String?  // For personalization
+  productName     String?
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  // Relations
+  repoId          String   @unique
+  repo            Repo     @relation(fields: [repoId], references: [id], onDelete: Cascade)
+  channels        Channel[]
+  emailRecipients EmailRecipient[]
+  
+  @@map("repo_configs")
+}
+
+// ============================================
+// DISTRIBUTION CHANNELS
+// ============================================
+
+model Channel {
+  id              String   @id @default(cuid())
+  
+  type            ChannelType
+  name            String   // User-friendly name, e.g., "#announcements"
+  webhookUrl      String   // Slack/Discord webhook URL
+  
+  // Which audience to send to this channel
+  audience        Audience @default(CUSTOMER)
+  
+  enabled         Boolean  @default(true)
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  // Relations
+  configId        String
+  config          RepoConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
+  distributions   Distribution[]
+  
+  @@map("channels")
+}
+
+enum ChannelType {
+  SLACK
+  DISCORD
+  WEBHOOK  // Generic webhook
+}
+
+enum Audience {
+  CUSTOMER
+  DEVELOPER
+  STAKEHOLDER
+}
+
+model EmailRecipient {
+  id              String   @id @default(cuid())
+  
+  email           String
+  name            String?
+  audience        Audience @default(STAKEHOLDER)
+  
+  enabled         Boolean  @default(true)
+  
+  createdAt       DateTime @default(now())
+  
+  // Relations
+  configId        String
+  config          RepoConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
+  distributions   Distribution[]
+  
+  @@map("email_recipients")
+}
+
+// ============================================
+// RELEASES
+// ============================================
+
+model Release {
+  id              String   @id @default(cuid())
+  
+  // GitHub release data
+  githubId        Int      @unique
+  tagName         String   // e.g., "v2.4.0"
+  name            String?  // Release title
+  body            String?  // Original release body from GitHub
+  htmlUrl         String   // Link to GitHub release
+  
+  // Metadata
+  isDraft         Boolean  @default(false)
+  isPrerelease    Boolean  @default(false)
+  publishedAt     DateTime?
+  
+  // Processing status
+  status          ReleaseStatus @default(PENDING)
+  processedAt     DateTime?
+  error           String?
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  // Relations
+  repoId          String
+  repo            Repo     @relation(fields: [repoId], references: [id], onDelete: Cascade)
+  notes           GeneratedNotes?
+  distributions   Distribution[]
+  
+  @@index([repoId, tagName])
+  @@map("releases")
+}
+
+enum ReleaseStatus {
+  PENDING      // Received, not yet processed
+  PROCESSING   // Currently generating notes
+  READY        // Notes generated, awaiting publish
+  PUBLISHED    // Distributed to channels
+  FAILED       // Generation or distribution failed
+  SKIPPED      // User skipped this release
+}
+
+// ============================================
+// GENERATED NOTES
+// ============================================
+
+model GeneratedNotes {
+  id              String   @id @default(cuid())
+  
+  // The three audience versions
+  customer        String   @db.Text  // Markdown
+  developer       String   @db.Text  // Markdown
+  stakeholder     String   @db.Text  // Markdown
+  
+  // Generation metadata
+  model           String?  // Which LLM model was used
+  promptVersion   String?  // Version of our prompt templates
+  tokensUsed      Int?
+  generationTimeMs Int?
+  
+  // User edits
+  customerEdited    Boolean @default(false)
+  developerEdited   Boolean @default(false)
+  stakeholderEdited Boolean @default(false)
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  // Relations
+  releaseId       String   @unique
+  release         Release  @relation(fields: [releaseId], references: [id], onDelete: Cascade)
+  
+  @@map("generated_notes")
+}
+
+// ============================================
+// DISTRIBUTION LOG
+// ============================================
+
+model Distribution {
+  id              String   @id @default(cuid())
+  
+  audience        Audience
+  
+  // Destination (one of these will be set)
+  channelId       String?
+  channel         Channel? @relation(fields: [channelId], references: [id], onDelete: SetNull)
+  
+  emailRecipientId String?
+  emailRecipient  EmailRecipient? @relation(fields: [emailRecipientId], references: [id], onDelete: SetNull)
+  
+  // For hosted changelog
+  hostedChangelog Boolean @default(false)
+  
+  // Status
+  status          DistributionStatus @default(PENDING)
+  sentAt          DateTime?
+  error           String?
+  
+  // Response data (for debugging)
+  responseCode    Int?
+  responseBody    String?
+  
+  createdAt       DateTime @default(now())
+  
+  // Relations
+  releaseId       String
+  release         Release  @relation(fields: [releaseId], references: [id], onDelete: Cascade)
+  
+  @@index([releaseId])
+  @@map("distributions")
+}
+
+enum DistributionStatus {
+  PENDING
+  SENT
+  FAILED
+  SKIPPED
+}
