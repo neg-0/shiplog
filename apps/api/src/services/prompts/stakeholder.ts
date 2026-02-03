@@ -1,4 +1,4 @@
-import type { ReleaseInput } from '../generator';
+import type { ReleaseInput } from '../types';
 
 export function buildStakeholderMessages(input: ReleaseInput) {
   const companyName = input.repoConfig.companyName || 'the team';
