@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { prisma } from '../lib/db.js';
 import { signToken } from '../lib/jwt.js';
+import { encrypt } from '../lib/auth.js';
 
 export const auth = new Hono();
 
@@ -8,34 +9,6 @@ const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID;
 const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET;
 const APP_URL = process.env.APP_URL || 'http://localhost:3000';
 const API_URL = process.env.API_URL || 'http://localhost:3001';
-const JWT_SECRET = process.env.JWT_SECRET;
-
-function base64UrlEncode(bytes: Uint8Array): string {
-  return Buffer.from(bytes)
-    .toString('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/g, '');
-}
-
-async function deriveAesKey(): Promise<CryptoKey> {
-  if (!JWT_SECRET) throw new Error('JWT_SECRET is not set');
-
-  // Derive a stable 256-bit key from JWT_SECRET
-  const secretBytes = new TextEncoder().encode(JWT_SECRET);
-  const hash = await crypto.subtle.digest('SHA-256', secretBytes);
-  return await crypto.subtle.importKey('raw', hash, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
-}
-
-async function encryptAccessToken(accessToken: string): Promise<string> {
-  const key = await deriveAesKey();
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const plaintext = new TextEncoder().encode(accessToken);
-  const ciphertext = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plaintext));
-
-  // Format: v1.<iv>.<ciphertext>
-  return `v1.${base64UrlEncode(iv)}.${base64UrlEncode(ciphertext)}`;
-}
 
 // Initiate GitHub OAuth
 auth.get('/github', (c) => {
@@ -128,7 +101,7 @@ auth.get('/github/callback', async (c) => {
     }
   }
 
-  const encryptedAccessToken = await encryptAccessToken(tokenData.access_token);
+  const encryptedAccessToken = await encrypt(tokenData.access_token);
 
   const dbUser = await prisma.user.upsert({
     where: { githubId: ghUser.id },

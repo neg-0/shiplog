@@ -1,10 +1,12 @@
 /**
- * Auth middleware for protected routes
+ * Auth middleware and token encryption utilities
  */
 
 import type { Context, Next } from 'hono';
 import { verifyToken } from './jwt.js';
 import { prisma } from './db.js';
+
+const JWT_SECRET = process.env.JWT_SECRET;
 
 // Extend Hono context with user
 declare module 'hono' {
@@ -17,6 +19,73 @@ declare module 'hono' {
     };
   }
 }
+
+// ============================================
+// ENCRYPTION UTILITIES
+// ============================================
+
+function base64UrlEncode(bytes: Uint8Array): string {
+  return Buffer.from(bytes)
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+}
+
+function base64UrlDecode(str: string): Uint8Array {
+  const base64 = str.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = base64.padEnd(base64.length + (4 - (base64.length % 4)) % 4, '=');
+  return new Uint8Array(Buffer.from(padded, 'base64'));
+}
+
+async function deriveAesKey(): Promise<CryptoKey> {
+  if (!JWT_SECRET) throw new Error('JWT_SECRET is not set');
+
+  // Derive a stable 256-bit key from JWT_SECRET
+  const secretBytes = new TextEncoder().encode(JWT_SECRET);
+  const hash = await crypto.subtle.digest('SHA-256', secretBytes);
+  return await crypto.subtle.importKey('raw', hash, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+}
+
+/**
+ * Encrypt a string (e.g., access token) using AES-GCM
+ * Returns: v1.<iv>.<ciphertext>
+ */
+export async function encrypt(plaintext: string): Promise<string> {
+  const key = await deriveAesKey();
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const plaintextBytes = new TextEncoder().encode(plaintext);
+  const ciphertext = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plaintextBytes));
+
+  return `v1.${base64UrlEncode(iv)}.${base64UrlEncode(ciphertext)}`;
+}
+
+/**
+ * Decrypt a string that was encrypted with encrypt()
+ */
+export async function decrypt(encrypted: string): Promise<string> {
+  if (!encrypted.startsWith('v1.')) {
+    throw new Error('Invalid encrypted format');
+  }
+
+  const parts = encrypted.split('.');
+  if (parts.length !== 3) {
+    throw new Error('Invalid encrypted format');
+  }
+
+  const [, ivStr, ciphertextStr] = parts;
+  const iv = base64UrlDecode(ivStr);
+  const ciphertext = base64UrlDecode(ciphertextStr);
+
+  const key = await deriveAesKey();
+  const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext);
+
+  return new TextDecoder().decode(decrypted);
+}
+
+// ============================================
+// AUTH MIDDLEWARE
+// ============================================
 
 /**
  * Middleware that requires a valid JWT token
