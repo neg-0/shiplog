@@ -1,0 +1,54 @@
+# ShipLog 🚢
+
+> Release notes that ship themselves — tailored for customers, developers, and execs — from your GitHub releases.
+
+## What is ShipLog?
+
+ShipLog connects to your GitHub repository and automatically generates **three versions** of your release notes whenever you publish a release:
+
+1. **Customer Changelog** — Feature-focused, benefit-driven, no jargon
+2. **Developer Changelog** — Technical details, breaking changes, migration notes
+3. **Stakeholder Brief** — Executive summary, shipped vs planned, impact
+
+Then it **distributes them automatically** to:
+- Slack / Discord channels
+- Email digests
+- Hosted changelog page at `shiplog.io/your-org`
+
+## Project Structure
+
+```
+shiplog/
+├── apps/
+│   ├── web/          # Next.js frontend (Vercel)
+│   └── api/          # Bun backend (Railway)
+├── packages/
+│   └── shared/       # Shared types and utilities
+└── docs/             # Documentation
+```
+
+## Tech Stack
+
+- **Frontend:** Next.js 14+ (App Router), TypeScript, Tailwind CSS
+- **Backend:** Bun + Hono, TypeScript
+- **Database:** PostgreSQL (Railway)
+- **Auth:** GitHub OAuth
+- **Hosting:** Vercel (frontend) + Railway (backend)
+
+## Getting Started
+
+```bash
+# Install dependencies
+pnpm install
+
+# Start development
+pnpm dev
+```
+
+## Status
+
+🚧 **Under Development** — MVP in progress
+
+## License
+
+MIT
