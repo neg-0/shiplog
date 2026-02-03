@@ -67,7 +67,7 @@ webhooks.post('/github', async (c) => {
       }
 
       // Decrypt the user's GitHub token
-      const accessToken = decrypt(connectedRepo.user.accessToken);
+      const accessToken = await decrypt(connectedRepo.user.accessToken);
 
       // Fetch detailed release data
       console.log(`📊 Fetching release data for ${repo.full_name}...`);

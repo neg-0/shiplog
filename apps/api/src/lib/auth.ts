@@ -35,7 +35,11 @@ function base64UrlEncode(bytes: Uint8Array): string {
 function base64UrlDecode(str: string): Uint8Array {
   const base64 = str.replace(/-/g, '+').replace(/_/g, '/');
   const padded = base64.padEnd(base64.length + (4 - (base64.length % 4)) % 4, '=');
-  return new Uint8Array(Buffer.from(padded, 'base64'));
+
+  // Buffer is a Uint8Array but its .buffer is typed as ArrayBufferLike.
+  // Normalize to a plain ArrayBuffer-backed Uint8Array for WebCrypto BufferSource types.
+  const buf = Buffer.from(padded, 'base64');
+  return new Uint8Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
 }
 
 async function deriveAesKey(): Promise<CryptoKey> {
