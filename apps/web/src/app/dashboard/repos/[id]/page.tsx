@@ -1,74 +1,71 @@
 'use client';
 
-import { Ship, Settings, GitBranch, Bell, LogOut, Menu, X, ArrowLeft, ExternalLink, Tag, Calendar, Users, Sparkles } from 'lucide-react';
+import { Ship, Settings, GitBranch, Bell, LogOut, Menu, X, ArrowLeft, ExternalLink, Tag, Users, Sparkles, Loader2, AlertCircle, Trash2 } from 'lucide-react';
 import Link from 'next/link';
-import { useState } from 'react';
-import { useParams } from 'next/navigation';
-
-const mockUser = {
-  name: 'Dustin',
-  avatar: 'https://github.com/neg-0.png',
-};
-
-// Mock repo data - in real app would fetch based on id
-const mockRepos: Record<string, {
-  id: string;
-  name: string;
-  fullName: string;
-  description: string;
-  lastRelease: string | null;
-  lastReleaseDate: string | null;
-  status: string;
-  releases: Array<{
-    version: string;
-    date: string;
-    changes: number;
-  }>;
-  audiences: string[];
-}> = {
-  '1': {
-    id: '1',
-    name: 'comp-iq',
-    fullName: 'neg-0/comp-iq',
-    description: 'Commercial real estate analytics platform',
-    lastRelease: 'v2.4.0',
-    lastReleaseDate: '2 days ago',
-    status: 'active',
-    releases: [
-      { version: 'v2.4.0', date: '2 days ago', changes: 5 },
-      { version: 'v2.3.0', date: '5 days ago', changes: 8 },
-      { version: 'v2.2.0', date: '2 weeks ago', changes: 12 },
-    ],
-    audiences: ['Developers', 'Product Managers', 'End Users'],
-  },
-  '2': {
-    id: '2',
-    name: 'shiplog',
-    fullName: 'neg-0/shiplog',
-    description: 'Multi-audience changelog SaaS',
-    lastRelease: null,
-    lastReleaseDate: null,
-    status: 'pending',
-    releases: [],
-    audiences: [],
-  },
-};
+import { useState, useEffect } from 'react';
+import { useParams, useRouter } from 'next/navigation';
+import { getRepo, disconnectRepo, isAuthenticated, type RepoDetail } from '../../../../lib/api';
 
 export default function RepoDetailPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const params = useParams();
-  const repoId = params.id as string;
+  const [repo, setRepo] = useState<RepoDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [disconnecting, setDisconnecting] = useState(false);
   
-  const repo = mockRepos[repoId] || {
-    id: repoId,
-    name: 'Unknown',
-    fullName: 'unknown/repo',
-    description: 'Repository not found',
-    lastRelease: null,
-    lastReleaseDate: null,
-    status: 'unknown',
-    releases: [],
-    audiences: [],
+  const params = useParams();
+  const router = useRouter();
+  const repoId = params.id as string;
+
+  useEffect(() => {
+    if (!isAuthenticated()) {
+      router.push('/login');
+      return;
+    }
+
+    const fetchRepo = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        const data = await getRepo(repoId);
+        setRepo(data);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to load repository');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchRepo();
+  }, [repoId, router]);
+
+  const handleDisconnect = async () => {
+    if (!confirm('Are you sure you want to disconnect this repository? This will remove the webhook and all release data.')) {
+      return;
+    }
+
+    try {
+      setDisconnecting(true);
+      await disconnectRepo(repoId);
+      router.push('/dashboard');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to disconnect repository');
+      setDisconnecting(false);
+    }
+  };
+
+  const formatRelativeDate = (dateStr: string | null) => {
+    if (!dateStr) return null;
+    const date = new Date(dateStr);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    
+    if (diffDays === 0) return 'today';
+    if (diffDays === 1) return 'yesterday';
+    if (diffDays < 7) return `${diffDays} days ago`;
+    if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
+    return `${Math.floor(diffDays / 30)} months ago`;
   };
 
   return (
@@ -136,12 +133,8 @@ export default function RepoDetailPage() {
 
         <div className="absolute bottom-6 left-6 right-6">
           <div className="flex items-center gap-3 px-4 py-3 bg-navy-800 rounded-lg">
-            <img 
-              src={mockUser.avatar} 
-              alt={mockUser.name}
-              className="w-8 h-8 rounded-full"
-            />
-            <span className="font-medium flex-1">{mockUser.name}</span>
+            <div className="w-8 h-8 rounded-full bg-navy-700" />
+            <span className="font-medium flex-1">User</span>
             <button className="text-navy-400 hover:text-white transition">
               <LogOut className="w-4 h-4" />
             </button>
@@ -161,124 +154,177 @@ export default function RepoDetailPage() {
             Back to Repositories
           </Link>
 
-          {/* Repo Header */}
-          <div className="bg-white rounded-xl p-4 lg:p-6 shadow-sm border border-navy-100 mb-6">
-            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-              <div className="flex items-center gap-4">
-                <div className="w-12 h-12 lg:w-16 lg:h-16 bg-navy-100 rounded-xl flex items-center justify-center flex-shrink-0">
-                  <GitBranch className="w-6 h-6 lg:w-8 lg:h-8 text-navy-600" />
-                </div>
-                <div>
-                  <h1 className="text-xl lg:text-2xl font-bold text-navy-900">{repo.fullName}</h1>
-                  <p className="text-navy-600">{repo.description}</p>
-                </div>
-              </div>
-              <div className="flex flex-col sm:flex-row gap-2">
-                <a 
-                  href={`https://github.com/${repo.fullName}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="px-4 py-2 text-sm text-navy-600 border border-navy-200 rounded-lg hover:bg-navy-50 transition flex items-center justify-center gap-2"
-                >
-                  <ExternalLink className="w-4 h-4" />
-                  View on GitHub
-                </a>
-                <button className="px-4 py-2 text-sm bg-teal-600 text-white rounded-lg hover:bg-teal-500 transition flex items-center justify-center gap-2">
-                  <Sparkles className="w-4 h-4" />
-                  Generate Changelog
-                </button>
+          {/* Loading */}
+          {loading && (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="w-8 h-8 text-teal-600 animate-spin" />
+            </div>
+          )}
+
+          {/* Error */}
+          {error && !loading && (
+            <div className="bg-red-50 border border-red-200 rounded-xl p-6 flex items-start gap-4">
+              <AlertCircle className="w-6 h-6 text-red-500 flex-shrink-0" />
+              <div className="flex-1">
+                <h3 className="font-semibold text-red-800">Error</h3>
+                <p className="text-red-600 mt-1">{error}</p>
               </div>
             </div>
-          </div>
+          )}
 
-          <div className="grid gap-6 lg:grid-cols-2">
-            {/* Releases */}
-            <div className="bg-white rounded-xl p-4 lg:p-6 shadow-sm border border-navy-100">
-              <div className="flex items-center gap-3 mb-4">
-                <Tag className="w-5 h-5 text-navy-600" />
-                <h2 className="text-lg font-semibold text-navy-900">Recent Releases</h2>
-              </div>
-              {repo.releases.length > 0 ? (
-                <div className="space-y-3">
-                  {repo.releases.map((release, idx) => (
-                    <div key={idx} className="flex items-center justify-between py-2 border-b border-navy-100 last:border-0">
-                      <div>
-                        <p className="font-medium text-navy-900">{release.version}</p>
-                        <p className="text-sm text-navy-500">{release.changes} changes</p>
+          {/* Repo Content */}
+          {repo && !loading && (
+            <>
+              {/* Repo Header */}
+              <div className="bg-white rounded-xl p-4 lg:p-6 shadow-sm border border-navy-100 mb-6">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 lg:w-16 lg:h-16 bg-navy-100 rounded-xl flex items-center justify-center flex-shrink-0">
+                      <GitBranch className="w-6 h-6 lg:w-8 lg:h-8 text-navy-600" />
+                    </div>
+                    <div>
+                      <h1 className="text-xl lg:text-2xl font-bold text-navy-900">{repo.fullName}</h1>
+                      <p className="text-navy-600">{repo.description || 'No description'}</p>
+                      <div className="flex items-center gap-2 mt-1">
+                        {repo.status === 'ACTIVE' ? (
+                          <span className="px-2 py-0.5 bg-teal-100 text-teal-700 text-xs font-medium rounded-full">
+                            Active
+                          </span>
+                        ) : repo.status === 'ERROR' ? (
+                          <span className="px-2 py-0.5 bg-red-100 text-red-700 text-xs font-medium rounded-full">
+                            Webhook Error
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-xs font-medium rounded-full">
+                            {repo.status}
+                          </span>
+                        )}
                       </div>
-                      <span className="text-sm text-navy-400">{release.date}</span>
                     </div>
-                  ))}
+                  </div>
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <a 
+                      href={`https://github.com/${repo.fullName}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-4 py-2 text-sm text-navy-600 border border-navy-200 rounded-lg hover:bg-navy-50 transition flex items-center justify-center gap-2"
+                    >
+                      <ExternalLink className="w-4 h-4" />
+                      View on GitHub
+                    </a>
+                    <button className="px-4 py-2 text-sm bg-teal-600 text-white rounded-lg hover:bg-teal-500 transition flex items-center justify-center gap-2">
+                      <Sparkles className="w-4 h-4" />
+                      Generate Changelog
+                    </button>
+                  </div>
                 </div>
-              ) : (
-                <p className="text-navy-500">No releases yet. Create your first release to get started.</p>
-              )}
-            </div>
-
-            {/* Audiences */}
-            <div className="bg-white rounded-xl p-4 lg:p-6 shadow-sm border border-navy-100">
-              <div className="flex items-center gap-3 mb-4">
-                <Users className="w-5 h-5 text-navy-600" />
-                <h2 className="text-lg font-semibold text-navy-900">Audiences</h2>
               </div>
-              {repo.audiences.length > 0 ? (
-                <div className="space-y-2">
-                  {repo.audiences.map((audience, idx) => (
-                    <div key={idx} className="px-3 py-2 bg-navy-50 rounded-lg text-navy-700">
-                      {audience}
+
+              <div className="grid gap-6 lg:grid-cols-2">
+                {/* Releases */}
+                <div className="bg-white rounded-xl p-4 lg:p-6 shadow-sm border border-navy-100">
+                  <div className="flex items-center gap-3 mb-4">
+                    <Tag className="w-5 h-5 text-navy-600" />
+                    <h2 className="text-lg font-semibold text-navy-900">Recent Releases</h2>
+                  </div>
+                  {repo.releases && repo.releases.length > 0 ? (
+                    <div className="space-y-3">
+                      {repo.releases.map((release) => (
+                        <div key={release.id} className="flex items-center justify-between py-2 border-b border-navy-100 last:border-0">
+                          <div>
+                            <p className="font-medium text-navy-900">{release.tagName}</p>
+                            <p className="text-sm text-navy-500">{release.name || 'No title'}</p>
+                          </div>
+                          <span className="text-sm text-navy-400">{formatRelativeDate(release.publishedAt)}</span>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                  <button className="w-full px-3 py-2 border border-dashed border-navy-300 rounded-lg text-navy-500 hover:border-teal-400 hover:text-teal-600 transition">
-                    + Add Audience
+                  ) : (
+                    <p className="text-navy-500">No releases yet. Create a GitHub release to see it here.</p>
+                  )}
+                </div>
+
+                {/* Config */}
+                <div className="bg-white rounded-xl p-4 lg:p-6 shadow-sm border border-navy-100">
+                  <div className="flex items-center gap-3 mb-4">
+                    <Users className="w-5 h-5 text-navy-600" />
+                    <h2 className="text-lg font-semibold text-navy-900">Audiences</h2>
+                  </div>
+                  {repo.config ? (
+                    <div className="space-y-2">
+                      {repo.config.generateCustomer && (
+                        <div className="px-3 py-2 bg-navy-50 rounded-lg text-navy-700">
+                          Customers
+                        </div>
+                      )}
+                      {repo.config.generateDeveloper && (
+                        <div className="px-3 py-2 bg-navy-50 rounded-lg text-navy-700">
+                          Developers
+                        </div>
+                      )}
+                      {repo.config.generateStakeholder && (
+                        <div className="px-3 py-2 bg-navy-50 rounded-lg text-navy-700">
+                          Stakeholders
+                        </div>
+                      )}
+                      <button className="w-full px-3 py-2 border border-dashed border-navy-300 rounded-lg text-navy-500 hover:border-teal-400 hover:text-teal-600 transition">
+                        + Configure Audiences
+                      </button>
+                    </div>
+                  ) : (
+                    <div>
+                      <p className="text-navy-500 mb-4">No configuration yet.</p>
+                      <button className="px-4 py-2 text-sm bg-navy-900 text-white rounded-lg hover:bg-navy-800 transition">
+                        Configure Audiences
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Stats */}
+                <div className="bg-white rounded-xl p-4 lg:p-6 shadow-sm border border-navy-100">
+                  <div className="flex items-center gap-3 mb-4">
+                    <Tag className="w-5 h-5 text-navy-600" />
+                    <h2 className="text-lg font-semibold text-navy-900">Stats</h2>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <p className="text-2xl font-bold text-navy-900">{repo.releases?.length || 0}</p>
+                      <p className="text-sm text-navy-500">Total Releases</p>
+                    </div>
+                    <div>
+                      <p className="text-2xl font-bold text-navy-900">
+                        {(repo.config?.generateCustomer ? 1 : 0) + 
+                         (repo.config?.generateDeveloper ? 1 : 0) + 
+                         (repo.config?.generateStakeholder ? 1 : 0)}
+                      </p>
+                      <p className="text-sm text-navy-500">Audiences</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Danger Zone */}
+                <div className="bg-white rounded-xl p-4 lg:p-6 shadow-sm border border-red-200">
+                  <h2 className="text-lg font-semibold text-red-600 mb-4">Danger Zone</h2>
+                  <p className="text-navy-600 text-sm mb-4">
+                    Disconnecting this repository will remove the webhook and delete all release data.
+                  </p>
+                  <button 
+                    onClick={handleDisconnect}
+                    disabled={disconnecting}
+                    className="px-4 py-2 text-sm text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition flex items-center gap-2 disabled:opacity-50"
+                  >
+                    {disconnecting ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Trash2 className="w-4 h-4" />
+                    )}
+                    Disconnect Repository
                   </button>
                 </div>
-              ) : (
-                <div>
-                  <p className="text-navy-500 mb-4">No audiences configured yet.</p>
-                  <button className="px-4 py-2 text-sm bg-navy-900 text-white rounded-lg hover:bg-navy-800 transition">
-                    Configure Audiences
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {/* Quick Stats */}
-            <div className="bg-white rounded-xl p-4 lg:p-6 shadow-sm border border-navy-100">
-              <div className="flex items-center gap-3 mb-4">
-                <Calendar className="w-5 h-5 text-navy-600" />
-                <h2 className="text-lg font-semibold text-navy-900">Stats</h2>
               </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <p className="text-2xl font-bold text-navy-900">{repo.releases.length}</p>
-                  <p className="text-sm text-navy-500">Total Releases</p>
-                </div>
-                <div>
-                  <p className="text-2xl font-bold text-navy-900">{repo.audiences.length}</p>
-                  <p className="text-sm text-navy-500">Audiences</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Settings */}
-            <div className="bg-white rounded-xl p-4 lg:p-6 shadow-sm border border-navy-100">
-              <div className="flex items-center gap-3 mb-4">
-                <Settings className="w-5 h-5 text-navy-600" />
-                <h2 className="text-lg font-semibold text-navy-900">Repository Settings</h2>
-              </div>
-              <div className="space-y-3">
-                <button className="w-full text-left px-4 py-3 bg-navy-50 rounded-lg text-navy-700 hover:bg-navy-100 transition">
-                  Webhook Configuration
-                </button>
-                <button className="w-full text-left px-4 py-3 bg-navy-50 rounded-lg text-navy-700 hover:bg-navy-100 transition">
-                  Changelog Templates
-                </button>
-                <button className="w-full text-left px-4 py-3 bg-navy-50 rounded-lg text-navy-700 hover:bg-navy-100 transition">
-                  Notification Settings
-                </button>
-              </div>
-            </div>
-          </div>
+            </>
+          )}
         </div>
       </main>
     </div>
