@@ -3,8 +3,8 @@
  */
 
 import type { Context, Next } from 'hono';
-import { verifyToken } from './jwt';
-import { prisma } from './db';
+import { verifyToken } from './jwt.js';
+import { prisma } from './db.js';
 
 // Extend Hono context with user
 declare module 'hono' {

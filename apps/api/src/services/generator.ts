@@ -4,7 +4,7 @@ import {
   buildCustomerMessages,
   buildDeveloperMessages,
   buildStakeholderMessages,
-} from './prompts';
+} from './prompts/index.js';
 
 export interface ReleaseInput {
   tagName: string;

@@ -1,3 +1,3 @@
-export { buildCustomerMessages } from './customer';
-export { buildDeveloperMessages } from './developer';
-export { buildStakeholderMessages } from './stakeholder';
+export { buildCustomerMessages } from './customer.js';
+export { buildDeveloperMessages } from './developer.js';
+export { buildStakeholderMessages } from './stakeholder.js';

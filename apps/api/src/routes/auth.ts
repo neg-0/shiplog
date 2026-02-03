@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
-import { prisma } from '../lib/db';
-import { signToken } from '../lib/jwt';
+import { prisma } from '../lib/db.js';
+import { signToken } from '../lib/jwt.js';
 
 export const auth = new Hono();
 

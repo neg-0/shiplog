@@ -1,11 +1,12 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
-import { webhooks } from './routes/webhooks';
-import { auth } from './routes/auth';
-import { repos } from './routes/repos';
-import { releases } from './routes/releases';
-import { health } from './routes/health';
+import { serve } from '@hono/node-server';
+import { webhooks } from './routes/webhooks.js';
+import { auth } from './routes/auth.js';
+import { repos } from './routes/repos.js';
+import { releases } from './routes/releases.js';
+import { health } from './routes/health.js';
 
 const app = new Hono();
 
@@ -37,7 +38,7 @@ const port = parseInt(process.env.PORT || '3001');
 
 console.log(`🚢 ShipLog API running on port ${port}`);
 
-export default {
-  port,
+serve({
   fetch: app.fetch,
-};
+  port,
+});
