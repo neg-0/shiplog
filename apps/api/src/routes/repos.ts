@@ -283,11 +283,7 @@ repos.patch('/:id/config', async (c) => {
 
   console.log(`📝 Updated config for repo ${id}`);
 
-  return c.json({
-    id: config.id,
-    repoId: config.repoId,
-    ...config,
-  });
+  return c.json(config);
 });
 
 // Disconnect a repo (remove webhook)
