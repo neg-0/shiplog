@@ -23,6 +23,7 @@ export default function RepoDetailPage() {
     enabled: true,
   });
   const [showWebhookHelp, setShowWebhookHelp] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState<{ channelId: string; name: string } | null>(null);
   
   const params = useParams();
   const router = useRouter();
@@ -104,8 +105,7 @@ export default function RepoDetailPage() {
   };
 
   const handleDeleteChannel = async (channelId: string) => {
-    if (!confirm('Delete this channel?')) return;
-
+    setDeleteConfirm(null);
     setChannelError(null);
     try {
       await deleteChannel(repoId, channelId);
@@ -273,10 +273,11 @@ export default function RepoDetailPage() {
                       <ExternalLink className="w-4 h-4" />
                       View on GitHub
                     </a>
-                    <button className="px-4 py-2 text-sm bg-teal-600 text-white rounded-lg hover:bg-teal-500 transition flex items-center justify-center gap-2">
+                    {/* TODO: Wire up Generate Changelog functionality */}
+                    {/* <button className="px-4 py-2 text-sm bg-teal-600 text-white rounded-lg hover:bg-teal-500 transition flex items-center justify-center gap-2">
                       <Sparkles className="w-4 h-4" />
                       Generate Changelog
-                    </button>
+                    </button> */}
                   </div>
                 </div>
               </div>
@@ -405,7 +406,7 @@ export default function RepoDetailPage() {
                         </select>
                       </div>
                     </div>
-                    <div className="grid gap-3 md:grid-cols-2">
+                    <div className="grid gap-3 md:grid-cols-2 items-end">
                       <div>
                         <label className="text-xs font-medium text-navy-500">Channel Name</label>
                         <input
@@ -451,7 +452,7 @@ export default function RepoDetailPage() {
                       channels.map((channel) => (
                         <div key={channel.id} className="border border-navy-100 rounded-lg p-4 bg-navy-50/50">
                           {/* Header row */}
-                          <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-center justify-between gap-3">
                             <div className="flex items-center gap-3">
                               {/* Platform icon */}
                               <div className={`w-10 h-10 rounded-lg flex items-center justify-center text-white text-sm font-bold flex-shrink-0 ${
@@ -461,22 +462,24 @@ export default function RepoDetailPage() {
                               </div>
                               <div>
                                 <p className="font-semibold text-navy-900">{channel.name}</p>
-                                <div className="flex items-center gap-2 mt-0.5">
-                                  <span className="text-xs text-navy-500">{channel.type === 'SLACK' ? 'Slack' : 'Discord'}</span>
-                                  <span className="text-navy-300">•</span>
-                                  <span className={`text-xs px-1.5 py-0.5 rounded-full ${
-                                    channel.audience === 'CUSTOMER' ? 'bg-blue-100 text-blue-700' :
-                                    channel.audience === 'DEVELOPER' ? 'bg-purple-100 text-purple-700' :
-                                    'bg-amber-100 text-amber-700'
-                                  }`}>
-                                    {channel.audience === 'CUSTOMER' ? 'Customer' : 
-                                     channel.audience === 'DEVELOPER' ? 'Developer' : 'Stakeholder'}
-                                  </span>
-                                </div>
+                                <p className="text-xs text-navy-500">{channel.type === 'SLACK' ? 'Slack' : 'Discord'}</p>
                               </div>
                             </div>
-                            {/* Status & Actions */}
-                            <div className="flex items-center gap-3">
+                            {/* Audience dropdown + Status + Actions */}
+                            <div className="flex items-center gap-2">
+                              <select
+                                value={channel.audience}
+                                onChange={(e) => handleUpdateChannel(channel.id, { audience: e.target.value as Channel['audience'] })}
+                                className={`text-xs px-2 py-1 rounded-full border-0 cursor-pointer font-medium ${
+                                  channel.audience === 'CUSTOMER' ? 'bg-blue-100 text-blue-700' :
+                                  channel.audience === 'DEVELOPER' ? 'bg-purple-100 text-purple-700' :
+                                  'bg-amber-100 text-amber-700'
+                                }`}
+                              >
+                                <option value="CUSTOMER">Customer</option>
+                                <option value="DEVELOPER">Developer</option>
+                                <option value="STAKEHOLDER">Stakeholder</option>
+                              </select>
                               <button
                                 onClick={() => handleUpdateChannel(channel.id, { enabled: !channel.enabled })}
                                 className={`px-2.5 py-1 rounded-full text-xs font-medium transition ${
@@ -488,7 +491,7 @@ export default function RepoDetailPage() {
                                 {channel.enabled ? '● Active' : '○ Paused'}
                               </button>
                               <button
-                                onClick={() => handleDeleteChannel(channel.id)}
+                                onClick={() => setDeleteConfirm({ channelId: channel.id, name: channel.name })}
                                 className="p-1.5 text-navy-400 hover:text-red-600 hover:bg-red-50 rounded transition"
                                 title="Remove channel"
                               >
@@ -496,53 +499,9 @@ export default function RepoDetailPage() {
                               </button>
                             </div>
                           </div>
-                          
-                          {/* Audience selector - expandable */}
-                          <div className="mt-3 pt-3 border-t border-navy-100">
-                            <div className="flex items-center gap-4">
-                              <label className="text-xs font-medium text-navy-500">Audience:</label>
-                              <div className="flex gap-1">
-                                {(['CUSTOMER', 'DEVELOPER', 'STAKEHOLDER'] as const).map((aud) => (
-                                  <button
-                                    key={aud}
-                                    onClick={() => handleUpdateChannel(channel.id, { audience: aud })}
-                                    className={`px-2.5 py-1 text-xs rounded-md transition ${
-                                      channel.audience === aud
-                                        ? 'bg-navy-900 text-white'
-                                        : 'bg-white border border-navy-200 text-navy-600 hover:border-navy-300'
-                                    }`}
-                                  >
-                                    {aud === 'CUSTOMER' ? 'Customer' : aud === 'DEVELOPER' ? 'Developer' : 'Stakeholder'}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-                          </div>
                         </div>
                       ))
                     )}
-                  </div>
-                </div>
-
-                {/* Stats */}
-                <div className="bg-white rounded-xl p-4 lg:p-6 shadow-sm border border-navy-100">
-                  <div className="flex items-center gap-3 mb-4">
-                    <Tag className="w-5 h-5 text-navy-600" />
-                    <h2 className="text-lg font-semibold text-navy-900">Stats</h2>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <p className="text-2xl font-bold text-navy-900">{repo.releases?.length || 0}</p>
-                      <p className="text-sm text-navy-500">Total Releases</p>
-                    </div>
-                    <div>
-                      <p className="text-2xl font-bold text-navy-900">
-                        {(repo.config?.generateCustomer ? 1 : 0) + 
-                         (repo.config?.generateDeveloper ? 1 : 0) + 
-                         (repo.config?.generateStakeholder ? 1 : 0)}
-                      </p>
-                      <p className="text-sm text-navy-500">Audiences</p>
-                    </div>
                   </div>
                 </div>
 
@@ -637,6 +596,40 @@ export default function RepoDetailPage() {
                 className="w-full px-4 py-2 bg-navy-900 text-white rounded-lg font-medium hover:bg-navy-800 transition"
               >
                 Got it!
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteConfirm && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setDeleteConfirm(null)}>
+          <div 
+            className="bg-white rounded-xl max-w-sm w-full shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-6">
+              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <Trash2 className="w-6 h-6 text-red-600" />
+              </div>
+              <h2 className="text-xl font-bold text-navy-900 text-center mb-2">Delete Channel</h2>
+              <p className="text-navy-600 text-center">
+                Are you sure you want to delete <strong>{deleteConfirm.name}</strong>? This action cannot be undone.
+              </p>
+            </div>
+            <div className="p-4 border-t border-navy-100 flex gap-3">
+              <button
+                onClick={() => setDeleteConfirm(null)}
+                className="flex-1 px-4 py-2 border border-navy-200 text-navy-600 rounded-lg font-medium hover:bg-navy-50 transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleDeleteChannel(deleteConfirm.channelId)}
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 transition"
+              >
+                Delete
               </button>
             </div>
           </div>
