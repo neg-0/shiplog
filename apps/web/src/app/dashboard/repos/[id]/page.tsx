@@ -540,7 +540,14 @@ export default function RepoDetailPage() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="p-6 border-b border-navy-100 flex items-center justify-between">
-              <h2 className="text-xl font-bold text-navy-900">How to Get a Webhook URL</h2>
+              <h2 className="text-xl font-bold text-navy-900 flex items-center gap-2">
+                <span className={`w-7 h-7 rounded flex items-center justify-center text-white text-sm font-bold ${
+                  channelForm.type === 'SLACK' ? 'bg-[#4A154B]' : 'bg-[#5865F2]'
+                }`}>
+                  {channelForm.type === 'SLACK' ? 'S' : 'D'}
+                </span>
+                {channelForm.type === 'SLACK' ? 'Slack' : 'Discord'} Webhook Setup
+              </h2>
               <button 
                 onClick={() => setShowWebhookHelp(false)}
                 className="text-navy-400 hover:text-navy-600 transition"
@@ -550,13 +557,9 @@ export default function RepoDetailPage() {
             </div>
             
             <div className="p-6 space-y-6">
-              {/* Slack Instructions */}
-              <div>
-                <h3 className="font-semibold text-navy-900 flex items-center gap-2 mb-3">
-                  <span className="w-6 h-6 bg-[#4A154B] rounded flex items-center justify-center text-white text-xs font-bold">S</span>
-                  Slack Webhook
-                </h3>
-                <ol className="text-sm text-navy-600 space-y-2 list-decimal list-inside">
+              {channelForm.type === 'SLACK' ? (
+                /* Slack Instructions */
+                <ol className="text-sm text-navy-600 space-y-3 list-decimal list-inside">
                   <li>Go to <a href="https://api.slack.com/apps" target="_blank" rel="noopener noreferrer" className="text-teal-600 hover:underline">api.slack.com/apps</a></li>
                   <li>Click <strong>Create New App</strong> → <strong>From scratch</strong></li>
                   <li>Name it (e.g., &quot;ShipLog&quot;) and select your workspace</li>
@@ -566,15 +569,9 @@ export default function RepoDetailPage() {
                   <li>Select the channel and click <strong>Allow</strong></li>
                   <li>Copy the webhook URL (starts with <code className="bg-navy-100 px-1 rounded">https://hooks.slack.com/services/...</code>)</li>
                 </ol>
-              </div>
-
-              {/* Discord Instructions */}
-              <div>
-                <h3 className="font-semibold text-navy-900 flex items-center gap-2 mb-3">
-                  <span className="w-6 h-6 bg-[#5865F2] rounded flex items-center justify-center text-white text-xs font-bold">D</span>
-                  Discord Webhook
-                </h3>
-                <ol className="text-sm text-navy-600 space-y-2 list-decimal list-inside">
+              ) : (
+                /* Discord Instructions */
+                <ol className="text-sm text-navy-600 space-y-3 list-decimal list-inside">
                   <li>Open Discord and go to your server</li>
                   <li>Right-click the channel → <strong>Edit Channel</strong></li>
                   <li>Go to <strong>Integrations</strong> → <strong>Webhooks</strong></li>
@@ -583,7 +580,7 @@ export default function RepoDetailPage() {
                   <li>Click <strong>Copy Webhook URL</strong></li>
                   <li>The URL looks like <code className="bg-navy-100 px-1 rounded">https://discord.com/api/webhooks/...</code></li>
                 </ol>
-              </div>
+              )}
 
               <div className="bg-teal-50 border border-teal-200 rounded-lg p-4">
                 <p className="text-sm text-teal-800">
