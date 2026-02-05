@@ -67,7 +67,8 @@ billing.post('/checkout', requireAuth, async (c) => {
 
   let customerId = dbUser.stripeCustomerId;
 
-  if (!customerId) {
+  // Helper to create a new Stripe customer
+  const createNewCustomer = async () => {
     const customer = await stripe.customers.create({
       email: dbUser.email ?? undefined,
       name: dbUser.name ?? dbUser.login,
@@ -76,32 +77,65 @@ billing.post('/checkout', requireAuth, async (c) => {
       },
     });
 
-    customerId = customer.id;
-
     await prisma.user.update({
       where: { id: dbUser.id },
-      data: { stripeCustomerId: customerId },
+      data: { stripeCustomerId: customer.id },
     });
+
+    return customer.id;
+  };
+
+  if (!customerId) {
+    customerId = await createNewCustomer();
   }
 
-  const session = await stripe.checkout.sessions.create({
-    mode: 'subscription',
-    customer: customerId,
-    line_items: [{ price: priceId, quantity: 1 }],
-    allow_promotion_codes: true,
-    subscription_data: {
-      trial_period_days: 14,
-    },
-    success_url: `${APP_URL}/dashboard/settings?checkout=success`,
-    cancel_url: `${APP_URL}/dashboard/settings?checkout=cancel`,
-    client_reference_id: dbUser.id,
-    metadata: {
-      userId: dbUser.id,
-      plan: plan.toUpperCase(),
-    },
-  });
+  // Try to create checkout session, handle stale customer IDs
+  try {
+    const session = await stripe.checkout.sessions.create({
+      mode: 'subscription',
+      customer: customerId,
+      line_items: [{ price: priceId, quantity: 1 }],
+      allow_promotion_codes: true,
+      subscription_data: {
+        trial_period_days: 14,
+      },
+      success_url: `${APP_URL}/dashboard/settings?checkout=success`,
+      cancel_url: `${APP_URL}/dashboard/settings?checkout=cancel`,
+      client_reference_id: dbUser.id,
+      metadata: {
+        userId: dbUser.id,
+        plan: plan.toUpperCase(),
+      },
+    });
 
-  return c.json({ url: session.url });
+    return c.json({ url: session.url });
+  } catch (error: unknown) {
+    // If customer doesn't exist (switched from live to test mode), create new one
+    if (error instanceof Error && error.message.includes('No such customer')) {
+      console.log(`⚠️ Stale customer ID ${customerId}, creating new customer...`);
+      customerId = await createNewCustomer();
+      
+      const session = await stripe.checkout.sessions.create({
+        mode: 'subscription',
+        customer: customerId,
+        line_items: [{ price: priceId, quantity: 1 }],
+        allow_promotion_codes: true,
+        subscription_data: {
+          trial_period_days: 14,
+        },
+        success_url: `${APP_URL}/dashboard/settings?checkout=success`,
+        cancel_url: `${APP_URL}/dashboard/settings?checkout=cancel`,
+        client_reference_id: dbUser.id,
+        metadata: {
+          userId: dbUser.id,
+          plan: plan.toUpperCase(),
+        },
+      });
+
+      return c.json({ url: session.url });
+    }
+    throw error;
+  }
 });
 
 billing.post('/portal', requireAuth, async (c) => {
