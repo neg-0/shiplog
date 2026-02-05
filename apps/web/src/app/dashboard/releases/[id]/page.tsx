@@ -1,9 +1,10 @@
 'use client';
 
-import { Ship, Settings, GitBranch, Bell, LogOut, Menu, X, ArrowLeft, ExternalLink, Tag, Loader2, AlertCircle, RefreshCw, Send, Edit3, Check, Copy, Eye, Code } from 'lucide-react';
+import { Ship, Settings, GitBranch, Bell, Menu, X, ArrowLeft, ExternalLink, Tag, Loader2, AlertCircle, RefreshCw, Send, Edit3, Check, Copy, Eye, Code } from 'lucide-react';
 import Link from 'next/link';
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import ReactMarkdown from 'react-markdown';
 import { getRelease, regenerateNotes, publishRelease, updateReleaseNotes, isAuthenticated, type Release } from '../../../../lib/api';
 
 type Tab = 'customer' | 'developer' | 'stakeholder';
@@ -115,17 +116,6 @@ export default function ReleaseDetailPage() {
       case 'FAILED': return 'bg-red-100 text-red-700';
       default: return 'bg-gray-100 text-gray-700';
     }
-  };
-
-  const renderMarkdown = (content: string) => {
-    return content
-      .replace(/^# (.+)$/gm, '<h1 class="text-2xl font-bold text-navy-900 mt-6 mb-3 first:mt-0">$1</h1>')
-      .replace(/^### (.+)$/gm, '<h3 class="text-lg font-semibold text-navy-900 mt-4 mb-2">$1</h3>')
-      .replace(/^## (.+)$/gm, '<h2 class="text-xl font-bold text-navy-900 mt-5 mb-2">$1</h2>')
-      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-      .replace(/`(.+?)`/g, '<code class="bg-navy-100 px-1 rounded text-sm">$1</code>')
-      .replace(/^- (.+)$/gm, '<li class="text-navy-700 ml-4">$1</li>')
-      .replace(/\n\n/g, '<br/><br/>');
   };
 
   const tabConfig = {
@@ -395,10 +385,11 @@ export default function ReleaseDetailPage() {
                         {release.notes[activeTab]}
                       </pre>
                     ) : (
-                      <div 
-                        className="prose prose-navy max-w-none"
-                        dangerouslySetInnerHTML={{ __html: renderMarkdown(release.notes[activeTab]) }}
-                      />
+                      <ReactMarkdown 
+                        className="prose prose-navy max-w-none prose-headings:text-navy-900 prose-p:text-navy-700 prose-li:text-navy-700 prose-strong:text-navy-900 prose-code:bg-navy-100 prose-code:px-1 prose-code:rounded prose-code:text-sm prose-code:before:content-none prose-code:after:content-none"
+                      >
+                        {release.notes[activeTab]}
+                      </ReactMarkdown>
                     )}
 
                     {/* Metadata */}
