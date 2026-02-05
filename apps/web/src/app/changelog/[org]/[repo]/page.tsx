@@ -1,12 +1,10 @@
 'use client';
 
-import { Ship, Calendar, Tag, ExternalLink, Loader2, AlertCircle, Users, GitBranch, Briefcase } from 'lucide-react';
+import { Ship, Calendar, Tag, ExternalLink, Loader2, AlertCircle } from 'lucide-react';
 import Link from 'next/link';
 import { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import { getChangelog, type Changelog } from '../../../../lib/api';
-
-type Audience = 'customer' | 'developer' | 'stakeholder';
 
 export default function ChangelogPage() {
   const params = useParams();
@@ -16,7 +14,6 @@ export default function ChangelogPage() {
   const [changelog, setChangelog] = useState<Changelog | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [audience, setAudience] = useState<Audience>('customer');
 
   useEffect(() => {
     const fetchChangelog = async () => {
@@ -37,13 +34,7 @@ export default function ChangelogPage() {
 
   const getNotesForAudience = (notes: Changelog['releases'][0]['notes']) => {
     if (!notes) return null;
-    return notes[audience];
-  };
-
-  const audienceConfig = {
-    customer: { icon: Users, label: 'Customer View', color: 'teal' },
-    developer: { icon: GitBranch, label: 'Developer View', color: 'blue' },
-    stakeholder: { icon: Briefcase, label: 'Stakeholder View', color: 'amber' },
+    return notes.customer;
   };
 
   if (loading) {
@@ -87,28 +78,9 @@ export default function ChangelogPage() {
             {changelog.productName || `${org}/${repo}`}
           </h1>
           <p className="text-navy-600">{changelog.description || 'Changelog and release notes'}</p>
-          
-          {/* Audience Tabs */}
-          <div className="flex flex-wrap gap-2 mt-6">
-            {(Object.keys(audienceConfig) as Audience[]).map((key) => {
-              const config = audienceConfig[key];
-              const Icon = config.icon;
-              const isActive = audience === key;
-              return (
-                <button
-                  key={key}
-                  onClick={() => setAudience(key)}
-                  className={`px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition ${
-                    isActive 
-                      ? 'bg-navy-900 text-white' 
-                      : 'bg-white text-navy-600 border border-navy-200 hover:border-navy-300'
-                  }`}
-                >
-                  <Icon className="w-4 h-4" />
-                  {config.label}
-                </button>
-              );
-            })}
+
+          <div className="mt-6 inline-flex items-center gap-2 rounded-full bg-teal-100 px-4 py-2 text-sm font-medium text-teal-700">
+            Customer Release Notes
           </div>
         </div>
       </header>

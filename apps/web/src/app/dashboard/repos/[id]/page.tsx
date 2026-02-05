@@ -2,9 +2,9 @@
 
 import { Ship, Settings, GitBranch, Bell, LogOut, Menu, X, ArrowLeft, ExternalLink, Tag, Users, Sparkles, Loader2, AlertCircle, Trash2 } from 'lucide-react';
 import Link from 'next/link';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type FormEvent } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { getRepo, disconnectRepo, isAuthenticated, type RepoDetail } from '../../../../lib/api';
+import { addChannel, deleteChannel, disconnectRepo, getRepo, isAuthenticated, updateChannel, type Channel, type RepoDetail } from '../../../../lib/api';
 
 export default function RepoDetailPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -12,6 +12,16 @@ export default function RepoDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [channels, setChannels] = useState<Channel[]>([]);
+  const [channelError, setChannelError] = useState<string | null>(null);
+  const [channelSaving, setChannelSaving] = useState(false);
+  const [channelForm, setChannelForm] = useState<Omit<Channel, 'id'>>({
+    type: 'SLACK',
+    name: '',
+    webhookUrl: '',
+    audience: 'CUSTOMER',
+    enabled: true,
+  });
   
   const params = useParams();
   const router = useRouter();
@@ -29,6 +39,7 @@ export default function RepoDetailPage() {
         setError(null);
         const data = await getRepo(repoId);
         setRepo(data);
+        setChannels(data.config?.channels ?? []);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load repository');
       } finally {
@@ -51,6 +62,55 @@ export default function RepoDetailPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to disconnect repository');
       setDisconnecting(false);
+    }
+  };
+
+  const handleAddChannel = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setChannelError(null);
+
+    if (!channelForm.webhookUrl || !channelForm.name) {
+      setChannelError('Name and webhook URL are required.');
+      return;
+    }
+
+    try {
+      setChannelSaving(true);
+      const created = await addChannel(repoId, channelForm);
+      setChannels((prev) => [created, ...prev]);
+      setChannelForm({
+        type: 'SLACK',
+        name: '',
+        webhookUrl: '',
+        audience: 'CUSTOMER',
+        enabled: true,
+      });
+    } catch (err) {
+      setChannelError(err instanceof Error ? err.message : 'Failed to add channel');
+    } finally {
+      setChannelSaving(false);
+    }
+  };
+
+  const handleUpdateChannel = async (channelId: string, updates: Partial<Channel>) => {
+    setChannelError(null);
+    try {
+      const updated = await updateChannel(repoId, channelId, updates);
+      setChannels((prev) => prev.map((channel) => (channel.id === channelId ? updated : channel)));
+    } catch (err) {
+      setChannelError(err instanceof Error ? err.message : 'Failed to update channel');
+    }
+  };
+
+  const handleDeleteChannel = async (channelId: string) => {
+    if (!confirm('Delete this channel?')) return;
+
+    setChannelError(null);
+    try {
+      await deleteChannel(repoId, channelId);
+      setChannels((prev) => prev.filter((channel) => channel.id !== channelId));
+    } catch (err) {
+      setChannelError(err instanceof Error ? err.message : 'Failed to delete channel');
     }
   };
 
@@ -293,6 +353,135 @@ export default function RepoDetailPage() {
                       </button>
                     </div>
                   )}
+                </div>
+
+                {/* Distribution Channels */}
+                <div className="bg-white rounded-xl p-4 lg:p-6 shadow-sm border border-navy-100">
+                  <div className="flex items-center gap-3 mb-4">
+                    <Bell className="w-5 h-5 text-navy-600" />
+                    <h2 className="text-lg font-semibold text-navy-900">Distribution Channels</h2>
+                  </div>
+
+                  {channelError && (
+                    <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700 mb-4">
+                      {channelError}
+                    </div>
+                  )}
+
+                  <form onSubmit={handleAddChannel} className="space-y-3">
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <div>
+                        <label className="text-xs font-medium text-navy-500">Type</label>
+                        <select
+                          value={channelForm.type}
+                          onChange={(event) =>
+                            setChannelForm((prev) => ({
+                              ...prev,
+                              type: event.target.value as Channel['type'],
+                            }))
+                          }
+                          className="mt-1 w-full rounded-lg border border-navy-200 px-3 py-2 text-sm"
+                        >
+                          <option value="SLACK">Slack</option>
+                          <option value="DISCORD">Discord</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium text-navy-500">Audience</label>
+                        <select
+                          value={channelForm.audience}
+                          onChange={(event) =>
+                            setChannelForm((prev) => ({
+                              ...prev,
+                              audience: event.target.value as Channel['audience'],
+                            }))
+                          }
+                          className="mt-1 w-full rounded-lg border border-navy-200 px-3 py-2 text-sm"
+                        >
+                          <option value="CUSTOMER">Customer</option>
+                          <option value="DEVELOPER">Developer</option>
+                          <option value="STAKEHOLDER">Stakeholder</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <div>
+                        <label className="text-xs font-medium text-navy-500">Channel Name</label>
+                        <input
+                          value={channelForm.name}
+                          onChange={(event) => setChannelForm((prev) => ({ ...prev, name: event.target.value }))}
+                          placeholder="#announcements"
+                          className="mt-1 w-full rounded-lg border border-navy-200 px-3 py-2 text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium text-navy-500">Webhook URL</label>
+                        <input
+                          value={channelForm.webhookUrl}
+                          onChange={(event) => setChannelForm((prev) => ({ ...prev, webhookUrl: event.target.value }))}
+                          placeholder="https://hooks.slack.com/..."
+                          className="mt-1 w-full rounded-lg border border-navy-200 px-3 py-2 text-sm"
+                        />
+                      </div>
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={channelSaving}
+                      className="w-full px-3 py-2 bg-navy-900 text-white rounded-lg text-sm font-medium hover:bg-navy-800 transition disabled:opacity-60"
+                    >
+                      {channelSaving ? 'Saving...' : 'Add Channel'}
+                    </button>
+                  </form>
+
+                  <div className="mt-6 space-y-3">
+                    {channels.length === 0 ? (
+                      <p className="text-sm text-navy-500">No channels configured yet.</p>
+                    ) : (
+                      channels.map((channel) => (
+                        <div key={channel.id} className="border border-navy-100 rounded-lg p-3">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className="font-medium text-navy-900">{channel.name}</p>
+                              <p className="text-xs text-navy-500">{channel.type} webhook</p>
+                            </div>
+                            <button
+                              onClick={() => handleDeleteChannel(channel.id)}
+                              className="text-xs text-red-600 hover:text-red-700"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                          <div className="mt-3 grid gap-3 md:grid-cols-2">
+                            <label className="flex items-center justify-between text-sm text-navy-600">
+                              <span>Enabled</span>
+                              <input
+                                type="checkbox"
+                                checked={channel.enabled}
+                                onChange={(event) => handleUpdateChannel(channel.id, { enabled: event.target.checked })}
+                                className="h-4 w-4 rounded border-navy-300 text-teal-600"
+                              />
+                            </label>
+                            <div>
+                              <label className="text-xs font-medium text-navy-500">Audience</label>
+                              <select
+                                value={channel.audience}
+                                onChange={(event) =>
+                                  handleUpdateChannel(channel.id, {
+                                    audience: event.target.value as Channel['audience'],
+                                  })
+                                }
+                                className="mt-1 w-full rounded-lg border border-navy-200 px-3 py-2 text-sm"
+                              >
+                                <option value="CUSTOMER">Customer</option>
+                                <option value="DEVELOPER">Developer</option>
+                                <option value="STAKEHOLDER">Stakeholder</option>
+                              </select>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
                 </div>
 
                 {/* Stats */}

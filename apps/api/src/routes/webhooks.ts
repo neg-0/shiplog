@@ -4,6 +4,7 @@ import { prisma } from '../lib/db.js';
 import { fetchReleaseData } from '../services/github.js';
 import { generateReleaseNotes } from '../services/generator.js';
 import { decrypt } from '../lib/auth.js';
+import { distributeReleaseWithResults, type DistributionTarget } from '../services/distributor.js';
 
 export const webhooks = new Hono();
 
@@ -52,7 +53,12 @@ webhooks.post('/github', async (c) => {
         },
         include: {
           user: true,
-          config: true,
+          config: {
+            include: {
+              channels: true,
+              emailRecipients: true,
+            },
+          },
         },
       });
 
@@ -135,8 +141,84 @@ webhooks.post('/github', async (c) => {
 
       console.log(`💾 Saved release: ${savedRelease.id}`);
 
-      // TODO: Distribute to configured channels (Slack, Discord, Email, etc.)
-      // This would be Phase 2 functionality
+      const distributionTargets: Array<DistributionTarget & {
+        channelId?: string;
+        emailRecipientId?: string;
+      }> = [];
+
+      const config = connectedRepo.config;
+
+      if (config?.channels?.length) {
+        for (const channel of config.channels) {
+          if (!channel.enabled) continue;
+          if (channel.type === 'WEBHOOK') continue;
+
+          const audience = channel.audience.toLowerCase() as DistributionTarget['audience'];
+          distributionTargets.push({
+            type: channel.type === 'SLACK' ? 'slack' : 'discord',
+            audience,
+            webhookUrl: channel.webhookUrl,
+            name: channel.name,
+            channelId: channel.id,
+          });
+        }
+      }
+
+      if (config?.emailRecipients?.length) {
+        for (const recipient of config.emailRecipients) {
+          if (!recipient.enabled) continue;
+          const audience = recipient.audience.toLowerCase() as DistributionTarget['audience'];
+          distributionTargets.push({
+            type: 'email',
+            audience,
+            email: recipient.email,
+            name: recipient.name ?? undefined,
+            emailRecipientId: recipient.id,
+          });
+        }
+      }
+
+      (['customer', 'developer', 'stakeholder'] as const).forEach((audience) => {
+        distributionTargets.push({
+          type: 'hosted',
+          audience,
+        });
+      });
+
+      console.log(`📤 Distributing release ${savedRelease.id} to ${distributionTargets.length} targets`);
+
+      const releaseWithRepo = {
+        ...savedRelease,
+        repo: {
+          fullName: connectedRepo.fullName,
+        },
+      };
+
+      const distributionResults = await distributeReleaseWithResults(
+        releaseWithRepo,
+        notes,
+        distributionTargets
+      );
+
+      await prisma.distribution.createMany({
+        data: distributionResults.map((result) => ({
+          releaseId: savedRelease.id,
+          audience: result.target.audience.toUpperCase() as 'CUSTOMER' | 'DEVELOPER' | 'STAKEHOLDER',
+          channelId: (result.target as { channelId?: string }).channelId ?? undefined,
+          emailRecipientId: (result.target as { emailRecipientId?: string }).emailRecipientId ?? undefined,
+          hostedChangelog: result.target.type === 'hosted',
+          status: result.success ? 'SENT' : 'FAILED',
+          sentAt: result.success ? new Date() : undefined,
+          error: result.success ? undefined : result.error,
+          responseCode: result.responseCode,
+          responseBody: result.success ? undefined : result.error,
+        })),
+      });
+
+      await prisma.release.update({
+        where: { id: savedRelease.id },
+        data: { status: 'PUBLISHED' },
+      });
 
       return c.json({
         status: 'processed',
@@ -144,6 +226,7 @@ webhooks.post('/github', async (c) => {
         repo: repo.full_name,
         releaseId: savedRelease.id,
         tokensUsed: notes.tokensUsed,
+        distributedTo: distributionResults.length,
       });
 
     } catch (error) {

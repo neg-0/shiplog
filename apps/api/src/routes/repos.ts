@@ -54,7 +54,12 @@ repos.get('/:id', async (c) => {
       userId: user.id,
     },
     include: {
-      config: true,
+      config: {
+        include: {
+          channels: true,
+          emailRecipients: true,
+        },
+      },
       releases: {
         orderBy: { publishedAt: 'desc' },
         take: 10,
@@ -302,6 +307,100 @@ repos.patch('/:id/config', async (c) => {
   console.log(`📝 Updated config for repo ${id}`);
 
   return c.json(config);
+});
+
+// Create a distribution channel
+repos.post('/:id/channels', async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  const body = await c.req.json() as {
+    type: 'SLACK' | 'DISCORD' | 'WEBHOOK';
+    name: string;
+    webhookUrl: string;
+    audience: 'CUSTOMER' | 'DEVELOPER' | 'STAKEHOLDER';
+    enabled?: boolean;
+  };
+
+  const repo = await prisma.repo.findFirst({
+    where: { id, userId: user.id },
+    include: { config: true },
+  });
+
+  if (!repo) {
+    return c.json({ error: 'Repository not found' }, 404);
+  }
+
+  const config = repo.config || await prisma.repoConfig.create({
+    data: { repoId: repo.id },
+  });
+
+  const channel = await prisma.channel.create({
+    data: {
+      configId: config.id,
+      type: body.type,
+      name: body.name,
+      webhookUrl: body.webhookUrl,
+      audience: body.audience,
+      enabled: body.enabled ?? true,
+    },
+  });
+
+  return c.json(channel, 201);
+});
+
+// Update a distribution channel
+repos.patch('/:id/channels/:channelId', async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  const channelId = c.req.param('channelId');
+  const body = await c.req.json() as {
+    name?: string;
+    webhookUrl?: string;
+    audience?: 'CUSTOMER' | 'DEVELOPER' | 'STAKEHOLDER';
+    enabled?: boolean;
+  };
+
+  const channel = await prisma.channel.findFirst({
+    where: {
+      id: channelId,
+      config: { repoId: id, repo: { userId: user.id } },
+    },
+  });
+
+  if (!channel) {
+    return c.json({ error: 'Channel not found' }, 404);
+  }
+
+  const updated = await prisma.channel.update({
+    where: { id: channelId },
+    data: body,
+  });
+
+  return c.json(updated);
+});
+
+// Delete a distribution channel
+repos.delete('/:id/channels/:channelId', async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  const channelId = c.req.param('channelId');
+
+  const channel = await prisma.channel.findFirst({
+    where: {
+      id: channelId,
+      config: { repoId: id, repo: { userId: user.id } },
+    },
+  });
+
+  if (!channel) {
+    return c.json({ error: 'Channel not found' }, 404);
+  }
+
+  await prisma.channel.delete({
+    where: { id: channelId },
+  });
+
+  return c.json({ deleted: true });
 });
 
 // Disconnect a repo (remove webhook)
