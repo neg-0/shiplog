@@ -1,10 +1,10 @@
 'use client';
 
-import { Ship, Settings, GitBranch, Bell, LogOut, Menu, X, ArrowLeft, ExternalLink, Tag, Users, Sparkles, Loader2, AlertCircle, Trash2, HelpCircle, Lock, Zap } from 'lucide-react';
+import { Ship, Settings, GitBranch, Bell, Menu, X, ArrowLeft, ExternalLink, Tag, Users, Loader2, AlertCircle, Trash2, HelpCircle, Lock, Zap, Plus } from 'lucide-react';
 import Link from 'next/link';
 import { useState, useEffect, type FormEvent } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { addChannel, deleteChannel, disconnectRepo, getRepo, isAuthenticated, updateChannel, type Channel, type RepoDetail } from '../../../../lib/api';
+import { addChannel, deleteChannel, disconnectRepo, getRepo, getUser, isAuthenticated, updateChannel, type Channel, type RepoDetail, type User } from '../../../../lib/api';
 
 export default function RepoDetailPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -26,10 +26,13 @@ export default function RepoDetailPage() {
   const [deleteConfirm, setDeleteConfirm] = useState<{ channelId: string; name: string } | null>(null);
   const [showAudienceModal, setShowAudienceModal] = useState(false);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [user, setUser] = useState<User | null>(null);
   
   const params = useParams();
   const router = useRouter();
   const repoId = params.id as string;
+
+  const isPro = user?.subscriptionTier === 'PRO' || user?.subscriptionTier === 'TEAM';
 
   useEffect(() => {
     if (!isAuthenticated()) {
@@ -37,13 +40,17 @@ export default function RepoDetailPage() {
       return;
     }
 
-    const fetchRepo = async () => {
+    const fetchData = async () => {
       try {
         setLoading(true);
         setError(null);
-        const data = await getRepo(repoId);
-        setRepo(data);
-        setChannels(data.config?.channels ?? []);
+        const [repoData, userData] = await Promise.all([
+          getRepo(repoId),
+          getUser()
+        ]);
+        setRepo(repoData);
+        setChannels(repoData.config?.channels ?? []);
+        setUser(userData);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load repository');
       } finally {
@@ -51,7 +58,7 @@ export default function RepoDetailPage() {
       }
     };
 
-    fetchRepo();
+    fetchData();
   }, [repoId, router]);
 
   const handleDisconnect = async () => {
@@ -346,10 +353,10 @@ export default function RepoDetailPage() {
                         </div>
                       )}
                       <button 
-                        onClick={() => setShowUpgradeModal(true)}
+                        onClick={() => isPro ? setShowAudienceModal(true) : setShowUpgradeModal(true)}
                         className="w-full px-3 py-2 border border-dashed border-navy-300 rounded-lg text-navy-500 hover:border-teal-400 hover:text-teal-600 transition flex items-center justify-center gap-2"
                       >
-                        <Lock className="w-4 h-4" />
+                        {isPro ? <Plus className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
                         + Add Custom Audience
                       </button>
                     </div>
@@ -357,7 +364,7 @@ export default function RepoDetailPage() {
                     <div>
                       <p className="text-navy-500 mb-4">No configuration yet.</p>
                       <button 
-                        onClick={() => setShowUpgradeModal(true)}
+                        onClick={() => isPro ? setShowAudienceModal(true) : setShowUpgradeModal(true)}
                         className="px-4 py-2 text-sm bg-navy-900 text-white rounded-lg hover:bg-navy-800 transition"
                       >
                         Configure Audiences

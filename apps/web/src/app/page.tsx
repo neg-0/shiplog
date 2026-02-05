@@ -1,12 +1,14 @@
 'use client';
 
 import Link from 'next/link';
-import { Ship, GitBranch, Users, Mail, Slack, Zap, ArrowRight, Check } from 'lucide-react';
+import { Ship, GitBranch, Users, Mail, Slack, Zap, ArrowRight, Check, LayoutDashboard } from 'lucide-react';
 import { createCheckoutSession, isAuthenticated } from '../lib/api';
 
 export default function Home() {
+  const loggedIn = isAuthenticated();
+
   const handleCheckout = async (plan: 'pro' | 'team') => {
-    if (!isAuthenticated()) {
+    if (!loggedIn) {
       window.location.href = '/login';
       return;
     }
@@ -34,13 +36,23 @@ export default function Home() {
               <Link href="#pricing" className="text-navy-600 hover:text-navy-900 transition">
                 Pricing
               </Link>
-              <Link 
-                href="/login" 
-                className="bg-navy-900 text-white px-4 py-2 rounded-lg hover:bg-navy-800 transition flex items-center gap-2"
-              >
-                <GitBranch className="w-4 h-4" />
-                Connect GitHub
-              </Link>
+              {loggedIn ? (
+                <Link 
+                  href="/dashboard" 
+                  className="bg-teal-600 text-white px-4 py-2 rounded-lg hover:bg-teal-500 transition flex items-center gap-2"
+                >
+                  <LayoutDashboard className="w-4 h-4" />
+                  Dashboard
+                </Link>
+              ) : (
+                <Link 
+                  href="/login" 
+                  className="bg-navy-900 text-white px-4 py-2 rounded-lg hover:bg-navy-800 transition flex items-center gap-2"
+                >
+                  <GitBranch className="w-4 h-4" />
+                  Connect GitHub
+                </Link>
+              )}
             </div>
           </div>
         </div>
@@ -64,11 +76,20 @@ export default function Home() {
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <Link 
-              href="/login"
+              href={loggedIn ? "/dashboard" : "/login"}
               className="bg-navy-900 text-white px-8 py-4 rounded-xl text-lg font-semibold hover:bg-navy-800 transition flex items-center justify-center gap-2 shadow-lg shadow-navy-900/20"
             >
-              <GitBranch className="w-5 h-5" />
-              Connect GitHub — Free
+              {loggedIn ? (
+                <>
+                  <LayoutDashboard className="w-5 h-5" />
+                  Go to Dashboard
+                </>
+              ) : (
+                <>
+                  <GitBranch className="w-5 h-5" />
+                  Connect GitHub — Free
+                </>
+              )}
             </Link>
             <Link 
               href="#features"
@@ -310,17 +331,29 @@ export default function Home() {
         <div className="max-w-4xl mx-auto px-4 text-center">
           <Ship className="w-16 h-16 mx-auto mb-6 text-teal-400" />
           <h2 className="text-3xl font-bold mb-4">
-            Ready to ship your release notes?
+            {loggedIn ? 'Your releases are waiting' : 'Ready to ship your release notes?'}
           </h2>
           <p className="text-navy-300 mb-8 max-w-xl mx-auto">
-            Connect your GitHub repo in under 2 minutes. Your next release will write itself.
+            {loggedIn 
+              ? 'Head to your dashboard to connect more repos or view your changelogs.'
+              : 'Connect your GitHub repo in under 2 minutes. Your next release will write itself.'
+            }
           </p>
           <Link 
-            href="/login"
+            href={loggedIn ? "/dashboard" : "/login"}
             className="inline-flex items-center gap-2 bg-teal-500 text-white px-8 py-4 rounded-xl text-lg font-semibold hover:bg-teal-400 transition shadow-lg"
           >
-            <GitBranch className="w-5 h-5" />
-            Connect GitHub — It's Free
+            {loggedIn ? (
+              <>
+                <LayoutDashboard className="w-5 h-5" />
+                Go to Dashboard
+              </>
+            ) : (
+              <>
+                <GitBranch className="w-5 h-5" />
+                Connect GitHub — It&apos;s Free
+              </>
+            )}
           </Link>
         </div>
       </section>

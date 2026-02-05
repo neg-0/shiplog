@@ -392,13 +392,10 @@ export default function ReleaseDetailPage() {
                       </ReactMarkdown>
                     )}
 
-                    {/* Metadata */}
-                    {release.notes.tokensUsed && (
-                      <div className="mt-6 pt-4 border-t border-navy-100 text-sm text-navy-400">
-                        Generated with {release.notes.model} · {release.notes.tokensUsed} tokens used
-                        {release.notes[`${activeTab}Edited` as keyof typeof release.notes] && (
-                          <span className="ml-2 text-amber-600">· Manually edited</span>
-                        )}
+                    {/* Metadata - only show edited status */}
+                    {release.notes[`${activeTab}Edited` as keyof typeof release.notes] && (
+                      <div className="mt-6 pt-4 border-t border-navy-100 text-sm text-amber-600">
+                        Manually edited
                       </div>
                     )}
                   </div>
