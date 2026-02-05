@@ -71,7 +71,7 @@ export default function Home() {
               Connect GitHub — Free
             </Link>
             <Link 
-              href="#demo"
+              href="#features"
               className="bg-white text-navy-900 px-8 py-4 rounded-xl text-lg font-semibold hover:bg-navy-50 transition border-2 border-navy-200 flex items-center justify-center gap-2"
             >
               See it in action
