@@ -449,44 +449,73 @@ export default function RepoDetailPage() {
                       <p className="text-sm text-navy-500">No channels configured yet.</p>
                     ) : (
                       channels.map((channel) => (
-                        <div key={channel.id} className="border border-navy-100 rounded-lg p-3">
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <p className="font-medium text-navy-900">{channel.name}</p>
-                              <p className="text-xs text-navy-500">{channel.type} webhook</p>
+                        <div key={channel.id} className="border border-navy-100 rounded-lg p-4 bg-navy-50/50">
+                          {/* Header row */}
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex items-center gap-3">
+                              {/* Platform icon */}
+                              <div className={`w-10 h-10 rounded-lg flex items-center justify-center text-white text-sm font-bold flex-shrink-0 ${
+                                channel.type === 'SLACK' ? 'bg-[#4A154B]' : 'bg-[#5865F2]'
+                              }`}>
+                                {channel.type === 'SLACK' ? 'S' : 'D'}
+                              </div>
+                              <div>
+                                <p className="font-semibold text-navy-900">{channel.name}</p>
+                                <div className="flex items-center gap-2 mt-0.5">
+                                  <span className="text-xs text-navy-500">{channel.type === 'SLACK' ? 'Slack' : 'Discord'}</span>
+                                  <span className="text-navy-300">•</span>
+                                  <span className={`text-xs px-1.5 py-0.5 rounded-full ${
+                                    channel.audience === 'CUSTOMER' ? 'bg-blue-100 text-blue-700' :
+                                    channel.audience === 'DEVELOPER' ? 'bg-purple-100 text-purple-700' :
+                                    'bg-amber-100 text-amber-700'
+                                  }`}>
+                                    {channel.audience === 'CUSTOMER' ? 'Customer' : 
+                                     channel.audience === 'DEVELOPER' ? 'Developer' : 'Stakeholder'}
+                                  </span>
+                                </div>
+                              </div>
                             </div>
-                            <button
-                              onClick={() => handleDeleteChannel(channel.id)}
-                              className="text-xs text-red-600 hover:text-red-700"
-                            >
-                              Remove
-                            </button>
-                          </div>
-                          <div className="mt-3 grid gap-3 md:grid-cols-2">
-                            <label className="flex items-center justify-between text-sm text-navy-600">
-                              <span>Enabled</span>
-                              <input
-                                type="checkbox"
-                                checked={channel.enabled}
-                                onChange={(event) => handleUpdateChannel(channel.id, { enabled: event.target.checked })}
-                                className="h-4 w-4 rounded border-navy-300 text-teal-600"
-                              />
-                            </label>
-                            <div>
-                              <label className="text-xs font-medium text-navy-500">Audience</label>
-                              <select
-                                value={channel.audience}
-                                onChange={(event) =>
-                                  handleUpdateChannel(channel.id, {
-                                    audience: event.target.value as Channel['audience'],
-                                  })
-                                }
-                                className="mt-1 w-full rounded-lg border border-navy-200 px-3 py-2 text-sm"
+                            {/* Status & Actions */}
+                            <div className="flex items-center gap-3">
+                              <button
+                                onClick={() => handleUpdateChannel(channel.id, { enabled: !channel.enabled })}
+                                className={`px-2.5 py-1 rounded-full text-xs font-medium transition ${
+                                  channel.enabled 
+                                    ? 'bg-teal-100 text-teal-700 hover:bg-teal-200' 
+                                    : 'bg-navy-100 text-navy-500 hover:bg-navy-200'
+                                }`}
                               >
-                                <option value="CUSTOMER">Customer</option>
-                                <option value="DEVELOPER">Developer</option>
-                                <option value="STAKEHOLDER">Stakeholder</option>
-                              </select>
+                                {channel.enabled ? '● Active' : '○ Paused'}
+                              </button>
+                              <button
+                                onClick={() => handleDeleteChannel(channel.id)}
+                                className="p-1.5 text-navy-400 hover:text-red-600 hover:bg-red-50 rounded transition"
+                                title="Remove channel"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
+                          
+                          {/* Audience selector - expandable */}
+                          <div className="mt-3 pt-3 border-t border-navy-100">
+                            <div className="flex items-center gap-4">
+                              <label className="text-xs font-medium text-navy-500">Audience:</label>
+                              <div className="flex gap-1">
+                                {(['CUSTOMER', 'DEVELOPER', 'STAKEHOLDER'] as const).map((aud) => (
+                                  <button
+                                    key={aud}
+                                    onClick={() => handleUpdateChannel(channel.id, { audience: aud })}
+                                    className={`px-2.5 py-1 text-xs rounded-md transition ${
+                                      channel.audience === aud
+                                        ? 'bg-navy-900 text-white'
+                                        : 'bg-white border border-navy-200 text-navy-600 hover:border-navy-300'
+                                    }`}
+                                  >
+                                    {aud === 'CUSTOMER' ? 'Customer' : aud === 'DEVELOPER' ? 'Developer' : 'Stakeholder'}
+                                  </button>
+                                ))}
+                              </div>
                             </div>
                           </div>
                         </div>
