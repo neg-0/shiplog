@@ -1,9 +1,9 @@
 'use client';
 
-import { Ship, Settings, GitBranch, Bell, LogOut, Menu, X, User, Palette, Key, Building, CreditCard } from 'lucide-react';
+import { Ship, Settings, GitBranch, Bell, LogOut, Menu, X, User, Key, CreditCard, AlertTriangle } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { clearToken, createCheckoutSession, createPortalSession, getUser, isAuthenticated, type User as UserType } from '../../../lib/api';
+import { clearToken, createCheckoutSession, createPortalSession, getUser, isAuthenticated, updateUser, deleteUser, type User as UserType } from '../../../lib/api';
 import { useRouter } from 'next/navigation';
 
 export default function SettingsPage() {
@@ -11,6 +11,16 @@ export default function SettingsPage() {
   const [user, setUser] = useState<UserType | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  
+  // Edit Profile State
+  const [displayName, setDisplayName] = useState('');
+  const [savingProfile, setSavingProfile] = useState(false);
+
+  // Delete Account State
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleteConfirmation, setDeleteConfirmation] = useState('');
+  const [isDeleting, setIsDeleting] = useState(false);
+
   const router = useRouter();
 
   useEffect(() => {
@@ -25,6 +35,7 @@ export default function SettingsPage() {
         setError(null);
         const data = await getUser();
         setUser(data);
+        setDisplayName(data.name || data.login || '');
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load user');
       } finally {
@@ -51,6 +62,37 @@ export default function SettingsPage() {
     const session = await createPortalSession();
     if (session.url) {
       window.location.href = session.url;
+    }
+  };
+
+  const handleSaveProfile = async () => {
+    setSavingProfile(true);
+    try {
+      await updateUser({ name: displayName });
+      // Refresh user data
+      const updated = await getUser();
+      setUser(updated);
+      alert('Profile updated successfully');
+    } catch (err) {
+      alert('Failed to update profile');
+      console.error(err);
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    if (deleteConfirmation !== 'DELETE') return;
+    
+    setIsDeleting(true);
+    try {
+      await deleteUser();
+      clearToken();
+      router.push('/');
+    } catch (err) {
+      alert('Failed to delete account');
+      console.error(err);
+      setIsDeleting(false);
     }
   };
 
@@ -192,88 +234,138 @@ export default function SettingsPage() {
                 </div>
               </div>
 
-              {/* Profile Section */}
+              {/* Edit Profile Section */}
+              <div className="bg-white rounded-xl p-4 lg:p-6 shadow-sm border border-navy-100">
+                <div className="flex items-center gap-3 mb-6">
+                  <User className="w-5 h-5 text-navy-600" />
+                  <h2 className="text-lg font-semibold text-navy-900">Edit Profile</h2>
+                </div>
+                
+                <div className="flex flex-col gap-6">
+                  <div className="flex items-center gap-4">
+                     <img 
+                      src={user.avatarUrl || 'https://github.com/github.png'}
+                      alt={user.name || user.login}
+                      className="w-16 h-16 rounded-full border border-navy-100"
+                    />
+                    <div>
+                      <p className="text-sm font-medium text-navy-900">Profile Picture</p>
+                      <p className="text-xs text-navy-500">Managed via GitHub</p>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-4 max-w-md">
+                    <div>
+                      <label className="block text-sm font-medium text-navy-700 mb-1">Display Name</label>
+                      <input
+                        type="text"
+                        value={displayName}
+                        onChange={(e) => setDisplayName(e.target.value)}
+                        className="w-full px-3 py-2 border border-navy-200 rounded-lg focus:outline-none focus:border-teal-500"
+                        placeholder="Your Name"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-navy-700 mb-1">Email</label>
+                      <input
+                        type="text"
+                        value={user.email || ''}
+                        readOnly
+                        className="w-full px-3 py-2 bg-navy-50 border border-navy-200 rounded-lg text-navy-500 cursor-not-allowed"
+                      />
+                      <p className="text-xs text-navy-400 mt-1">Managed via GitHub</p>
+                    </div>
+                  </div>
+
+                  <div>
+                    <button 
+                      onClick={handleSaveProfile}
+                      disabled={savingProfile}
+                      className="px-4 py-2 text-sm bg-navy-900 text-white rounded-lg hover:bg-navy-800 transition disabled:opacity-50"
+                    >
+                      {savingProfile ? 'Saving...' : 'Save Changes'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* API Keys Section */}
               <div className="bg-white rounded-xl p-4 lg:p-6 shadow-sm border border-navy-100">
                 <div className="flex items-center gap-3 mb-4">
-                  <User className="w-5 h-5 text-navy-600" />
-                  <h2 className="text-lg font-semibold text-navy-900">Profile</h2>
+                  <Key className="w-5 h-5 text-navy-600" />
+                  <h2 className="text-lg font-semibold text-navy-900">API Keys</h2>
                 </div>
-                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
-                  <img 
-                    src={user.avatarUrl || 'https://github.com/github.png'}
-                    alt={user.name || user.login}
-                    className="w-16 h-16 rounded-full"
-                  />
-                  <div className="flex-1">
-                    <p className="font-medium text-navy-900">{user.name || user.login}</p>
-                    <p className="text-sm text-navy-500">{user.email ?? 'No email on file'}</p>
+                <p className="text-navy-600 mb-4">Generate API keys to integrate ShipLog with your CI/CD pipeline.</p>
+                <button className="px-4 py-2 text-sm bg-teal-600 text-white rounded-lg hover:bg-teal-500 transition w-full sm:w-auto">
+                  Generate API Key
+                </button>
+              </div>
+
+              {/* Danger Zone */}
+              <div className="bg-white rounded-xl p-4 lg:p-6 shadow-sm border border-red-200">
+                <div className="flex items-center gap-3 mb-4">
+                  <AlertTriangle className="w-5 h-5 text-red-600" />
+                  <h2 className="text-lg font-semibold text-red-600">Danger Zone</h2>
+                </div>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div>
+                    <p className="font-medium text-navy-900">Delete Account</p>
+                    <p className="text-sm text-navy-500">Permanently delete your account and all data</p>
                   </div>
-                  <button className="px-4 py-2 text-sm text-navy-600 border border-navy-200 rounded-lg hover:bg-navy-50 transition w-full sm:w-auto">
-                    Edit Profile
+                  <button 
+                    onClick={() => setShowDeleteModal(true)}
+                    className="px-4 py-2 text-sm text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition w-full sm:w-auto"
+                  >
+                    Delete Account
                   </button>
                 </div>
               </div>
-
-            {/* Organization Section */}
-            <div className="bg-white rounded-xl p-4 lg:p-6 shadow-sm border border-navy-100">
-              <div className="flex items-center gap-3 mb-4">
-                <Building className="w-5 h-5 text-navy-600" />
-                <h2 className="text-lg font-semibold text-navy-900">Organization</h2>
-              </div>
-              <p className="text-navy-600 mb-4">Create an organization to collaborate with your team.</p>
-              <button className="px-4 py-2 text-sm bg-navy-900 text-white rounded-lg hover:bg-navy-800 transition w-full sm:w-auto">
-                Create Organization
-              </button>
             </div>
-
-            {/* Appearance Section */}
-            <div className="bg-white rounded-xl p-4 lg:p-6 shadow-sm border border-navy-100">
-              <div className="flex items-center gap-3 mb-4">
-                <Palette className="w-5 h-5 text-navy-600" />
-                <h2 className="text-lg font-semibold text-navy-900">Appearance</h2>
-              </div>
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div>
-                  <p className="font-medium text-navy-900">Theme</p>
-                  <p className="text-sm text-navy-500">Choose your preferred color scheme</p>
-                </div>
-                <select className="px-4 py-2 border border-navy-200 rounded-lg text-navy-900 bg-white w-full sm:w-auto">
-                  <option>System</option>
-                  <option>Light</option>
-                  <option>Dark</option>
-                </select>
-              </div>
-            </div>
-
-            {/* API Keys Section */}
-            <div className="bg-white rounded-xl p-4 lg:p-6 shadow-sm border border-navy-100">
-              <div className="flex items-center gap-3 mb-4">
-                <Key className="w-5 h-5 text-navy-600" />
-                <h2 className="text-lg font-semibold text-navy-900">API Keys</h2>
-              </div>
-              <p className="text-navy-600 mb-4">Generate API keys to integrate ShipLog with your CI/CD pipeline.</p>
-              <button className="px-4 py-2 text-sm bg-teal-600 text-white rounded-lg hover:bg-teal-500 transition w-full sm:w-auto">
-                Generate API Key
-              </button>
-            </div>
-
-            {/* Danger Zone */}
-            <div className="bg-white rounded-xl p-4 lg:p-6 shadow-sm border border-red-200">
-              <h2 className="text-lg font-semibold text-red-600 mb-4">Danger Zone</h2>
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div>
-                  <p className="font-medium text-navy-900">Delete Account</p>
-                  <p className="text-sm text-navy-500">Permanently delete your account and all data</p>
-                </div>
-                <button className="px-4 py-2 text-sm text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition w-full sm:w-auto">
-                  Delete Account
-                </button>
-              </div>
-            </div>
-          </div>
           )}
         </div>
       </main>
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteModal && (
+        <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl max-w-md w-full p-6 shadow-xl">
+            <h3 className="text-xl font-bold text-navy-900 mb-2">Delete Account?</h3>
+            <p className="text-navy-600 mb-6">
+              This action cannot be undone. This will permanently delete your account, repositories, and all release history.
+            </p>
+            
+            <label className="block text-sm font-medium text-navy-700 mb-2">
+              Type <span className="font-mono font-bold">DELETE</span> to confirm
+            </label>
+            <input
+              type="text"
+              value={deleteConfirmation}
+              onChange={(e) => setDeleteConfirmation(e.target.value)}
+              className="w-full px-3 py-2 border border-navy-200 rounded-lg focus:outline-none focus:border-red-500 mb-6"
+              placeholder="DELETE"
+            />
+
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  setShowDeleteModal(false);
+                  setDeleteConfirmation('');
+                }}
+                className="px-4 py-2 text-sm text-navy-600 hover:bg-navy-50 rounded-lg transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteAccount}
+                disabled={deleteConfirmation !== 'DELETE' || isDeleting}
+                className="px-4 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isDeleting ? 'Deleting...' : 'Delete Account'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

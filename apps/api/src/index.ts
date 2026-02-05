@@ -8,8 +8,10 @@ import { repos } from './routes/repos.js';
 import { releases } from './routes/releases.js';
 import { health } from './routes/health.js';
 import { changelog } from './routes/changelog.js';
+import { publicRoutes } from './routes/public.js';
 import { user } from './routes/user.js';
 import { billing } from './routes/billing.js';
+import { activity } from './routes/activity.js';
 
 const app = new Hono();
 
@@ -28,6 +30,8 @@ app.route('/repos', repos);
 app.route('/releases', releases);
 app.route('/user', user);
 app.route('/billing', billing);
+app.route('/activity', activity);
+app.route('/', publicRoutes);
 app.route('/changelog', changelog);
 
 // Root

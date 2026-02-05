@@ -77,6 +77,19 @@ export async function getUser(): Promise<User> {
   return fetchApi('/user/me');
 }
 
+export async function updateUser(data: { name?: string }): Promise<{ success: true }> {
+  return fetchApi('/user/me', {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteUser(): Promise<{ success: true }> {
+  return fetchApi('/user/me', {
+    method: 'DELETE',
+  });
+}
+
 // ============================================
 // BILLING
 // ============================================
@@ -275,6 +288,22 @@ export async function updateReleaseNotes(id: string, notes: Partial<Pick<Release
     method: 'PATCH',
     body: JSON.stringify(notes),
   });
+}
+
+export interface ActivityRelease {
+  id: string;
+  tagName: string;
+  name: string | null;
+  publishedAt: string | null;
+  htmlUrl: string;
+  repo: {
+    name: string;
+    owner: string;
+  }
+}
+
+export async function getActivity(): Promise<{ releases: ActivityRelease[] }> {
+  return fetchApi('/activity');
 }
 
 // ============================================
