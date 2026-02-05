@@ -121,7 +121,7 @@ export default function ReleaseDetailPage() {
     return content
       .replace(/^# (.+)$/gm, '<h1 class="text-2xl font-bold text-navy-900 mt-6 mb-3 first:mt-0">$1</h1>')
       .replace(/^### (.+)$/gm, '<h3 class="text-lg font-semibold text-navy-900 mt-4 mb-2">$1</h3>')
-      .replace(/^## (.+)$/gm, '<h2 class="text-xl font-bold text-navy-900 mt-6 mb-3">$2</h2>')
+      .replace(/^## (.+)$/gm, '<h2 class="text-xl font-bold text-navy-900 mt-5 mb-2">$1</h2>')
       .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
       .replace(/`(.+?)`/g, '<code class="bg-navy-100 px-1 rounded text-sm">$1</code>')
       .replace(/^- (.+)$/gm, '<li class="text-navy-700 ml-4">$1</li>')
