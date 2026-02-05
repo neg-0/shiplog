@@ -1,14 +1,16 @@
 /**
  * ShipLog Distribution Service
- * Sends generated notes to configured channels (Slack, Discord, Email)
+ * Sends generated notes to configured channels (Slack, Discord, Email, Hosted)
  */
 
-import type { Audience } from '@prisma/client';
+import type { Release } from '@prisma/client';
+import type { GeneratedNotes } from './generator.js';
 
-interface DistributionTarget {
-  type: 'slack' | 'discord' | 'email' | 'webhook';
-  audience: Audience;
-  destination: string; // webhook URL or email address
+export interface DistributionTarget {
+  type: 'slack' | 'discord' | 'email' | 'hosted';
+  audience: 'customer' | 'developer' | 'stakeholder';
+  webhookUrl?: string; // For Slack/Discord
+  email?: string; // For email
   name?: string;
 }
 
@@ -23,7 +25,7 @@ interface DistributionPayload {
   };
 }
 
-interface DistributionResult {
+export interface DistributionResult {
   target: DistributionTarget;
   success: boolean;
   error?: string;
@@ -31,14 +33,57 @@ interface DistributionResult {
 }
 
 /**
+ * Distribute release notes to all configured targets
+ */
+export async function distributeRelease(
+  release: Release & { repo?: { fullName: string } },
+  notes: GeneratedNotes,
+  targets: DistributionTarget[]
+): Promise<void> {
+  await distributeReleaseWithResults(release, notes, targets);
+}
+
+export async function distributeReleaseWithResults(
+  release: Release & { repo?: { fullName: string } },
+  notes: GeneratedNotes,
+  targets: DistributionTarget[]
+): Promise<DistributionResult[]> {
+  const payload: DistributionPayload = {
+    repoFullName: release.repo?.fullName ?? 'unknown',
+    tagName: release.tagName,
+    releaseUrl: release.htmlUrl,
+    notes: {
+      customer: notes.customer,
+      developer: notes.developer,
+      stakeholder: notes.stakeholder,
+    },
+  };
+
+  const results = await Promise.allSettled(
+    targets.map((target) => distributeToTarget(target, payload))
+  );
+
+  return results.map((result, index) => {
+    if (result.status === 'fulfilled') {
+      return result.value;
+    }
+    return {
+      target: targets[index],
+      success: false,
+      error: result.reason?.message || 'Promise rejected',
+    };
+  });
+}
+
+/**
  * Distribute release notes to a single target
  */
-export async function distributeToTarget(
+async function distributeToTarget(
   target: DistributionTarget,
   payload: DistributionPayload
 ): Promise<DistributionResult> {
   const notes = getNotesForAudience(payload.notes, target.audience);
-  
+
   try {
     switch (target.type) {
       case 'slack':
@@ -47,8 +92,12 @@ export async function distributeToTarget(
         return await sendToDiscord(target, payload, notes);
       case 'email':
         return await sendEmail(target, payload, notes);
-      case 'webhook':
-        return await sendToWebhook(target, payload, notes);
+      case 'hosted':
+        return {
+          target,
+          success: true,
+          responseCode: 204,
+        };
       default:
         return { target, success: false, error: 'Unknown target type' };
     }
@@ -61,43 +110,20 @@ export async function distributeToTarget(
   }
 }
 
-/**
- * Distribute to all configured targets
- */
-export async function distributeToAll(
-  targets: DistributionTarget[],
-  payload: DistributionPayload
-): Promise<DistributionResult[]> {
-  const results = await Promise.allSettled(
-    targets.map(target => distributeToTarget(target, payload))
-  );
-  
-  return results.map((result, i) => {
-    if (result.status === 'fulfilled') {
-      return result.value;
-    }
-    return {
-      target: targets[i],
-      success: false,
-      error: result.reason?.message || 'Promise rejected',
-    };
-  });
-}
-
 // ============================================
 // HELPER FUNCTIONS
 // ============================================
 
 function getNotesForAudience(
   notes: DistributionPayload['notes'],
-  audience: Audience
+  audience: DistributionTarget['audience']
 ): string {
   switch (audience) {
-    case 'CUSTOMER':
+    case 'customer':
       return notes.customer;
-    case 'DEVELOPER':
+    case 'developer':
       return notes.developer;
-    case 'STAKEHOLDER':
+    case 'stakeholder':
       return notes.stakeholder;
     default:
       return notes.customer;
@@ -113,6 +139,10 @@ async function sendToSlack(
   payload: DistributionPayload,
   notes: string
 ): Promise<DistributionResult> {
+  if (!target.webhookUrl) {
+    return { target, success: false, error: 'Missing webhookUrl' };
+  }
+
   const slackPayload = {
     text: `🚀 New Release: ${payload.repoFullName} ${payload.tagName}`,
     blocks: [
@@ -143,7 +173,7 @@ async function sendToSlack(
     ],
   };
 
-  const response = await fetch(target.destination, {
+  const response = await fetch(target.webhookUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(slackPayload),
@@ -171,13 +201,17 @@ async function sendToDiscord(
   payload: DistributionPayload,
   notes: string
 ): Promise<DistributionResult> {
-  // Discord webhook format
+  if (!target.webhookUrl) {
+    return { target, success: false, error: 'Missing webhookUrl' };
+  }
+
   const discordPayload = {
+    content: `🚀 ${payload.repoFullName} ${payload.tagName} released`,
     embeds: [
       {
-        title: `🚀 ${payload.tagName} Released`,
+        title: `${payload.tagName} Released`,
         description: truncateForDiscord(notes),
-        color: 0x27ab83, // Teal color
+        color: 0x27ab83,
         footer: {
           text: payload.repoFullName,
         },
@@ -187,7 +221,7 @@ async function sendToDiscord(
     ],
   };
 
-  const response = await fetch(target.destination, {
+  const response = await fetch(target.webhookUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(discordPayload),
@@ -215,8 +249,12 @@ async function sendEmail(
   payload: DistributionPayload,
   notes: string
 ): Promise<DistributionResult> {
+  if (!target.email) {
+    return { target, success: false, error: 'Missing email' };
+  }
+
   const resendApiKey = process.env.RESEND_API_KEY;
-  
+
   if (!resendApiKey) {
     return {
       target,
@@ -225,21 +263,22 @@ async function sendEmail(
     };
   }
 
-  const audienceLabel = target.audience === 'STAKEHOLDER' 
-    ? 'Stakeholder Brief' 
-    : target.audience === 'DEVELOPER' 
-    ? 'Developer Notes' 
-    : 'Release Notes';
+  const audienceLabel =
+    target.audience === 'stakeholder'
+      ? 'Stakeholder Brief'
+      : target.audience === 'developer'
+        ? 'Developer Notes'
+        : 'Release Notes';
 
   const response = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${resendApiKey}`,
+      Authorization: `Bearer ${resendApiKey}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
       from: 'ShipLog <releases@shiplog.io>',
-      to: target.destination,
+      to: target.email,
       subject: `[${payload.repoFullName}] ${payload.tagName} - ${audienceLabel}`,
       html: markdownToHtml(notes, payload),
     }),
@@ -256,8 +295,6 @@ async function sendEmail(
 }
 
 function markdownToHtml(markdown: string, payload: DistributionPayload): string {
-  // Basic markdown to HTML conversion
-  // In production, use a proper markdown library
   let html = markdown
     .replace(/^### (.+)$/gm, '<h3 style="color: #102a43; margin-top: 16px;">$1</h3>')
     .replace(/^## (.+)$/gm, '<h2 style="color: #102a43; margin-top: 20px;">$1</h2>')
@@ -276,43 +313,10 @@ function markdownToHtml(markdown: string, payload: DistributionPayload): string 
         ${html}
         <hr style="margin: 24px 0; border: none; border-top: 1px solid #e2e8f0;">
         <p style="color: #627d98; font-size: 14px;">
-          <a href="${payload.releaseUrl}" style="color: #27ab83;">View on GitHub</a> • 
+          <a href="${payload.releaseUrl}" style="color: #27ab83;">View on GitHub</a> •
           Powered by <a href="https://shiplog.io" style="color: #27ab83;">ShipLog</a>
         </p>
       </div>
     </div>
   `;
-}
-
-// ============================================
-// GENERIC WEBHOOK
-// ============================================
-
-async function sendToWebhook(
-  target: DistributionTarget,
-  payload: DistributionPayload,
-  notes: string
-): Promise<DistributionResult> {
-  const webhookPayload = {
-    event: 'release.published',
-    repo: payload.repoFullName,
-    tag: payload.tagName,
-    url: payload.releaseUrl,
-    audience: target.audience.toLowerCase(),
-    notes: notes,
-    timestamp: new Date().toISOString(),
-  };
-
-  const response = await fetch(target.destination, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(webhookPayload),
-  });
-
-  return {
-    target,
-    success: response.ok,
-    responseCode: response.status,
-    error: response.ok ? undefined : await response.text(),
-  };
 }

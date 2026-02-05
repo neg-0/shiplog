@@ -84,6 +84,15 @@ export interface Repo {
   lastReleaseDate: string | null;
 }
 
+export interface Channel {
+  id: string;
+  type: 'SLACK' | 'DISCORD' | 'WEBHOOK';
+  name: string;
+  webhookUrl: string;
+  audience: 'CUSTOMER' | 'DEVELOPER' | 'STAKEHOLDER';
+  enabled: boolean;
+}
+
 export interface RepoDetail extends Repo {
   owner: string;
   webhookActive: boolean;
@@ -96,6 +105,7 @@ export interface RepoDetail extends Repo {
     customerTone: string | null;
     companyName: string | null;
     productName: string | null;
+    channels?: Channel[];
   } | null;
   releases: Array<{
     id: string;
@@ -149,6 +159,33 @@ export async function updateRepoConfig(id: string, config: Partial<RepoDetail['c
   return fetchApi(`/repos/${id}/config`, {
     method: 'PATCH',
     body: JSON.stringify(config),
+  });
+}
+
+export async function addChannel(
+  repoId: string,
+  channel: Omit<Channel, 'id'>
+): Promise<Channel> {
+  return fetchApi(`/repos/${repoId}/channels`, {
+    method: 'POST',
+    body: JSON.stringify(channel),
+  });
+}
+
+export async function updateChannel(
+  repoId: string,
+  channelId: string,
+  updates: Partial<Omit<Channel, 'id'>>
+): Promise<Channel> {
+  return fetchApi(`/repos/${repoId}/channels/${channelId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(updates),
+  });
+}
+
+export async function deleteChannel(repoId: string, channelId: string): Promise<void> {
+  return fetchApi(`/repos/${repoId}/channels/${channelId}`, {
+    method: 'DELETE',
   });
 }
 
