@@ -89,6 +89,9 @@ billing.post('/checkout', requireAuth, async (c) => {
     customer: customerId,
     line_items: [{ price: priceId, quantity: 1 }],
     allow_promotion_codes: true,
+    subscription_data: {
+      trial_period_days: 14,
+    },
     success_url: `${APP_URL}/dashboard/settings?checkout=success`,
     cancel_url: `${APP_URL}/dashboard/settings?checkout=cancel`,
     client_reference_id: dbUser.id,

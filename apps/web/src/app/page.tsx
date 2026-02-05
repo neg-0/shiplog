@@ -219,6 +219,7 @@ export default function Home() {
                 price: '$29',
                 period: '/mo',
                 description: 'For growing teams',
+                trial: '14-day free trial',
                 features: ['5 repos', 'Auto-trigger on release', 'Slack + Discord', 'Email digests', 'Edit before publish'],
                 cta: 'Start Free Trial',
                 highlighted: true,
@@ -251,6 +252,11 @@ export default function Home() {
                 <p className={`text-sm mb-6 ${plan.highlighted ? 'text-navy-300' : 'text-navy-500'}`}>
                   {plan.description}
                 </p>
+                {plan.trial && (
+                  <div className="mb-4 inline-block bg-teal-500/20 text-teal-400 text-xs font-semibold px-3 py-1 rounded-full">
+                    ✨ {plan.trial}
+                  </div>
+                )}
                 <ul className="space-y-3 mb-6">
                   {plan.features.map((feature) => (
                     <li key={feature} className="flex items-center gap-2">
