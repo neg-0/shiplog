@@ -1,17 +1,58 @@
 'use client';
 
-import { Ship, Settings, GitBranch, Bell, LogOut, Menu, X, User, Palette, Key, Building } from 'lucide-react';
+import { Ship, Settings, GitBranch, Bell, LogOut, Menu, X, User, Palette, Key, Building, CreditCard } from 'lucide-react';
 import Link from 'next/link';
-import { useState } from 'react';
-
-const mockUser = {
-  name: 'Dustin',
-  email: 'dustin@negativezeroinc.com',
-  avatar: 'https://github.com/neg-0.png',
-};
+import { useEffect, useState } from 'react';
+import { clearToken, createCheckoutSession, createPortalSession, getUser, isAuthenticated, type User as UserType } from '../../../lib/api';
+import { useRouter } from 'next/navigation';
 
 export default function SettingsPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [user, setUser] = useState<UserType | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!isAuthenticated()) {
+      router.push('/login');
+      return;
+    }
+
+    const fetchUser = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        const data = await getUser();
+        setUser(data);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to load user');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchUser();
+  }, [router]);
+
+  const handleLogout = () => {
+    clearToken();
+    router.push('/login');
+  };
+
+  const handleUpgrade = async (plan: 'pro' | 'team') => {
+    const session = await createCheckoutSession(plan);
+    if (session.url) {
+      window.location.href = session.url;
+    }
+  };
+
+  const handleManage = async () => {
+    const session = await createPortalSession();
+    if (session.url) {
+      window.location.href = session.url;
+    }
+  };
 
   return (
     <div className="min-h-screen bg-navy-50">
@@ -77,17 +118,23 @@ export default function SettingsPage() {
         </nav>
 
         <div className="absolute bottom-6 left-6 right-6">
-          <div className="flex items-center gap-3 px-4 py-3 bg-navy-800 rounded-lg">
-            <img 
-              src={mockUser.avatar} 
-              alt={mockUser.name}
-              className="w-8 h-8 rounded-full"
-            />
-            <span className="font-medium flex-1">{mockUser.name}</span>
-            <button className="text-navy-400 hover:text-white transition">
-              <LogOut className="w-4 h-4" />
-            </button>
-          </div>
+          {user && (
+            <div className="flex items-center gap-3 px-4 py-3 bg-navy-800 rounded-lg">
+              <img 
+                src={user.avatarUrl || 'https://github.com/github.png'}
+                alt={user.name || user.login}
+                className="w-8 h-8 rounded-full"
+              />
+              <span className="font-medium flex-1 truncate">{user.name || user.login}</span>
+              <button
+                onClick={handleLogout}
+                className="text-navy-400 hover:text-white transition"
+                title="Logout"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            </div>
+          )}
         </div>
       </aside>
 
@@ -99,29 +146,73 @@ export default function SettingsPage() {
             <p className="text-navy-600">Manage your account and preferences</p>
           </div>
 
-          {/* Settings Sections */}
-          <div className="space-y-6">
-            {/* Profile Section */}
-            <div className="bg-white rounded-xl p-4 lg:p-6 shadow-sm border border-navy-100">
-              <div className="flex items-center gap-3 mb-4">
-                <User className="w-5 h-5 text-navy-600" />
-                <h2 className="text-lg font-semibold text-navy-900">Profile</h2>
-              </div>
-              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
-                <img 
-                  src={mockUser.avatar} 
-                  alt={mockUser.name}
-                  className="w-16 h-16 rounded-full"
-                />
-                <div className="flex-1">
-                  <p className="font-medium text-navy-900">{mockUser.name}</p>
-                  <p className="text-sm text-navy-500">{mockUser.email}</p>
-                </div>
-                <button className="px-4 py-2 text-sm text-navy-600 border border-navy-200 rounded-lg hover:bg-navy-50 transition w-full sm:w-auto">
-                  Edit Profile
-                </button>
-              </div>
+          {loading && (
+            <div className="flex items-center justify-center py-12">
+              <div className="w-8 h-8 border-2 border-teal-600 border-t-transparent rounded-full animate-spin" />
             </div>
+          )}
+
+          {error && !loading && (
+            <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-6 text-red-700">
+              {error}
+            </div>
+          )}
+
+          {!loading && !error && user && (
+            <div className="space-y-6">
+              {/* Plan Section */}
+              <div className="bg-white rounded-xl p-4 lg:p-6 shadow-sm border border-navy-100">
+                <div className="flex items-center gap-3 mb-4">
+                  <CreditCard className="w-5 h-5 text-navy-600" />
+                  <h2 className="text-lg font-semibold text-navy-900">Plan</h2>
+                </div>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div>
+                    <p className="font-medium text-navy-900">Current plan: {user.subscriptionTier}</p>
+                    <p className="text-sm text-navy-500">
+                      {user.subscriptionStatus ? `Status: ${user.subscriptionStatus}` : 'No active subscription'}
+                    </p>
+                  </div>
+                  <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
+                    {user.subscriptionTier !== 'TEAM' && (
+                      <button
+                        onClick={() => handleUpgrade(user.subscriptionTier === 'PRO' ? 'team' : 'pro')}
+                        className="px-4 py-2 text-sm bg-teal-600 text-white rounded-lg hover:bg-teal-500 transition"
+                      >
+                        Upgrade
+                      </button>
+                    )}
+                    <button
+                      onClick={handleManage}
+                      className="px-4 py-2 text-sm text-navy-600 border border-navy-200 rounded-lg hover:bg-navy-50 transition"
+                    >
+                      Manage Subscription
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Profile Section */}
+              <div className="bg-white rounded-xl p-4 lg:p-6 shadow-sm border border-navy-100">
+                <div className="flex items-center gap-3 mb-4">
+                  <User className="w-5 h-5 text-navy-600" />
+                  <h2 className="text-lg font-semibold text-navy-900">Profile</h2>
+                </div>
+                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
+                  <img 
+                    src={user.avatarUrl || 'https://github.com/github.png'}
+                    alt={user.name || user.login}
+                    className="w-16 h-16 rounded-full"
+                  />
+                  <div className="flex-1">
+                    <p className="font-medium text-navy-900">{user.name || user.login}</p>
+                    <p className="text-sm text-navy-500">{user.email ?? 'No email on file'}</p>
+                  </div>
+                  <button className="px-4 py-2 text-sm text-navy-600 border border-navy-200 rounded-lg hover:bg-navy-50 transition w-full sm:w-auto">
+                    Edit Profile
+                  </button>
+                </div>
+              </div>
 
             {/* Organization Section */}
             <div className="bg-white rounded-xl p-4 lg:p-6 shadow-sm border border-navy-100">
@@ -180,6 +271,7 @@ export default function SettingsPage() {
               </div>
             </div>
           </div>
+          )}
         </div>
       </main>
     </div>

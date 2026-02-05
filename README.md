@@ -49,6 +49,16 @@ pnpm dev
 
 🚧 **Under Development** — MVP in progress
 
+## Environment Variables
+
+```
+STRIPE_SECRET_KEY=sk_live_...
+STRIPE_PUBLISHABLE_KEY=pk_live_...
+STRIPE_PRICE_PRO=price_...
+STRIPE_PRICE_TEAM=price_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+```
+
 ## License
 
 MIT

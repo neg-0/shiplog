@@ -145,7 +145,7 @@ repos.post('/connect', async (c) => {
   // Get user's access token
   const dbUser = await prisma.user.findUnique({
     where: { id: user.id },
-    select: { accessToken: true },
+    select: { accessToken: true, subscriptionTier: true },
   });
 
   if (!dbUser?.accessToken) {
@@ -164,6 +164,24 @@ repos.post('/connect', async (c) => {
 
   if (existing) {
     return c.json({ error: 'Repository already connected' }, 400);
+  }
+
+  const repoCount = await prisma.repo.count({
+    where: { userId: user.id },
+  });
+
+  const tier = dbUser.subscriptionTier ?? 'FREE';
+  const maxRepos = tier === 'FREE' ? 1 : tier === 'PRO' ? 5 : Number.POSITIVE_INFINITY;
+
+  if (repoCount >= maxRepos) {
+    const requiredTier = tier === 'FREE' ? 'PRO' : 'TEAM';
+    return c.json({
+      error: `Repository limit reached for ${tier} plan. Upgrade to ${requiredTier} to add more repositories.`,
+      upgradeRequired: true,
+      currentTier: tier,
+      requiredTier,
+      maxRepos: tier === 'TEAM' ? null : maxRepos,
+    }, 403);
   }
 
   // Generate webhook secret

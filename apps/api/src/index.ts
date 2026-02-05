@@ -9,6 +9,7 @@ import { releases } from './routes/releases.js';
 import { health } from './routes/health.js';
 import { changelog } from './routes/changelog.js';
 import { user } from './routes/user.js';
+import { billing } from './routes/billing.js';
 
 const app = new Hono();
 
@@ -26,6 +27,7 @@ app.route('/auth', auth);
 app.route('/repos', repos);
 app.route('/releases', releases);
 app.route('/user', user);
+app.route('/billing', billing);
 app.route('/changelog', changelog);
 
 // Root

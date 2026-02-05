@@ -22,6 +22,12 @@ model User {
   email           String?
   avatarUrl       String?
   accessToken     String   // Encrypted GitHub access token
+
+  subscriptionTier     SubscriptionTier @default(FREE)
+  stripeCustomerId     String?
+  stripeSubscriptionId String?
+  subscriptionStatus   String? // active, canceled, past_due, etc.
+  trialEndsAt          DateTime?
   
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
@@ -30,6 +36,12 @@ model User {
   repos           Repo[]
   
   @@map("users")
+}
+
+enum SubscriptionTier {
+  FREE
+  PRO
+  TEAM
 }
 
 // ============================================

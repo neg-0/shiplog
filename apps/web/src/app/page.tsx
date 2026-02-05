@@ -1,7 +1,22 @@
+'use client';
+
 import Link from 'next/link';
 import { Ship, GitBranch, Users, Mail, Slack, Zap, ArrowRight, Check } from 'lucide-react';
+import { createCheckoutSession, isAuthenticated } from '../lib/api';
 
 export default function Home() {
+  const handleCheckout = async (plan: 'pro' | 'team') => {
+    if (!isAuthenticated()) {
+      window.location.href = '/login';
+      return;
+    }
+
+    const session = await createCheckoutSession(plan);
+    if (session.url) {
+      window.location.href = session.url;
+    }
+  };
+
   return (
     <div className="min-h-screen">
       {/* Navigation */}
@@ -244,15 +259,40 @@ export default function Home() {
                     </li>
                   ))}
                 </ul>
-                <button 
-                  className={`w-full py-3 rounded-lg font-semibold transition ${
-                    plan.highlighted 
-                      ? 'bg-teal-500 text-white hover:bg-teal-400' 
-                      : 'bg-navy-100 text-navy-900 hover:bg-navy-200'
-                  }`}
-                >
-                  {plan.cta}
-                </button>
+                {plan.name === 'Pro' ? (
+                  <button
+                    onClick={() => handleCheckout('pro')}
+                    className={`w-full py-3 rounded-lg font-semibold transition ${
+                      plan.highlighted 
+                        ? 'bg-teal-500 text-white hover:bg-teal-400' 
+                        : 'bg-navy-100 text-navy-900 hover:bg-navy-200'
+                    }`}
+                  >
+                    {plan.cta}
+                  </button>
+                ) : plan.name === 'Team' ? (
+                  <a
+                    href="mailto:hello@shiplog.io"
+                    className={`block text-center w-full py-3 rounded-lg font-semibold transition ${
+                      plan.highlighted 
+                        ? 'bg-teal-500 text-white hover:bg-teal-400' 
+                        : 'bg-navy-100 text-navy-900 hover:bg-navy-200'
+                    }`}
+                  >
+                    {plan.cta}
+                  </a>
+                ) : (
+                  <Link
+                    href="/login"
+                    className={`block text-center w-full py-3 rounded-lg font-semibold transition ${
+                      plan.highlighted 
+                        ? 'bg-teal-500 text-white hover:bg-teal-400' 
+                        : 'bg-navy-100 text-navy-900 hover:bg-navy-200'
+                    }`}
+                  >
+                    {plan.cta}
+                  </Link>
+                )}
               </div>
             ))}
           </div>

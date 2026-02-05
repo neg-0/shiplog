@@ -164,7 +164,14 @@ function DashboardContent() {
         <div className="max-w-4xl mx-auto">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
             <div>
-              <h1 className="text-2xl font-bold text-navy-900">Repositories</h1>
+              <div className="flex items-center gap-3">
+                <h1 className="text-2xl font-bold text-navy-900">Repositories</h1>
+                {user && (
+                  <span className="px-3 py-1 rounded-full text-xs font-semibold bg-teal-100 text-teal-700">
+                    {user.subscriptionTier} Plan
+                  </span>
+                )}
+              </div>
               <p className="text-navy-600">Manage your connected repos and release settings</p>
             </div>
             <Link 

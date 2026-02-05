@@ -46,7 +46,10 @@ async function fetchApi<T>(path: string, options: RequestInit = {}): Promise<T> 
 
   if (!res.ok) {
     const error = await res.json().catch(() => ({ error: 'Request failed' }));
-    throw new Error(error.error || error.message || 'Request failed');
+    const err = new Error(error.error || error.message || 'Request failed');
+    (err as Error & { status?: number; data?: unknown }).status = res.status;
+    (err as Error & { status?: number; data?: unknown }).data = error;
+    throw err;
   }
 
   return res.json();
@@ -56,17 +59,46 @@ async function fetchApi<T>(path: string, options: RequestInit = {}): Promise<T> 
 // USER
 // ============================================
 
+export type SubscriptionTier = 'FREE' | 'PRO' | 'TEAM';
+
 export interface User {
   id: string;
   login: string;
   name: string | null;
   email: string | null;
   avatarUrl: string | null;
+  subscriptionTier: SubscriptionTier;
+  subscriptionStatus: string | null;
+  trialEndsAt: string | null;
   repoCount: number;
 }
 
 export async function getUser(): Promise<User> {
   return fetchApi('/user/me');
+}
+
+// ============================================
+// BILLING
+// ============================================
+
+export async function createCheckoutSession(plan: 'pro' | 'team'): Promise<{ url: string | null }> {
+  return fetchApi(`/billing/checkout?plan=${plan}`, {
+    method: 'POST',
+  });
+}
+
+export async function createPortalSession(): Promise<{ url: string }> {
+  return fetchApi('/billing/portal', {
+    method: 'POST',
+  });
+}
+
+export async function getBillingStatus(): Promise<{
+  subscriptionTier: SubscriptionTier;
+  subscriptionStatus: string | null;
+  trialEndsAt: string | null;
+}> {
+  return fetchApi('/billing/status');
 }
 
 // ============================================

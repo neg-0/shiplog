@@ -4,7 +4,7 @@ import { Ship, Settings, GitBranch, Bell, LogOut, Menu, X, ArrowLeft, Loader2, A
 import Link from 'next/link';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { getAvailableRepos, connectRepo, isAuthenticated, type GitHubRepo } from '../../../../lib/api';
+import { getAvailableRepos, connectRepo, createCheckoutSession, isAuthenticated, type GitHubRepo } from '../../../../lib/api';
 
 export default function ConnectRepoPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -15,6 +15,7 @@ export default function ConnectRepoPage() {
   const [error, setError] = useState<string | null>(null);
   const [connecting, setConnecting] = useState<number | null>(null);
   const [connected, setConnected] = useState<Set<number>>(new Set());
+  const [upgradePrompt, setUpgradePrompt] = useState<{ requiredTier: 'PRO' | 'TEAM'; message: string } | null>(null);
   
   const router = useRouter();
 
@@ -55,6 +56,8 @@ export default function ConnectRepoPage() {
 
   const handleConnect = async (repo: GitHubRepo) => {
     try {
+      setError(null);
+      setUpgradePrompt(null);
       setConnecting(repo.githubId);
       await connectRepo(repo);
       setConnected(prev => new Set(prev).add(repo.githubId));
@@ -63,9 +66,26 @@ export default function ConnectRepoPage() {
         setRepos(prev => prev.filter(r => r.githubId !== repo.githubId));
       }, 1000);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to connect repository');
+      const errorObj = err as Error & { status?: number; data?: { upgradeRequired?: boolean; requiredTier?: 'PRO' | 'TEAM' } };
+      if (errorObj.status === 403 && errorObj.data?.upgradeRequired) {
+        setUpgradePrompt({
+          requiredTier: errorObj.data.requiredTier ?? 'PRO',
+          message: errorObj.message,
+        });
+      } else {
+        setError(errorObj.message || 'Failed to connect repository');
+      }
     } finally {
       setConnecting(null);
+    }
+  };
+
+  const handleUpgrade = async () => {
+    if (!upgradePrompt) return;
+    const plan = upgradePrompt.requiredTier === 'TEAM' ? 'team' : 'pro';
+    const session = await createCheckoutSession(plan);
+    if (session.url) {
+      window.location.href = session.url;
     }
   };
 
@@ -180,6 +200,21 @@ export default function ConnectRepoPage() {
                 <p className="text-red-800 font-medium">Error</p>
                 <p className="text-red-600 text-sm">{error}</p>
               </div>
+            </div>
+          )}
+
+          {upgradePrompt && (
+            <div className="bg-teal-50 border border-teal-200 rounded-xl p-4 mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <p className="text-teal-800 font-medium">Upgrade required</p>
+                <p className="text-teal-700 text-sm">{upgradePrompt.message}</p>
+              </div>
+              <button
+                onClick={handleUpgrade}
+                className="px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-500 transition"
+              >
+                Upgrade to {upgradePrompt.requiredTier}
+              </button>
             </div>
           )}
 
