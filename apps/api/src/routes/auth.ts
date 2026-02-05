@@ -1,7 +1,11 @@
 import { Hono } from 'hono';
+import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import { prisma } from '../lib/db.js';
 import { signToken } from '../lib/jwt.js';
 import { encrypt } from '../lib/auth.js';
+
+const OAUTH_STATE_COOKIE = 'shiplog_oauth_state';
+const OAUTH_STATE_TTL_SECONDS = 10 * 60;
 
 export const auth = new Hono();
 
@@ -17,7 +21,13 @@ auth.get('/github', (c) => {
   }
 
   const state = crypto.randomUUID();
-  // TODO: Store state in session/cookie for CSRF protection
+  setCookie(c, OAUTH_STATE_COOKIE, state, {
+    httpOnly: true,
+    sameSite: 'Lax',
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: OAUTH_STATE_TTL_SECONDS,
+    path: '/auth/github/callback',
+  });
 
   const params = new URLSearchParams({
     client_id: GITHUB_CLIENT_ID,
@@ -38,8 +48,12 @@ auth.get('/github/callback', async (c) => {
     return c.json({ error: 'No code provided' }, 400);
   }
 
-  // TODO: Verify state matches session
-  void state;
+  const storedState = getCookie(c, OAUTH_STATE_COOKIE);
+  if (!state || !storedState || state !== storedState) {
+    return c.json({ error: 'Invalid OAuth state' }, 400);
+  }
+
+  deleteCookie(c, OAUTH_STATE_COOKIE, { path: '/auth/github/callback' });
 
   if (!GITHUB_CLIENT_ID || !GITHUB_CLIENT_SECRET) {
     return c.json({ error: 'GitHub OAuth not configured' }, 500);
