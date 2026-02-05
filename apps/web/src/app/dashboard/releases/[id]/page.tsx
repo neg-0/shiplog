@@ -1,6 +1,6 @@
 'use client';
 
-import { Ship, Settings, GitBranch, Bell, LogOut, Menu, X, ArrowLeft, ExternalLink, Tag, Loader2, AlertCircle, RefreshCw, Send, Edit3, Check, Copy } from 'lucide-react';
+import { Ship, Settings, GitBranch, Bell, LogOut, Menu, X, ArrowLeft, ExternalLink, Tag, Loader2, AlertCircle, RefreshCw, Send, Edit3, Check, Copy, Eye, Code } from 'lucide-react';
 import Link from 'next/link';
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
@@ -20,6 +20,7 @@ export default function ReleaseDetailPage() {
   const [editContent, setEditContent] = useState('');
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [viewMode, setViewMode] = useState<'rendered' | 'raw'>('rendered');
   
   const params = useParams();
   const router = useRouter();
@@ -51,8 +52,8 @@ export default function ReleaseDetailPage() {
     if (!release) return;
     try {
       setRegenerating(true);
+      // TODO: Update API to support per-audience regeneration
       await regenerateNotes(releaseId);
-      // Refetch release
       const data = await getRelease(releaseId);
       setRelease(data);
     } catch (err) {
@@ -67,7 +68,6 @@ export default function ReleaseDetailPage() {
     try {
       setPublishing(true);
       await publishRelease(releaseId);
-      // Refetch release
       const data = await getRelease(releaseId);
       setRelease(data);
     } catch (err) {
@@ -81,6 +81,7 @@ export default function ReleaseDetailPage() {
     if (!release?.notes) return;
     setEditContent(release.notes[activeTab]);
     setEditing(true);
+    setViewMode('raw');
   };
 
   const handleSave = async () => {
@@ -88,10 +89,10 @@ export default function ReleaseDetailPage() {
     try {
       setSaving(true);
       await updateReleaseNotes(releaseId, { [activeTab]: editContent });
-      // Refetch release
       const data = await getRelease(releaseId);
       setRelease(data);
       setEditing(false);
+      setViewMode('rendered');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save changes');
     } finally {
@@ -114,6 +115,17 @@ export default function ReleaseDetailPage() {
       case 'FAILED': return 'bg-red-100 text-red-700';
       default: return 'bg-gray-100 text-gray-700';
     }
+  };
+
+  const renderMarkdown = (content: string) => {
+    return content
+      .replace(/^# (.+)$/gm, '<h1 class="text-2xl font-bold text-navy-900 mt-6 mb-3 first:mt-0">$1</h1>')
+      .replace(/^### (.+)$/gm, '<h3 class="text-lg font-semibold text-navy-900 mt-4 mb-2">$1</h3>')
+      .replace(/^## (.+)$/gm, '<h2 class="text-xl font-bold text-navy-900 mt-6 mb-3">$2</h2>')
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/`(.+?)`/g, '<code class="bg-navy-100 px-1 rounded text-sm">$1</code>')
+      .replace(/^- (.+)$/gm, '<li class="text-navy-700 ml-4">$1</li>')
+      .replace(/\n\n/g, '<br/><br/>');
   };
 
   const tabConfig = {
@@ -262,14 +274,6 @@ export default function ReleaseDetailPage() {
                         Publish
                       </button>
                     )}
-                    <button
-                      onClick={handleRegenerate}
-                      disabled={regenerating}
-                      className="px-4 py-2 text-sm text-navy-600 border border-navy-200 rounded-lg hover:bg-navy-50 transition flex items-center gap-2 disabled:opacity-50"
-                    >
-                      {regenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-                      Regenerate
-                    </button>
                   </div>
                 </div>
               </div>
@@ -282,7 +286,7 @@ export default function ReleaseDetailPage() {
                     {(Object.keys(tabConfig) as Tab[]).map((tab) => (
                       <button
                         key={tab}
-                        onClick={() => { setActiveTab(tab); setEditing(false); }}
+                        onClick={() => { setActiveTab(tab); setEditing(false); setViewMode('rendered'); }}
                         className={`px-6 py-4 text-sm font-medium transition flex-shrink-0 ${
                           activeTab === tab
                             ? 'text-teal-600 border-b-2 border-teal-600 bg-teal-50/50'
@@ -299,23 +303,66 @@ export default function ReleaseDetailPage() {
 
                   {/* Content */}
                   <div className="p-6">
-                    <div className="flex justify-end gap-2 mb-4">
-                      <button
-                        onClick={handleCopy}
-                        className="px-3 py-1.5 text-sm text-navy-600 hover:text-navy-900 transition flex items-center gap-1"
-                      >
-                        {copied ? <Check className="w-4 h-4 text-teal-600" /> : <Copy className="w-4 h-4" />}
-                        {copied ? 'Copied!' : 'Copy'}
-                      </button>
+                    {/* Action Bar */}
+                    <div className="flex items-center justify-between mb-4 pb-4 border-b border-navy-100">
+                      {/* View Toggle (when not editing) */}
                       {!editing && (
-                        <button
-                          onClick={handleEdit}
-                          className="px-3 py-1.5 text-sm text-navy-600 hover:text-navy-900 transition flex items-center gap-1"
-                        >
-                          <Edit3 className="w-4 h-4" />
-                          Edit
-                        </button>
+                        <div className="flex items-center gap-1 bg-navy-100 rounded-lg p-1">
+                          <button
+                            onClick={() => setViewMode('rendered')}
+                            className={`px-3 py-1.5 text-sm rounded-md transition flex items-center gap-1.5 ${
+                              viewMode === 'rendered' 
+                                ? 'bg-white text-navy-900 shadow-sm' 
+                                : 'text-navy-600 hover:text-navy-900'
+                            }`}
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            Preview
+                          </button>
+                          <button
+                            onClick={() => setViewMode('raw')}
+                            className={`px-3 py-1.5 text-sm rounded-md transition flex items-center gap-1.5 ${
+                              viewMode === 'raw' 
+                                ? 'bg-white text-navy-900 shadow-sm' 
+                                : 'text-navy-600 hover:text-navy-900'
+                            }`}
+                          >
+                            <Code className="w-3.5 h-3.5" />
+                            Markdown
+                          </button>
+                        </div>
                       )}
+                      {editing && <div />}
+
+                      {/* Actions */}
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={handleCopy}
+                          className="px-3 py-1.5 text-sm text-navy-600 hover:text-navy-900 hover:bg-navy-50 rounded-md transition flex items-center gap-1.5"
+                        >
+                          {copied ? <Check className="w-4 h-4 text-teal-600" /> : <Copy className="w-4 h-4" />}
+                          {copied ? 'Copied!' : 'Copy'}
+                        </button>
+                        {!editing && (
+                          <>
+                            <button
+                              onClick={handleEdit}
+                              className="px-3 py-1.5 text-sm text-navy-600 hover:text-navy-900 hover:bg-navy-50 rounded-md transition flex items-center gap-1.5"
+                            >
+                              <Edit3 className="w-4 h-4" />
+                              Edit
+                            </button>
+                            <button
+                              onClick={handleRegenerate}
+                              disabled={regenerating}
+                              className="px-3 py-1.5 text-sm text-navy-600 hover:text-navy-900 hover:bg-navy-50 rounded-md transition flex items-center gap-1.5 disabled:opacity-50"
+                            >
+                              {regenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                              Regenerate
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </div>
 
                     {editing ? (
@@ -323,11 +370,12 @@ export default function ReleaseDetailPage() {
                         <textarea
                           value={editContent}
                           onChange={(e) => setEditContent(e.target.value)}
-                          className="w-full h-96 p-4 border border-navy-200 rounded-lg font-mono text-sm text-navy-900 focus:outline-none focus:ring-2 focus:ring-teal-500"
+                          className="w-full h-96 p-4 border border-navy-200 rounded-lg font-mono text-sm text-navy-900 focus:outline-none focus:ring-2 focus:ring-teal-500 resize-y"
+                          placeholder="Enter markdown content..."
                         />
                         <div className="flex justify-end gap-2 mt-4">
                           <button
-                            onClick={() => setEditing(false)}
+                            onClick={() => { setEditing(false); setViewMode('rendered'); }}
                             className="px-4 py-2 text-sm text-navy-600 hover:text-navy-900 transition"
                           >
                             Cancel
@@ -342,18 +390,14 @@ export default function ReleaseDetailPage() {
                           </button>
                         </div>
                       </div>
+                    ) : viewMode === 'raw' ? (
+                      <pre className="w-full p-4 bg-navy-50 border border-navy-200 rounded-lg font-mono text-sm text-navy-900 overflow-x-auto whitespace-pre-wrap">
+                        {release.notes[activeTab]}
+                      </pre>
                     ) : (
                       <div 
                         className="prose prose-navy max-w-none"
-                        dangerouslySetInnerHTML={{ 
-                          __html: release.notes[activeTab]
-                            .replace(/^### (.+)$/gm, '<h3 class="text-lg font-semibold text-navy-900 mt-4 mb-2 first:mt-0">$1</h3>')
-                            .replace(/^## (.+)$/gm, '<h2 class="text-xl font-bold text-navy-900 mt-6 mb-3 first:mt-0">$1</h2>')
-                            .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-                            .replace(/`(.+?)`/g, '<code class="bg-navy-100 px-1 rounded text-sm">$1</code>')
-                            .replace(/^- (.+)$/gm, '<li class="text-navy-700 ml-4">$1</li>')
-                            .replace(/\n\n/g, '<br/><br/>')
-                        }}
+                        dangerouslySetInnerHTML={{ __html: renderMarkdown(release.notes[activeTab]) }}
                       />
                     )}
 
