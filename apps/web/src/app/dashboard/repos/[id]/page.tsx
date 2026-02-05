@@ -1,6 +1,6 @@
 'use client';
 
-import { Ship, Settings, GitBranch, Bell, LogOut, Menu, X, ArrowLeft, ExternalLink, Tag, Users, Sparkles, Loader2, AlertCircle, Trash2 } from 'lucide-react';
+import { Ship, Settings, GitBranch, Bell, LogOut, Menu, X, ArrowLeft, ExternalLink, Tag, Users, Sparkles, Loader2, AlertCircle, Trash2, HelpCircle } from 'lucide-react';
 import Link from 'next/link';
 import { useState, useEffect, type FormEvent } from 'react';
 import { useParams, useRouter } from 'next/navigation';
@@ -22,6 +22,7 @@ export default function RepoDetailPage() {
     audience: 'CUSTOMER',
     enabled: true,
   });
+  const [showWebhookHelp, setShowWebhookHelp] = useState(false);
   
   const params = useParams();
   const router = useRouter();
@@ -415,11 +416,21 @@ export default function RepoDetailPage() {
                         />
                       </div>
                       <div>
-                        <label className="text-xs font-medium text-navy-500">Webhook URL</label>
+                        <div className="flex items-center gap-1">
+                          <label className="text-xs font-medium text-navy-500">Webhook URL</label>
+                          <button
+                            type="button"
+                            onClick={() => setShowWebhookHelp(true)}
+                            className="text-navy-400 hover:text-teal-600 transition"
+                            title="How to get webhook URL"
+                          >
+                            <HelpCircle className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                         <input
                           value={channelForm.webhookUrl}
                           onChange={(event) => setChannelForm((prev) => ({ ...prev, webhookUrl: event.target.value }))}
-                          placeholder="https://hooks.slack.com/..."
+                          placeholder={channelForm.type === 'SLACK' ? 'https://hooks.slack.com/services/...' : 'https://discord.com/api/webhooks/...'}
                           className="mt-1 w-full rounded-lg border border-navy-200 px-3 py-2 text-sm"
                         />
                       </div>
@@ -530,6 +541,78 @@ export default function RepoDetailPage() {
           )}
         </div>
       </main>
+
+      {/* Webhook Help Modal */}
+      {showWebhookHelp && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setShowWebhookHelp(false)}>
+          <div 
+            className="bg-white rounded-xl max-w-lg w-full max-h-[80vh] overflow-y-auto shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-6 border-b border-navy-100 flex items-center justify-between">
+              <h2 className="text-xl font-bold text-navy-900">How to Get a Webhook URL</h2>
+              <button 
+                onClick={() => setShowWebhookHelp(false)}
+                className="text-navy-400 hover:text-navy-600 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="p-6 space-y-6">
+              {/* Slack Instructions */}
+              <div>
+                <h3 className="font-semibold text-navy-900 flex items-center gap-2 mb-3">
+                  <span className="w-6 h-6 bg-[#4A154B] rounded flex items-center justify-center text-white text-xs font-bold">S</span>
+                  Slack Webhook
+                </h3>
+                <ol className="text-sm text-navy-600 space-y-2 list-decimal list-inside">
+                  <li>Go to <a href="https://api.slack.com/apps" target="_blank" rel="noopener noreferrer" className="text-teal-600 hover:underline">api.slack.com/apps</a></li>
+                  <li>Click <strong>Create New App</strong> → <strong>From scratch</strong></li>
+                  <li>Name it (e.g., &quot;ShipLog&quot;) and select your workspace</li>
+                  <li>Go to <strong>Incoming Webhooks</strong> in the sidebar</li>
+                  <li>Toggle <strong>Activate Incoming Webhooks</strong> to On</li>
+                  <li>Click <strong>Add New Webhook to Workspace</strong></li>
+                  <li>Select the channel and click <strong>Allow</strong></li>
+                  <li>Copy the webhook URL (starts with <code className="bg-navy-100 px-1 rounded">https://hooks.slack.com/services/...</code>)</li>
+                </ol>
+              </div>
+
+              {/* Discord Instructions */}
+              <div>
+                <h3 className="font-semibold text-navy-900 flex items-center gap-2 mb-3">
+                  <span className="w-6 h-6 bg-[#5865F2] rounded flex items-center justify-center text-white text-xs font-bold">D</span>
+                  Discord Webhook
+                </h3>
+                <ol className="text-sm text-navy-600 space-y-2 list-decimal list-inside">
+                  <li>Open Discord and go to your server</li>
+                  <li>Right-click the channel → <strong>Edit Channel</strong></li>
+                  <li>Go to <strong>Integrations</strong> → <strong>Webhooks</strong></li>
+                  <li>Click <strong>New Webhook</strong></li>
+                  <li>Name it (e.g., &quot;ShipLog Releases&quot;)</li>
+                  <li>Click <strong>Copy Webhook URL</strong></li>
+                  <li>The URL looks like <code className="bg-navy-100 px-1 rounded">https://discord.com/api/webhooks/...</code></li>
+                </ol>
+              </div>
+
+              <div className="bg-teal-50 border border-teal-200 rounded-lg p-4">
+                <p className="text-sm text-teal-800">
+                  <strong>Tip:</strong> Create separate channels for different audiences. For example, #releases-public for customers and #releases-dev for your team.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-6 border-t border-navy-100 bg-navy-50">
+              <button
+                onClick={() => setShowWebhookHelp(false)}
+                className="w-full px-4 py-2 bg-navy-900 text-white rounded-lg font-medium hover:bg-navy-800 transition"
+              >
+                Got it!
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
