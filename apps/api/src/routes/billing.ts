@@ -16,7 +16,7 @@ if (!stripeSecret) {
 }
 
 const stripe = new Stripe(stripeSecret || '', {
-  apiVersion: '2023-10-16',
+  apiVersion: '2024-04-10',
 });
 
 const getPriceId = (plan: string | null | undefined) => {
@@ -25,7 +25,9 @@ const getPriceId = (plan: string | null | undefined) => {
   return null;
 };
 
-const getTierFromPrice = (priceId?: string | null) => {
+import { SubscriptionTier } from '@prisma/client';
+
+const getTierFromPrice = (priceId?: string | null): SubscriptionTier => {
   if (priceId && priceId === pricePro) return 'PRO';
   if (priceId && priceId === priceTeam) return 'TEAM';
   return 'FREE';
@@ -209,7 +211,7 @@ billing.post('/webhook', async (c) => {
       const subscription = event.data.object as Stripe.Subscription;
       const customerId = subscription.customer as string;
       const priceId = subscription.items.data[0]?.price?.id;
-      const tier = shouldDowngrade(subscription.status) ? 'FREE' : getTierFromPrice(priceId);
+      const tier: SubscriptionTier = shouldDowngrade(subscription.status) ? 'FREE' : getTierFromPrice(priceId);
       const trialEndsAt = subscription.trial_end ? new Date(subscription.trial_end * 1000) : null;
 
       await updateByCustomer(customerId, {
