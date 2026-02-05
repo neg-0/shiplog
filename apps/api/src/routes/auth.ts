@@ -1,11 +1,7 @@
 import { Hono } from 'hono';
-import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import { prisma } from '../lib/db.js';
 import { signToken } from '../lib/jwt.js';
 import { encrypt } from '../lib/auth.js';
-
-const OAUTH_STATE_COOKIE = 'shiplog_oauth_state';
-const OAUTH_STATE_TTL_SECONDS = 10 * 60;
 
 export const auth = new Hono();
 
@@ -14,6 +10,20 @@ const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET;
 const APP_URL = process.env.APP_URL || 'http://localhost:3000';
 const API_URL = process.env.API_URL || 'http://localhost:3001';
 
+// In-memory state storage (valid for 10 minutes)
+const pendingStates = new Map<string, number>();
+const STATE_TTL_MS = 10 * 60 * 1000;
+
+// Clean up expired states periodically
+setInterval(() => {
+  const now = Date.now();
+  for (const [state, createdAt] of pendingStates) {
+    if (now - createdAt > STATE_TTL_MS) {
+      pendingStates.delete(state);
+    }
+  }
+}, 60 * 1000);
+
 // Initiate GitHub OAuth
 auth.get('/github', (c) => {
   if (!GITHUB_CLIENT_ID) {
@@ -21,13 +31,7 @@ auth.get('/github', (c) => {
   }
 
   const state = crypto.randomUUID();
-  setCookie(c, OAUTH_STATE_COOKIE, state, {
-    httpOnly: true,
-    sameSite: 'Lax',
-    secure: process.env.NODE_ENV === 'production',
-    maxAge: OAUTH_STATE_TTL_SECONDS,
-    path: '/auth/github/callback',
-  });
+  pendingStates.set(state, Date.now());
 
   const params = new URLSearchParams({
     client_id: GITHUB_CLIENT_ID,
@@ -35,6 +39,8 @@ auth.get('/github', (c) => {
     scope: 'repo read:user user:email',
     state,
   });
+
+  console.log(`🔑 OAuth initiated with state: ${state.slice(0, 8)}...`);
 
   return c.redirect(`https://github.com/login/oauth/authorize?${params}`);
 });
@@ -44,16 +50,19 @@ auth.get('/github/callback', async (c) => {
   const code = c.req.query('code');
   const state = c.req.query('state');
 
+  console.log(`🔑 OAuth callback with state: ${state?.slice(0, 8)}...`);
+
   if (!code) {
     return c.json({ error: 'No code provided' }, 400);
   }
 
-  const storedState = getCookie(c, OAUTH_STATE_COOKIE);
-  if (!state || !storedState || state !== storedState) {
+  if (!state || !pendingStates.has(state)) {
+    console.log(`❌ Invalid state. Known states: ${pendingStates.size}`);
     return c.json({ error: 'Invalid OAuth state' }, 400);
   }
 
-  deleteCookie(c, OAUTH_STATE_COOKIE, { path: '/auth/github/callback' });
+  // Remove used state
+  pendingStates.delete(state);
 
   if (!GITHUB_CLIENT_ID || !GITHUB_CLIENT_SECRET) {
     return c.json({ error: 'GitHub OAuth not configured' }, 500);
@@ -140,6 +149,8 @@ auth.get('/github/callback', async (c) => {
 
   const redirectUrl = new URL(`${APP_URL}/dashboard`);
   redirectUrl.searchParams.set('token', sessionToken);
+
+  console.log(`✅ OAuth complete for ${ghUser.login}`);
 
   return c.redirect(redirectUrl.toString());
 });
