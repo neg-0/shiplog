@@ -1,7 +1,7 @@
 'use client';
 
 import { Suspense } from 'react';
-import { Ship, Settings, GitBranch, Bell, LogOut, Plus, Menu, X, Loader2, AlertCircle, RefreshCw } from 'lucide-react';
+import { Ship, Settings, GitBranch, Bell, LogOut, Plus, Menu, X, Loader2, AlertCircle, RefreshCw, Building2 } from 'lucide-react';
 import Link from 'next/link';
 import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -119,6 +119,14 @@ function DashboardContent() {
           >
             <GitBranch className="w-5 h-5" />
             Repositories
+          </Link>
+          <Link 
+            href="/dashboard/organizations" 
+            className="flex items-center gap-3 px-4 py-3 rounded-lg text-navy-300 hover:bg-navy-800 hover:text-white transition"
+            onClick={() => setSidebarOpen(false)}
+          >
+            <Building2 className="w-5 h-5" />
+            Organizations
           </Link>
           <Link 
             href="/dashboard/activity" 
