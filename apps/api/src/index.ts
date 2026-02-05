@@ -10,6 +10,7 @@ import { health } from './routes/health.js';
 import { changelog } from './routes/changelog.js';
 import { user } from './routes/user.js';
 import { billing } from './routes/billing.js';
+import { admin } from './routes/admin.js';
 
 const app = new Hono();
 
@@ -29,6 +30,7 @@ app.route('/releases', releases);
 app.route('/user', user);
 app.route('/billing', billing);
 app.route('/changelog', changelog);
+app.route('/admin', admin);
 
 // Root
 app.get('/', (c) => {
