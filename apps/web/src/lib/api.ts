@@ -53,6 +53,23 @@ async function fetchApi<T>(path: string, options: RequestInit = {}): Promise<T> 
 }
 
 // ============================================
+// USER
+// ============================================
+
+export interface User {
+  id: string;
+  login: string;
+  name: string | null;
+  email: string | null;
+  avatarUrl: string | null;
+  repoCount: number;
+}
+
+export async function getUser(): Promise<User> {
+  return fetchApi('/user/me');
+}
+
+// ============================================
 // REPOS
 // ============================================
 
@@ -139,34 +156,90 @@ export async function updateRepoConfig(id: string, config: Partial<RepoDetail['c
 // RELEASES
 // ============================================
 
+export interface ReleaseNotes {
+  customer: string;
+  developer: string;
+  stakeholder: string;
+  customerEdited?: boolean;
+  developerEdited?: boolean;
+  stakeholderEdited?: boolean;
+  tokensUsed?: number;
+  model?: string;
+}
+
 export interface Release {
   id: string;
   tagName: string;
   name: string | null;
+  body: string | null;
   htmlUrl: string;
   publishedAt: string | null;
   status: string;
-  notes?: {
-    customer: string;
-    developer: string;
-    stakeholder: string;
+  processedAt: string | null;
+  repo: {
+    id: string;
+    fullName: string;
   };
+  notes: ReleaseNotes | null;
 }
 
 export async function getRelease(id: string): Promise<Release> {
   return fetchApi(`/releases/${id}`);
 }
 
-export async function regenerateNotes(id: string, options?: { format?: string; tone?: string }): Promise<void> {
+export async function regenerateNotes(id: string, options?: { tone?: string }): Promise<{ tokensUsed: number }> {
   return fetchApi(`/releases/${id}/regenerate`, {
     method: 'POST',
     body: JSON.stringify(options || {}),
   });
 }
 
-export async function publishRelease(id: string, channels?: string[]): Promise<void> {
+export async function publishRelease(id: string, channels?: string[]): Promise<{ status: string }> {
   return fetchApi(`/releases/${id}/publish`, {
     method: 'POST',
     body: JSON.stringify({ channels }),
   });
+}
+
+export async function updateReleaseNotes(id: string, notes: Partial<Pick<ReleaseNotes, 'customer' | 'developer' | 'stakeholder'>>): Promise<void> {
+  return fetchApi(`/releases/${id}/notes`, {
+    method: 'PATCH',
+    body: JSON.stringify(notes),
+  });
+}
+
+// ============================================
+// PUBLIC CHANGELOG
+// ============================================
+
+export interface ChangelogRelease {
+  version: string;
+  name: string | null;
+  date: string;
+  htmlUrl: string;
+  notes: {
+    customer: string;
+    developer: string;
+    stakeholder: string;
+  } | null;
+}
+
+export interface Changelog {
+  org: string;
+  repo: string;
+  fullName: string;
+  description: string | null;
+  productName: string;
+  companyName: string;
+  releases: ChangelogRelease[];
+}
+
+export async function getChangelog(org: string, repo: string, audience?: string): Promise<Changelog> {
+  const params = audience ? `?audience=${audience}` : '';
+  const res = await fetch(`/api/changelog/${org}/${repo}${params}`);
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ error: 'Not found' }));
+    throw new Error(error.error || 'Changelog not found');
+  }
+  return res.json();
 }

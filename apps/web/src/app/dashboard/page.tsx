@@ -5,14 +5,14 @@ import { Ship, Settings, GitBranch, Bell, LogOut, Plus, Menu, X, Loader2, AlertC
 import Link from 'next/link';
 import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { getRepos, setToken, isAuthenticated, clearToken, type Repo } from '../../lib/api';
+import { getRepos, getUser, setToken, isAuthenticated, clearToken, type Repo, type User } from '../../lib/api';
 
 function DashboardContent() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [repos, setRepos] = useState<Repo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [user, setUser] = useState<{ name: string; avatar: string } | null>(null);
+  const [user, setUser] = useState<User | null>(null);
   
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -38,16 +38,16 @@ function DashboardContent() {
       try {
         setLoading(true);
         setError(null);
-        const data = await getRepos();
-        setRepos(data.repos);
         
-        // TODO: Fetch actual user info from API
-        setUser({
-          name: 'User',
-          avatar: 'https://github.com/github.png',
-        });
+        const [repoData, userData] = await Promise.all([
+          getRepos(),
+          getUser(),
+        ]);
+        
+        setRepos(repoData.repos);
+        setUser(userData);
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load repositories');
+        setError(err instanceof Error ? err.message : 'Failed to load data');
       } finally {
         setLoading(false);
       }
@@ -142,11 +142,11 @@ function DashboardContent() {
           {user && (
             <div className="flex items-center gap-3 px-4 py-3 bg-navy-800 rounded-lg">
               <img 
-                src={user.avatar} 
-                alt={user.name}
+                src={user.avatarUrl || 'https://github.com/github.png'} 
+                alt={user.name || user.login}
                 className="w-8 h-8 rounded-full"
               />
-              <span className="font-medium flex-1">{user.name}</span>
+              <span className="font-medium flex-1 truncate">{user.name || user.login}</span>
               <button 
                 onClick={handleLogout}
                 className="text-navy-400 hover:text-white transition"

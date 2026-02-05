@@ -230,13 +230,27 @@ export default function RepoDetailPage() {
                   {repo.releases && repo.releases.length > 0 ? (
                     <div className="space-y-3">
                       {repo.releases.map((release) => (
-                        <div key={release.id} className="flex items-center justify-between py-2 border-b border-navy-100 last:border-0">
+                        <Link 
+                          key={release.id} 
+                          href={`/dashboard/releases/${release.id}`}
+                          className="flex items-center justify-between py-2 px-3 -mx-3 rounded-lg border-b border-navy-100 last:border-0 hover:bg-navy-50 transition"
+                        >
                           <div>
                             <p className="font-medium text-navy-900">{release.tagName}</p>
                             <p className="text-sm text-navy-500">{release.name || 'No title'}</p>
                           </div>
-                          <span className="text-sm text-navy-400">{formatRelativeDate(release.publishedAt)}</span>
-                        </div>
+                          <div className="flex items-center gap-2">
+                            <span className={`text-xs px-2 py-0.5 rounded-full ${
+                              release.status === 'PUBLISHED' ? 'bg-teal-100 text-teal-700' :
+                              release.status === 'READY' ? 'bg-blue-100 text-blue-700' :
+                              release.status === 'PROCESSING' ? 'bg-amber-100 text-amber-700' :
+                              'bg-gray-100 text-gray-600'
+                            }`}>
+                              {release.status}
+                            </span>
+                            <span className="text-sm text-navy-400">{formatRelativeDate(release.publishedAt)}</span>
+                          </div>
+                        </Link>
                       ))}
                     </div>
                   ) : (

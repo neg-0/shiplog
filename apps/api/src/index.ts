@@ -7,6 +7,8 @@ import { auth } from './routes/auth.js';
 import { repos } from './routes/repos.js';
 import { releases } from './routes/releases.js';
 import { health } from './routes/health.js';
+import { changelog } from './routes/changelog.js';
+import { user } from './routes/user.js';
 
 const app = new Hono();
 
@@ -21,8 +23,10 @@ app.use('*', cors({
 app.route('/health', health);
 app.route('/webhooks', webhooks);
 app.route('/auth', auth);
-app.route('/api/repos', repos);
-app.route('/api/releases', releases);
+app.route('/repos', repos);
+app.route('/releases', releases);
+app.route('/user', user);
+app.route('/changelog', changelog);
 
 // Root
 app.get('/', (c) => {

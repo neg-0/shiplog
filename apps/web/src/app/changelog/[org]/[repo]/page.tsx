@@ -1,85 +1,78 @@
-import { Ship, Calendar, Tag, ExternalLink } from 'lucide-react';
+'use client';
+
+import { Ship, Calendar, Tag, ExternalLink, Loader2, AlertCircle, Users, GitBranch, Briefcase } from 'lucide-react';
 import Link from 'next/link';
+import { useState, useEffect } from 'react';
+import { useParams } from 'next/navigation';
+import { getChangelog, type Changelog } from '../../../../lib/api';
 
-// Mock data - would come from API
-const mockChangelog = {
-  org: 'neg-0',
-  repo: 'comp-iq',
-  releases: [
-    {
-      version: 'v2.4.0',
-      date: '2026-02-01',
-      customer: `### What's New 🚀
+type Audience = 'customer' | 'developer' | 'stakeholder';
 
-**PDF Export is here!** You can now export your comp reports directly to PDF with one click. Perfect for sharing with clients or keeping offline records.
+export default function ChangelogPage() {
+  const params = useParams();
+  const org = params.org as string;
+  const repo = params.repo as string;
+  
+  const [changelog, setChangelog] = useState<Changelog | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [audience, setAudience] = useState<Audience>('customer');
 
-**Improved Map Performance** — The property map now loads 3x faster, especially when viewing 100+ properties.
+  useEffect(() => {
+    const fetchChangelog = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        const data = await getChangelog(org, repo);
+        setChangelog(data);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to load changelog');
+      } finally {
+        setLoading(false);
+      }
+    };
 
-**Quick Filters** — New filter chips at the top of the property list let you narrow down by type, status, or market instantly.
+    fetchChangelog();
+  }, [org, repo]);
 
-### Bug Fixes
-- Fixed an issue where lease dates weren't saving correctly on mobile
-- Address autocomplete now works more reliably`,
-      developer: `## v2.4.0 (2026-02-01)
+  const getNotesForAudience = (notes: Changelog['releases'][0]['notes']) => {
+    if (!notes) return null;
+    return notes[audience];
+  };
 
-### Features
-- \`feat(reports)\`: Add PDF export via Puppeteer headless rendering (#412)
-- \`feat(map)\`: Implement map tile caching with 24h TTL (#408)
-- \`feat(filters)\`: Add FilterChips component with URL sync (#415)
+  const audienceConfig = {
+    customer: { icon: Users, label: 'Customer View', color: 'teal' },
+    developer: { icon: GitBranch, label: 'Developer View', color: 'blue' },
+    stakeholder: { icon: Briefcase, label: 'Stakeholder View', color: 'amber' },
+  };
 
-### Fixes
-- \`fix(leases)\`: Correct date picker timezone handling on mobile Safari (#410)
-- \`fix(geocoding)\`: Add fallback to NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN for server routes (#418)
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-white flex items-center justify-center">
+        <Loader2 className="w-8 h-8 text-teal-600 animate-spin" />
+      </div>
+    );
+  }
 
-### Breaking Changes
-- None
-
-### Migration Notes
-- Run \`pnpm prisma migrate deploy\` for new report_exports table`,
-      stakeholder: `## Release Summary: v2.4.0
-
-**Shipped:** February 1, 2026
-
-### Key Deliverables
-- ✅ PDF Export (Q1 Goal #3) — Complete
-- ✅ Performance improvements — Map load time reduced by 67%
-- ✅ UX polish — New quick filters for faster workflow
-
-### Metrics
-- 4 features shipped
-- 2 bugs fixed
-- 0 breaking changes
-- Estimated user time saved: 5 min/day for power users
-
-### Next Up
-- Dashboard analytics (in progress)
-- Multi-market rollup reports (planned)`,
-    },
-    {
-      version: 'v2.3.1',
-      date: '2026-01-28',
-      customer: `### Bug Fixes 🔧
-
-Fixed an issue where some users couldn't see their recently added properties. Everything should be back to normal now!`,
-      developer: `## v2.3.1 (2026-01-28)
-
-### Fixes
-- \`fix(rls)\`: Update RLS policy to allow independent brokers to view their own properties (#405)`,
-      stakeholder: `## Hotfix: v2.3.1
-
-**Shipped:** January 28, 2026
-
-Critical RLS policy fix affecting independent broker accounts. No new features.`,
-    },
-  ],
-};
-
-export default function ChangelogPage({ 
-  params 
-}: { 
-  params: { org: string; repo: string } 
-}) {
-  const { org, repo } = params;
+  if (error || !changelog) {
+    return (
+      <div className="min-h-screen bg-white flex items-center justify-center p-4">
+        <div className="text-center max-w-md">
+          <AlertCircle className="w-16 h-16 text-navy-300 mx-auto mb-4" />
+          <h1 className="text-2xl font-bold text-navy-900 mb-2">Changelog Not Found</h1>
+          <p className="text-navy-600 mb-6">
+            {error || `No public changelog available for ${org}/${repo}`}
+          </p>
+          <Link 
+            href="/"
+            className="inline-block bg-navy-900 text-white px-6 py-3 rounded-lg hover:bg-navy-800 transition"
+          >
+            Go Home
+          </Link>
+        </div>
+      </div>
+    );
+  }
   
   return (
     <div className="min-h-screen bg-white">
@@ -91,73 +84,101 @@ export default function ChangelogPage({
             <span className="text-navy-400">Powered by ShipLog</span>
           </div>
           <h1 className="text-3xl font-bold text-navy-900 mb-2">
-            {org}/{repo}
+            {changelog.productName || `${org}/${repo}`}
           </h1>
-          <p className="text-navy-600">Changelog and release notes</p>
+          <p className="text-navy-600">{changelog.description || 'Changelog and release notes'}</p>
           
           {/* Audience Tabs */}
-          <div className="flex gap-2 mt-6">
-            <button className="px-4 py-2 bg-navy-900 text-white rounded-lg font-medium">
-              Customer View
-            </button>
-            <button className="px-4 py-2 bg-white text-navy-600 rounded-lg font-medium border border-navy-200 hover:border-navy-300 transition">
-              Developer View
-            </button>
-            <button className="px-4 py-2 bg-white text-navy-600 rounded-lg font-medium border border-navy-200 hover:border-navy-300 transition">
-              Stakeholder View
-            </button>
+          <div className="flex flex-wrap gap-2 mt-6">
+            {(Object.keys(audienceConfig) as Audience[]).map((key) => {
+              const config = audienceConfig[key];
+              const Icon = config.icon;
+              const isActive = audience === key;
+              return (
+                <button
+                  key={key}
+                  onClick={() => setAudience(key)}
+                  className={`px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition ${
+                    isActive 
+                      ? 'bg-navy-900 text-white' 
+                      : 'bg-white text-navy-600 border border-navy-200 hover:border-navy-300'
+                  }`}
+                >
+                  <Icon className="w-4 h-4" />
+                  {config.label}
+                </button>
+              );
+            })}
           </div>
         </div>
       </header>
 
       {/* Releases */}
       <main className="max-w-4xl mx-auto px-4 py-12">
-        <div className="space-y-12">
-          {mockChangelog.releases.map((release) => (
-            <article key={release.version} className="relative">
-              {/* Version Badge */}
-              <div className="flex items-center gap-4 mb-4">
-                <span className="flex items-center gap-2 bg-teal-100 text-teal-700 px-3 py-1 rounded-full font-semibold">
-                  <Tag className="w-4 h-4" />
-                  {release.version}
-                </span>
-                <span className="flex items-center gap-2 text-navy-500">
-                  <Calendar className="w-4 h-4" />
-                  {new Date(release.date).toLocaleDateString('en-US', {
-                    year: 'numeric',
-                    month: 'long',
-                    day: 'numeric',
-                  })}
-                </span>
-                <a 
-                  href={`https://github.com/${org}/${repo}/releases/tag/${release.version}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1 text-navy-400 hover:text-navy-600 transition"
-                >
-                  <ExternalLink className="w-4 h-4" />
-                  GitHub
-                </a>
-              </div>
+        {changelog.releases.length === 0 ? (
+          <div className="text-center py-12">
+            <Tag className="w-12 h-12 text-navy-300 mx-auto mb-4" />
+            <h2 className="text-xl font-semibold text-navy-900 mb-2">No releases yet</h2>
+            <p className="text-navy-600">Release notes will appear here when published.</p>
+          </div>
+        ) : (
+          <div className="space-y-12">
+            {changelog.releases.map((release) => {
+              const notes = getNotesForAudience(release.notes);
+              
+              return (
+                <article key={release.version} className="relative">
+                  {/* Version Badge */}
+                  <div className="flex flex-wrap items-center gap-4 mb-4">
+                    <span className="flex items-center gap-2 bg-teal-100 text-teal-700 px-3 py-1 rounded-full font-semibold">
+                      <Tag className="w-4 h-4" />
+                      {release.version}
+                    </span>
+                    {release.date && (
+                      <span className="flex items-center gap-2 text-navy-500">
+                        <Calendar className="w-4 h-4" />
+                        {new Date(release.date).toLocaleDateString('en-US', {
+                          year: 'numeric',
+                          month: 'long',
+                          day: 'numeric',
+                        })}
+                      </span>
+                    )}
+                    <a 
+                      href={release.htmlUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1 text-navy-400 hover:text-navy-600 transition"
+                    >
+                      <ExternalLink className="w-4 h-4" />
+                      GitHub
+                    </a>
+                  </div>
 
-              {/* Content */}
-              <div className="prose prose-navy max-w-none">
-                <div 
-                  className="bg-navy-50 rounded-xl p-6 border border-navy-100"
-                  dangerouslySetInnerHTML={{ 
-                    __html: release.customer
-                      .replace(/^### (.+)$/gm, '<h3 class="text-lg font-semibold text-navy-900 mt-4 mb-2">$1</h3>')
-                      .replace(/^## (.+)$/gm, '<h2 class="text-xl font-bold text-navy-900 mt-6 mb-3">$1</h2>')
-                      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-                      .replace(/`(.+?)`/g, '<code class="bg-navy-200 px-1 rounded text-sm">$1</code>')
-                      .replace(/^- (.+)$/gm, '<li class="text-navy-700">$1</li>')
-                      .replace(/\n\n/g, '<br/><br/>')
-                  }}
-                />
-              </div>
-            </article>
-          ))}
-        </div>
+                  {/* Content */}
+                  <div className="bg-navy-50 rounded-xl p-6 border border-navy-100">
+                    {notes ? (
+                      <div 
+                        className="prose prose-navy max-w-none"
+                        dangerouslySetInnerHTML={{ 
+                          __html: notes
+                            .replace(/^### (.+)$/gm, '<h3 class="text-lg font-semibold text-navy-900 mt-4 mb-2 first:mt-0">$1</h3>')
+                            .replace(/^## (.+)$/gm, '<h2 class="text-xl font-bold text-navy-900 mt-6 mb-3 first:mt-0">$1</h2>')
+                            .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+                            .replace(/`(.+?)`/g, '<code class="bg-navy-200 px-1 rounded text-sm">$1</code>')
+                            .replace(/^- (.+)$/gm, '<li class="text-navy-700 ml-4">$1</li>')
+                            .replace(/\n\n/g, '<br/><br/>')
+                        }}
+                      />
+                    ) : (
+                      <p className="text-navy-500 italic">No notes available for this audience.</p>
+                    )}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
       </main>
 
       {/* Footer */}
