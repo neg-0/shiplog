@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { Ship, GitBranch, Users, Mail, Slack, Zap, ArrowRight, Check } from 'lucide-react';
 import { createCheckoutSession, isAuthenticated } from '../lib/api';
+import { AnimatedHero } from '../components/AnimatedHero';
 
 export default function Home() {
   const handleCheckout = async (plan: 'pro' | 'team') => {
@@ -20,23 +21,23 @@ export default function Home() {
   return (
     <div className="min-h-screen">
       {/* Navigation */}
-      <nav className="fixed top-0 w-full bg-white/80 backdrop-blur-md border-b border-navy-100 z-50">
+      <nav className="fixed top-0 w-full bg-slate-900/80 backdrop-blur-md border-b border-slate-700 z-50">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center gap-2">
-              <Ship className="w-8 h-8 text-teal-600" />
-              <span className="text-xl font-bold text-navy-900">ShipLog</span>
+              <Ship className="w-8 h-8 text-teal-400" />
+              <span className="text-xl font-bold text-white">ShipLog</span>
             </div>
             <div className="flex items-center gap-6">
-              <Link href="#features" className="text-navy-600 hover:text-navy-900 transition">
+              <Link href="#features" className="text-slate-300 hover:text-white transition">
                 Features
               </Link>
-              <Link href="#pricing" className="text-navy-600 hover:text-navy-900 transition">
+              <Link href="#pricing" className="text-slate-300 hover:text-white transition">
                 Pricing
               </Link>
               <Link 
                 href="/login" 
-                className="bg-navy-900 text-white px-4 py-2 rounded-lg hover:bg-navy-800 transition flex items-center gap-2"
+                className="bg-teal-500 text-white px-4 py-2 rounded-lg hover:bg-teal-400 transition flex items-center gap-2"
               >
                 <GitBranch className="w-4 h-4" />
                 Connect GitHub
@@ -46,38 +47,37 @@ export default function Home() {
         </div>
       </nav>
 
-      {/* Hero Section */}
-      <section className="pt-32 pb-20 px-4">
-        <div className="max-w-4xl mx-auto text-center">
-          <div className="inline-flex items-center gap-2 bg-teal-50 text-teal-700 px-4 py-2 rounded-full text-sm font-medium mb-6">
-            <Zap className="w-4 h-4" />
-            Set and forget release notes
+      {/* Animated Hero Section */}
+      <section className="pt-16">
+        <div className="relative">
+          {/* Text overlay on hero */}
+          <div className="absolute inset-0 z-20 flex flex-col items-center justify-start pt-20 pointer-events-none">
+            <div className="inline-flex items-center gap-2 bg-teal-500/20 text-teal-300 px-4 py-2 rounded-full text-sm font-medium mb-6 backdrop-blur-sm">
+              <Zap className="w-4 h-4" />
+              Set and forget release notes
+            </div>
+            <h1 className="text-5xl sm:text-6xl font-bold text-white mb-6 leading-tight text-center">
+              Release notes that{' '}
+              <span className="text-teal-400">ship themselves</span>
+            </h1>
+            <p className="text-xl text-slate-300 mb-8 max-w-2xl mx-auto text-center px-4">
+              One release. Three audiences. Zero effort.
+              <br />
+              Automatically generate changelogs tailored for customers, developers, and stakeholders.
+            </p>
+            <div className="flex flex-col sm:flex-row gap-4 justify-center pointer-events-auto">
+              <Link 
+                href="/login"
+                className="bg-teal-500 text-white px-8 py-4 rounded-xl text-lg font-semibold hover:bg-teal-400 transition flex items-center justify-center gap-2 shadow-lg shadow-teal-500/20"
+              >
+                <GitBranch className="w-5 h-5" />
+                Connect GitHub — Free
+              </Link>
+            </div>
           </div>
-          <h1 className="text-5xl sm:text-6xl font-bold text-navy-900 mb-6 leading-tight">
-            Release notes that{' '}
-            <span className="text-teal-600">ship themselves</span>
-          </h1>
-          <p className="text-xl text-navy-600 mb-8 max-w-2xl mx-auto">
-            One release. Three audiences. Zero effort.
-            <br />
-            Automatically generate changelogs tailored for customers, developers, and stakeholders.
-          </p>
-          <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Link 
-              href="/login"
-              className="bg-navy-900 text-white px-8 py-4 rounded-xl text-lg font-semibold hover:bg-navy-800 transition flex items-center justify-center gap-2 shadow-lg shadow-navy-900/20"
-            >
-              <GitBranch className="w-5 h-5" />
-              Connect GitHub — Free
-            </Link>
-            <Link 
-              href="#demo"
-              className="bg-white text-navy-900 px-8 py-4 rounded-xl text-lg font-semibold hover:bg-navy-50 transition border-2 border-navy-200 flex items-center justify-center gap-2"
-            >
-              See it in action
-              <ArrowRight className="w-5 h-5" />
-            </Link>
-          </div>
+          
+          {/* Animated scene */}
+          <AnimatedHero />
         </div>
       </section>
 
