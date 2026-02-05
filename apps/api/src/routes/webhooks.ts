@@ -22,29 +22,24 @@ function verifyGitHubSignature(payload: string, signature: string | undefined, s
 }
 
 webhooks.post('/github', async (c) => {
-  const secret = process.env.GITHUB_WEBHOOK_SECRET;
-  if (!secret) {
-    console.error('GITHUB_WEBHOOK_SECRET not configured');
-    return c.json({ error: 'Webhook not configured' }, 500);
-  }
-
   // Get raw body for signature verification
   const body = await c.req.text();
   const signature = c.req.header('x-hub-signature-256');
-  
-  if (!verifyGitHubSignature(body, signature, secret)) {
-    return c.json({ error: 'Invalid signature' }, 401);
-  }
-
   const event = c.req.header('x-github-event');
-  const payload = JSON.parse(body);
+
+  let payload: { action?: string; release?: { tag_name: string }; repository?: { full_name: string } };
+  try {
+    payload = JSON.parse(body);
+  } catch {
+    return c.json({ error: 'Invalid JSON' }, 400);
+  }
 
   console.log(`📥 Received GitHub webhook: ${event}`);
 
   // Handle release events
   if (event === 'release' && payload.action === 'published') {
-    const release = payload.release;
-    const repo = payload.repository;
+    const release = payload.release!;
+    const repo = payload.repository!;
 
     console.log(`🚀 New release: ${repo.full_name} @ ${release.tag_name}`);
     
@@ -64,6 +59,17 @@ webhooks.post('/github', async (c) => {
       if (!connectedRepo) {
         console.log(`⚠️ No connected repo found for ${repo.full_name}`);
         return c.json({ status: 'ignored', reason: 'repo_not_connected' });
+      }
+
+      // Verify signature using the repo's webhook secret
+      if (!connectedRepo.webhookSecret) {
+        console.error(`⚠️ No webhook secret for repo ${repo.full_name}`);
+        return c.json({ error: 'Webhook secret not configured' }, 500);
+      }
+
+      if (!verifyGitHubSignature(body, signature, connectedRepo.webhookSecret)) {
+        console.error(`❌ Invalid signature for ${repo.full_name}`);
+        return c.json({ error: 'Invalid signature' }, 401);
       }
 
       // Decrypt the user's GitHub token
