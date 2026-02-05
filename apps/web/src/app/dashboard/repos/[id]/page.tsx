@@ -452,7 +452,7 @@ export default function RepoDetailPage() {
                       channels.map((channel) => (
                         <div key={channel.id} className="border border-navy-100 rounded-lg p-4 bg-navy-50/50">
                           {/* Header row */}
-                          <div className="flex items-center justify-between gap-3">
+                          <div className="flex items-start justify-between gap-3">
                             <div className="flex items-center gap-3">
                               {/* Platform icon */}
                               <div className={`w-10 h-10 rounded-lg flex items-center justify-center text-white text-sm font-bold flex-shrink-0 ${
@@ -465,31 +465,33 @@ export default function RepoDetailPage() {
                                 <p className="text-xs text-navy-500">{channel.type === 'SLACK' ? 'Slack' : 'Discord'}</p>
                               </div>
                             </div>
-                            {/* Audience dropdown + Status + Actions */}
-                            <div className="flex items-center gap-2">
-                              <select
-                                value={channel.audience}
-                                onChange={(e) => handleUpdateChannel(channel.id, { audience: e.target.value as Channel['audience'] })}
-                                className={`text-xs px-2 py-1 rounded-full border-0 cursor-pointer font-medium ${
-                                  channel.audience === 'CUSTOMER' ? 'bg-blue-100 text-blue-700' :
-                                  channel.audience === 'DEVELOPER' ? 'bg-purple-100 text-purple-700' :
-                                  'bg-amber-100 text-amber-700'
-                                }`}
-                              >
-                                <option value="CUSTOMER">Customer</option>
-                                <option value="DEVELOPER">Developer</option>
-                                <option value="STAKEHOLDER">Stakeholder</option>
-                              </select>
-                              <button
-                                onClick={() => handleUpdateChannel(channel.id, { enabled: !channel.enabled })}
-                                className={`px-2.5 py-1 rounded-full text-xs font-medium transition ${
-                                  channel.enabled 
-                                    ? 'bg-teal-100 text-teal-700 hover:bg-teal-200' 
-                                    : 'bg-navy-100 text-navy-500 hover:bg-navy-200'
-                                }`}
-                              >
-                                {channel.enabled ? '● Active' : '○ Paused'}
-                              </button>
+                            {/* Status + Actions - stacked vertically */}
+                            <div className="flex items-start gap-2">
+                              <div className="flex flex-col items-end gap-1.5">
+                                <button
+                                  onClick={() => handleUpdateChannel(channel.id, { enabled: !channel.enabled })}
+                                  className={`px-2.5 py-1 rounded-full text-xs font-medium transition ${
+                                    channel.enabled 
+                                      ? 'bg-teal-100 text-teal-700 hover:bg-teal-200' 
+                                      : 'bg-navy-100 text-navy-500 hover:bg-navy-200'
+                                  }`}
+                                >
+                                  {channel.enabled ? '● Active' : '○ Paused'}
+                                </button>
+                                <select
+                                  value={channel.audience}
+                                  onChange={(e) => handleUpdateChannel(channel.id, { audience: e.target.value as Channel['audience'] })}
+                                  className={`text-xs px-2 py-1 rounded-full border-0 cursor-pointer font-medium ${
+                                    channel.audience === 'CUSTOMER' ? 'bg-blue-100 text-blue-700' :
+                                    channel.audience === 'DEVELOPER' ? 'bg-purple-100 text-purple-700' :
+                                    'bg-amber-100 text-amber-700'
+                                  }`}
+                                >
+                                  <option value="CUSTOMER">Customer</option>
+                                  <option value="DEVELOPER">Developer</option>
+                                  <option value="STAKEHOLDER">Stakeholder</option>
+                                </select>
+                              </div>
                               <button
                                 onClick={() => setDeleteConfirm({ channelId: channel.id, name: channel.name })}
                                 className="p-1.5 text-navy-400 hover:text-red-600 hover:bg-red-50 rounded transition"
