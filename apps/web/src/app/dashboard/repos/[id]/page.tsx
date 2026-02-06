@@ -1,9 +1,9 @@
 'use client';
 
-import { Ship, Settings, GitBranch, Bell, Menu, X, ArrowLeft, ExternalLink, Tag, Users, Loader2, AlertCircle, Trash2, HelpCircle, Lock, Zap, Plus } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Bell, ExternalLink, GitBranch, HelpCircle, Loader2, Lock, LogOut, Menu, Plus, Settings, Ship, Tag, Trash2, Users, X, Zap } from 'lucide-react';
 import Link from 'next/link';
-import { useState, useEffect, type FormEvent } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import { useEffect, useState, type FormEvent } from 'react';
 import { addChannel, deleteChannel, disconnectRepo, getRepo, getUser, isAuthenticated, updateChannel, type Channel, type RepoDetail, type User } from '../../../../lib/api';
 
 export default function RepoDetailPage() {
@@ -27,7 +27,7 @@ export default function RepoDetailPage() {
   const [showAudienceModal, setShowAudienceModal] = useState(false);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [user, setUser] = useState<User | null>(null);
-  
+
   const params = useParams();
   const router = useRouter();
   const repoId = params.id as string;
@@ -130,7 +130,7 @@ export default function RepoDetailPage() {
     const now = new Date();
     const diffMs = now.getTime() - date.getTime();
     const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-    
+
     if (diffDays === 0) return 'today';
     if (diffDays === 1) return 'yesterday';
     if (diffDays < 7) return `${diffDays} days ago`;
@@ -146,7 +146,7 @@ export default function RepoDetailPage() {
           <Ship className="w-6 h-6 text-teal-400" />
           <span className="text-lg font-bold">ShipLog</span>
         </div>
-        <button 
+        <button
           onClick={() => setSidebarOpen(!sidebarOpen)}
           className="p-2 hover:bg-navy-800 rounded-lg transition"
         >
@@ -156,7 +156,7 @@ export default function RepoDetailPage() {
 
       {/* Sidebar Overlay (mobile) */}
       {sidebarOpen && (
-        <div 
+        <div
           className="lg:hidden fixed inset-0 bg-black/50 z-40"
           onClick={() => setSidebarOpen(false)}
         />
@@ -175,24 +175,24 @@ export default function RepoDetailPage() {
         </div>
 
         <nav className="space-y-2">
-          <Link 
-            href="/dashboard" 
+          <Link
+            href="/dashboard"
             className="flex items-center gap-3 px-4 py-3 rounded-lg bg-navy-800 text-white"
             onClick={() => setSidebarOpen(false)}
           >
             <GitBranch className="w-5 h-5" />
             Repositories
           </Link>
-          <Link 
-            href="/dashboard/activity" 
+          <Link
+            href="/dashboard/activity"
             className="flex items-center gap-3 px-4 py-3 rounded-lg text-navy-300 hover:bg-navy-800 hover:text-white transition"
             onClick={() => setSidebarOpen(false)}
           >
             <Bell className="w-5 h-5" />
             Activity
           </Link>
-          <Link 
-            href="/dashboard/settings" 
+          <Link
+            href="/dashboard/settings"
             className="flex items-center gap-3 px-4 py-3 rounded-lg text-navy-300 hover:bg-navy-800 hover:text-white transition"
             onClick={() => setSidebarOpen(false)}
           >
@@ -216,7 +216,7 @@ export default function RepoDetailPage() {
       <main className="lg:ml-64 p-4 lg:p-8 pt-20 lg:pt-8">
         <div className="max-w-4xl mx-auto">
           {/* Back Button */}
-          <Link 
+          <Link
             href="/dashboard"
             className="inline-flex items-center gap-2 text-navy-600 hover:text-navy-900 mb-6 transition"
           >
@@ -273,7 +273,7 @@ export default function RepoDetailPage() {
                     </div>
                   </div>
                   <div className="flex flex-col sm:flex-row gap-2">
-                    <a 
+                    <a
                       href={`https://github.com/${repo.fullName}`}
                       target="_blank"
                       rel="noopener noreferrer"
@@ -301,8 +301,8 @@ export default function RepoDetailPage() {
                   {repo.releases && repo.releases.length > 0 ? (
                     <div className="space-y-3">
                       {repo.releases.map((release) => (
-                        <Link 
-                          key={release.id} 
+                        <Link
+                          key={release.id}
                           href={`/dashboard/releases/${release.id}`}
                           className="flex items-center justify-between py-2 px-3 -mx-3 rounded-lg border-b border-navy-100 last:border-0 hover:bg-navy-50 transition"
                         >
@@ -311,12 +311,11 @@ export default function RepoDetailPage() {
                             <p className="text-sm text-navy-500">{release.name || 'No title'}</p>
                           </div>
                           <div className="flex items-center gap-2">
-                            <span className={`text-xs px-2 py-0.5 rounded-full ${
-                              release.status === 'PUBLISHED' ? 'bg-teal-100 text-teal-700' :
-                              release.status === 'READY' ? 'bg-blue-100 text-blue-700' :
-                              release.status === 'PROCESSING' ? 'bg-amber-100 text-amber-700' :
-                              'bg-gray-100 text-gray-600'
-                            }`}>
+                            <span className={`text-xs px-2 py-0.5 rounded-full ${release.status === 'PUBLISHED' ? 'bg-teal-100 text-teal-700' :
+                                release.status === 'READY' ? 'bg-blue-100 text-blue-700' :
+                                  release.status === 'PROCESSING' ? 'bg-amber-100 text-amber-700' :
+                                    'bg-gray-100 text-gray-600'
+                              }`}>
                               {release.status}
                             </span>
                             <span className="text-sm text-navy-400">{formatRelativeDate(release.publishedAt)}</span>
@@ -352,7 +351,7 @@ export default function RepoDetailPage() {
                           Stakeholders
                         </div>
                       )}
-                      <button 
+                      <button
                         onClick={() => isPro ? setShowAudienceModal(true) : setShowUpgradeModal(true)}
                         className="w-full px-3 py-2 border border-dashed border-navy-300 rounded-lg text-navy-500 hover:border-teal-400 hover:text-teal-600 transition flex items-center justify-center gap-2"
                       >
@@ -363,7 +362,7 @@ export default function RepoDetailPage() {
                   ) : (
                     <div>
                       <p className="text-navy-500 mb-4">No configuration yet.</p>
-                      <button 
+                      <button
                         onClick={() => isPro ? setShowAudienceModal(true) : setShowUpgradeModal(true)}
                         className="px-4 py-2 text-sm bg-navy-900 text-white rounded-lg hover:bg-navy-800 transition"
                       >
@@ -471,9 +470,8 @@ export default function RepoDetailPage() {
                           <div className="flex items-start justify-between gap-3">
                             <div className="flex items-center gap-3">
                               {/* Platform icon */}
-                              <div className={`w-10 h-10 rounded-lg flex items-center justify-center text-white text-sm font-bold flex-shrink-0 ${
-                                channel.type === 'SLACK' ? 'bg-[#4A154B]' : 'bg-[#5865F2]'
-                              }`}>
+                              <div className={`w-10 h-10 rounded-lg flex items-center justify-center text-white text-sm font-bold flex-shrink-0 ${channel.type === 'SLACK' ? 'bg-[#4A154B]' : 'bg-[#5865F2]'
+                                }`}>
                                 {channel.type === 'SLACK' ? 'S' : 'D'}
                               </div>
                               <div>
@@ -486,22 +484,20 @@ export default function RepoDetailPage() {
                               <div className="flex flex-col items-end gap-1.5">
                                 <button
                                   onClick={() => handleUpdateChannel(channel.id, { enabled: !channel.enabled })}
-                                  className={`px-2.5 py-1 rounded-full text-xs font-medium transition ${
-                                    channel.enabled 
-                                      ? 'bg-teal-100 text-teal-700 hover:bg-teal-200' 
+                                  className={`px-2.5 py-1 rounded-full text-xs font-medium transition ${channel.enabled
+                                      ? 'bg-teal-100 text-teal-700 hover:bg-teal-200'
                                       : 'bg-navy-100 text-navy-500 hover:bg-navy-200'
-                                  }`}
+                                    }`}
                                 >
                                   {channel.enabled ? '● Active' : '○ Paused'}
                                 </button>
                                 <select
                                   value={channel.audience}
                                   onChange={(e) => handleUpdateChannel(channel.id, { audience: e.target.value as Channel['audience'] })}
-                                  className={`text-xs px-2 py-1 rounded-full border-0 cursor-pointer font-medium ${
-                                    channel.audience === 'CUSTOMER' ? 'bg-blue-100 text-blue-700' :
-                                    channel.audience === 'DEVELOPER' ? 'bg-purple-100 text-purple-700' :
-                                    'bg-amber-100 text-amber-700'
-                                  }`}
+                                  className={`text-xs px-2 py-1 rounded-full border-0 cursor-pointer font-medium ${channel.audience === 'CUSTOMER' ? 'bg-blue-100 text-blue-700' :
+                                      channel.audience === 'DEVELOPER' ? 'bg-purple-100 text-purple-700' :
+                                        'bg-amber-100 text-amber-700'
+                                    }`}
                                 >
                                   <option value="CUSTOMER">Customer</option>
                                   <option value="DEVELOPER">Developer</option>
@@ -529,7 +525,7 @@ export default function RepoDetailPage() {
                   <p className="text-navy-600 text-sm mb-4">
                     Disconnecting this repository will remove the webhook and delete all release data.
                   </p>
-                  <button 
+                  <button
                     onClick={handleDisconnect}
                     disabled={disconnecting}
                     className="px-4 py-2 text-sm text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition flex items-center gap-2 disabled:opacity-50"
@@ -551,27 +547,26 @@ export default function RepoDetailPage() {
       {/* Webhook Help Modal */}
       {showWebhookHelp && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setShowWebhookHelp(false)}>
-          <div 
+          <div
             className="bg-white rounded-xl max-w-lg w-full max-h-[80vh] overflow-y-auto shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="p-6 border-b border-navy-100 flex items-center justify-between">
               <h2 className="text-xl font-bold text-navy-900 flex items-center gap-2">
-                <span className={`w-7 h-7 rounded flex items-center justify-center text-white text-sm font-bold ${
-                  channelForm.type === 'SLACK' ? 'bg-[#4A154B]' : 'bg-[#5865F2]'
-                }`}>
+                <span className={`w-7 h-7 rounded flex items-center justify-center text-white text-sm font-bold ${channelForm.type === 'SLACK' ? 'bg-[#4A154B]' : 'bg-[#5865F2]'
+                  }`}>
                   {channelForm.type === 'SLACK' ? 'S' : 'D'}
                 </span>
                 {channelForm.type === 'SLACK' ? 'Slack' : 'Discord'} Webhook Setup
               </h2>
-              <button 
+              <button
                 onClick={() => setShowWebhookHelp(false)}
                 className="text-navy-400 hover:text-navy-600 transition"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
-            
+
             <div className="p-6 space-y-6">
               {channelForm.type === 'SLACK' ? (
                 /* Slack Instructions */
@@ -620,7 +615,7 @@ export default function RepoDetailPage() {
       {/* Delete Confirmation Modal */}
       {deleteConfirm && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setDeleteConfirm(null)}>
-          <div 
+          <div
             className="bg-white rounded-xl max-w-sm w-full shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
@@ -654,7 +649,7 @@ export default function RepoDetailPage() {
       {/* Upgrade Modal */}
       {showUpgradeModal && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setShowUpgradeModal(false)}>
-          <div 
+          <div
             className="bg-white rounded-xl max-w-md w-full shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
@@ -666,7 +661,7 @@ export default function RepoDetailPage() {
               <p className="text-navy-600 mb-6">
                 Create unlimited custom audiences with tailored AI prompts. Perfect for different stakeholder groups, regions, or product lines.
               </p>
-              
+
               <div className="bg-navy-50 rounded-lg p-4 mb-6 text-left">
                 <h3 className="font-semibold text-navy-900 mb-2">Pro includes:</h3>
                 <ul className="text-sm text-navy-600 space-y-1.5">
