@@ -1,189 +1,138 @@
 import { Hono } from 'hono';
 import { prisma } from '../lib/db.js';
 
-export const publicRoutes = new Hono();
+export const publicChangelog = new Hono();
 
-const getRepoBySlug = async (slug: string) => {
-  return prisma.repo.findFirst({
+// Get public changelog for a repo by slug
+publicChangelog.get('/:slug', async (c) => {
+  const slug = c.req.param('slug');
+  
+  const repo = await prisma.repo.findFirst({
     where: {
-      slug,
-      status: 'ACTIVE',
+      OR: [
+        { slug },
+        { fullName: slug.replace('-', '/') }, // Fallback to fullName
+      ],
       isPublic: true,
     },
     select: {
       id: true,
       name: true,
       fullName: true,
-      slug: true,
-      owner: true,
       description: true,
-      
-      // Branding
+      slug: true,
       publicTitle: true,
       publicDescription: true,
       publicLogoUrl: true,
       publicAccentColor: true,
       hidePoweredBy: true,
-
       user: {
         select: {
           subscriptionTier: true,
         },
       },
-
-      config: {
+      releases: {
+        orderBy: { createdAt: 'desc' },
+        take: 20,
         select: {
-          productName: true,
-          companyName: true,
-          generateCustomer: true,
-          generateDeveloper: true,
-          generateStakeholder: true,
+          id: true,
+          tagName: true,
+          releaseName: true,
+          createdAt: true,
+          notes: {
+            select: {
+              id: true,
+              audience: true,
+              content: true,
+            },
+          },
         },
       },
     },
   });
-};
-
-// No auth required - public endpoints
-publicRoutes.get('/changelog/:slug', async (c) => {
-  const slug = c.req.param('slug');
-  const limit = Math.min(parseInt(c.req.query('limit') || '20', 10), 50);
-
-  const repo = await getRepoBySlug(slug);
 
   if (!repo) {
     return c.json({ error: 'Changelog not found' }, 404);
   }
 
-  const releases = await prisma.release.findMany({
-    where: {
-      repoId: repo.id,
-      status: 'PUBLISHED',
-    },
-    include: {
-      notes: true,
-    },
-    orderBy: { publishedAt: 'desc' },
-    take: limit,
-  });
-
-  const tier = repo.user.subscriptionTier;
-  const isPaid = tier === 'PRO' || tier === 'TEAM';
-  // Allow hiding if Pro/Team and flag is set
-  const hidePoweredBy = repo.hidePoweredBy && isPaid;
+  // Only Team users can hide branding
+  const canHideBranding = repo.user.subscriptionTier === 'TEAM';
 
   return c.json({
-    slug: repo.slug,
-    name: repo.name,
+    id: repo.id,
+    name: repo.publicTitle || repo.name,
     fullName: repo.fullName,
-    description: repo.description,
-    
-    // Config info
-    productName: repo.config?.productName || repo.name,
-    companyName: repo.config?.companyName || repo.owner,
-    audiences: {
-      customer: repo.config?.generateCustomer ?? true,
-      developer: repo.config?.generateDeveloper ?? true,
-      stakeholder: repo.config?.generateStakeholder ?? true,
-    },
-
-    // Branding info
-    branding: {
-      title: repo.publicTitle || repo.config?.productName || repo.name,
-      description: repo.publicDescription || repo.description,
-      logoUrl: repo.publicLogoUrl,
-      accentColor: repo.publicAccentColor,
-      hidePoweredBy,
-      isPaid, // Useful for frontend to know if they *could* have customized it (for upsell maybe? not strictly needed)
-    },
-
-    releases: releases.map((release) => ({
-      id: release.id,
-      version: release.tagName,
-      name: release.name,
-      date: release.publishedAt?.toISOString(),
-      htmlUrl: release.htmlUrl,
-      notes: release.notes
-        ? {
-            customer: release.notes.customer,
-            developer: release.notes.developer,
-            stakeholder: release.notes.stakeholder,
-          }
-        : null,
+    description: repo.publicDescription || repo.description,
+    logoUrl: repo.publicLogoUrl,
+    accentColor: repo.publicAccentColor,
+    showPoweredBy: !canHideBranding || !repo.hidePoweredBy,
+    releases: repo.releases.map((r) => ({
+      id: r.id,
+      version: r.tagName,
+      name: r.releaseName,
+      date: r.createdAt,
+      notes: r.notes,
     })),
   });
 });
 
-publicRoutes.get('/changelog/:slug/releases', async (c) => {
+// Get releases list (paginated)
+publicChangelog.get('/:slug/releases', async (c) => {
   const slug = c.req.param('slug');
-  const limit = Math.min(parseInt(c.req.query('limit') || '10', 10), 50);
-  const page = Math.max(parseInt(c.req.query('page') || '1', 10), 1);
+  const page = parseInt(c.req.query('page') || '1');
+  const limit = parseInt(c.req.query('limit') || '20');
 
-  const repo = await getRepoBySlug(slug);
+  const repo = await prisma.repo.findFirst({
+    where: {
+      OR: [{ slug }, { fullName: slug.replace('-', '/') }],
+      isPublic: true,
+    },
+    select: { id: true },
+  });
 
   if (!repo) {
     return c.json({ error: 'Changelog not found' }, 404);
   }
 
-  const total = await prisma.release.count({
-    where: {
-      repoId: repo.id,
-      status: 'PUBLISHED',
-    },
-  });
-
-  const releases = await prisma.release.findMany({
-    where: {
-      repoId: repo.id,
-      status: 'PUBLISHED',
-    },
-    include: {
-      notes: true,
-    },
-    orderBy: { publishedAt: 'desc' },
-    take: limit,
-    skip: (page - 1) * limit,
-  });
-
-  const tier = repo.user.subscriptionTier;
-  const isPaid = tier === 'PRO' || tier === 'TEAM';
-  const hidePoweredBy = repo.hidePoweredBy && isPaid;
+  const [releases, total] = await Promise.all([
+    prisma.release.findMany({
+      where: { repoId: repo.id },
+      orderBy: { createdAt: 'desc' },
+      skip: (page - 1) * limit,
+      take: limit,
+      select: {
+        id: true,
+        tagName: true,
+        releaseName: true,
+        createdAt: true,
+      },
+    }),
+    prisma.release.count({ where: { repoId: repo.id } }),
+  ]);
 
   return c.json({
-    slug: repo.slug,
-    page,
-    limit,
-    total,
-    totalPages: Math.ceil(total / limit),
-    branding: {
-      title: repo.publicTitle || repo.config?.productName || repo.name,
-      description: repo.publicDescription || repo.description,
-      logoUrl: repo.publicLogoUrl,
-      accentColor: repo.publicAccentColor,
-      hidePoweredBy,
-    },
-    releases: releases.map((release) => ({
-      id: release.id,
-      version: release.tagName,
-      name: release.name,
-      date: release.publishedAt?.toISOString(),
-      htmlUrl: release.htmlUrl,
-      notes: release.notes
-        ? {
-            customer: release.notes.customer,
-            developer: release.notes.developer,
-            stakeholder: release.notes.stakeholder,
-          }
-        : null,
+    releases: releases.map((r) => ({
+      id: r.id,
+      version: r.tagName,
+      name: r.releaseName,
+      date: r.createdAt,
     })),
+    pagination: { page, limit, total, pages: Math.ceil(total / limit) },
   });
 });
 
-publicRoutes.get('/changelog/:slug/releases/:version', async (c) => {
+// Get single release
+publicChangelog.get('/:slug/releases/:version', async (c) => {
   const slug = c.req.param('slug');
   const version = c.req.param('version');
 
-  const repo = await getRepoBySlug(slug);
+  const repo = await prisma.repo.findFirst({
+    where: {
+      OR: [{ slug }, { fullName: slug.replace('-', '/') }],
+      isPublic: true,
+    },
+    select: { id: true, name: true, publicTitle: true },
+  });
 
   if (!repo) {
     return c.json({ error: 'Changelog not found' }, 404);
@@ -193,10 +142,20 @@ publicRoutes.get('/changelog/:slug/releases/:version', async (c) => {
     where: {
       repoId: repo.id,
       tagName: version,
-      status: 'PUBLISHED',
     },
-    include: {
-      notes: true,
+    select: {
+      id: true,
+      tagName: true,
+      releaseName: true,
+      body: true,
+      createdAt: true,
+      notes: {
+        select: {
+          id: true,
+          audience: true,
+          content: true,
+        },
+      },
     },
   });
 
@@ -204,41 +163,13 @@ publicRoutes.get('/changelog/:slug/releases/:version', async (c) => {
     return c.json({ error: 'Release not found' }, 404);
   }
 
-  const tier = repo.user.subscriptionTier;
-  const isPaid = tier === 'PRO' || tier === 'TEAM';
-  const hidePoweredBy = repo.hidePoweredBy && isPaid;
-
   return c.json({
-    slug: repo.slug,
+    repoName: repo.publicTitle || repo.name,
+    id: release.id,
     version: release.tagName,
-    name: release.name,
-    date: release.publishedAt?.toISOString(),
-    htmlUrl: release.htmlUrl,
-    notes: release.notes
-      ? {
-          customer: release.notes.customer,
-          developer: release.notes.developer,
-          stakeholder: release.notes.stakeholder,
-        }
-      : null,
-    repo: {
-      name: repo.name,
-      fullName: repo.fullName,
-      description: repo.description,
-      productName: repo.config?.productName || repo.name,
-      companyName: repo.config?.companyName || repo.owner,
-      audiences: {
-        customer: repo.config?.generateCustomer ?? true,
-        developer: repo.config?.generateDeveloper ?? true,
-        stakeholder: repo.config?.generateStakeholder ?? true,
-      },
-      branding: {
-        title: repo.publicTitle || repo.config?.productName || repo.name,
-        description: repo.publicDescription || repo.description,
-        logoUrl: repo.publicLogoUrl,
-        accentColor: repo.publicAccentColor,
-        hidePoweredBy,
-      },
-    },
+    name: release.releaseName,
+    body: release.body,
+    date: release.createdAt,
+    notes: release.notes,
   });
 });

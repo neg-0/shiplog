@@ -122,6 +122,15 @@ model Repo {
 
   defaultBranch   String   @default("main")
   
+  // Public changelog settings
+  slug            String?  @unique // e.g., "neg0-shiplog" for public URL
+  isPublic        Boolean  @default(true) // Allow public changelog
+  publicTitle     String?  // Custom title
+  publicDescription String? // Custom description
+  publicLogoUrl   String?  // Custom logo
+  publicAccentColor String? // Custom accent color (hex)
+  hidePoweredBy   Boolean  @default(false) // Team only
+  
   // Webhook
   webhookId       Int?     // GitHub webhook ID
   webhookSecret   String?  // Secret for verifying webhook payloads
