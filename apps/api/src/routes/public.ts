@@ -37,13 +37,14 @@ publicChangelog.get('/:slug', async (c) => {
         select: {
           id: true,
           tagName: true,
-          releaseName: true,
+          name: true,
           createdAt: true,
           notes: {
             select: {
               id: true,
-              audience: true,
-              content: true,
+              customer: true,
+              developer: true,
+              stakeholder: true,
             },
           },
         },
@@ -69,9 +70,13 @@ publicChangelog.get('/:slug', async (c) => {
     releases: repo.releases.map((r) => ({
       id: r.id,
       version: r.tagName,
-      name: r.releaseName,
+      name: r.name,
       date: r.createdAt,
-      notes: r.notes,
+      notes: r.notes ? {
+        customer: r.notes.customer,
+        developer: r.notes.developer,
+        stakeholder: r.notes.stakeholder,
+      } : null,
     })),
   });
 });
@@ -103,7 +108,7 @@ publicChangelog.get('/:slug/releases', async (c) => {
       select: {
         id: true,
         tagName: true,
-        releaseName: true,
+        name: true,
         createdAt: true,
       },
     }),
@@ -114,7 +119,7 @@ publicChangelog.get('/:slug/releases', async (c) => {
     releases: releases.map((r) => ({
       id: r.id,
       version: r.tagName,
-      name: r.releaseName,
+      name: r.name,
       date: r.createdAt,
     })),
     pagination: { page, limit, total, pages: Math.ceil(total / limit) },
@@ -146,14 +151,15 @@ publicChangelog.get('/:slug/releases/:version', async (c) => {
     select: {
       id: true,
       tagName: true,
-      releaseName: true,
+      name: true,
       body: true,
       createdAt: true,
       notes: {
         select: {
           id: true,
-          audience: true,
-          content: true,
+          customer: true,
+          developer: true,
+          stakeholder: true,
         },
       },
     },
@@ -167,9 +173,13 @@ publicChangelog.get('/:slug/releases/:version', async (c) => {
     repoName: repo.publicTitle || repo.name,
     id: release.id,
     version: release.tagName,
-    name: release.releaseName,
+    name: release.name,
     body: release.body,
     date: release.createdAt,
-    notes: release.notes,
+    notes: release.notes ? {
+      customer: release.notes.customer,
+      developer: release.notes.developer,
+      stakeholder: release.notes.stakeholder,
+    } : null,
   });
 });
