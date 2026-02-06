@@ -75,6 +75,7 @@ changelog.get('/', async (c) => {
   const repos = await prisma.repo.findMany({
     where: {
       status: 'ACTIVE',
+      excludeFromFeatured: false,
       releases: {
         some: {
           status: 'PUBLISHED',

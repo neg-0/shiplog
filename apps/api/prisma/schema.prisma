@@ -120,6 +120,7 @@ model Repo {
   publicLogoUrl   String?  // Custom logo
   publicAccentColor String? // Custom accent color (hex)
   hidePoweredBy   Boolean  @default(false) // Team only
+  excludeFromFeatured Boolean @default(false) // Don't show on public changelog page
   
   // Webhook
   webhookId       Int?     // GitHub webhook ID

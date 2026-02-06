@@ -4,7 +4,7 @@ import { Ship, Settings, GitBranch, Bell, Menu, X, ArrowLeft, Building2, Users, 
 import Link from 'next/link';
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { isAuthenticated } from '../../../../../lib/api';
+import { isAuthenticated } from '@/lib/api';
 
 // Placeholder types
 interface OrganizationMember {

@@ -309,6 +309,52 @@ repos.patch('/:id/config', async (c) => {
   return c.json(config);
 });
 
+// Update repo settings (public changelog options)
+repos.patch('/:id/settings', async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  const body = await c.req.json() as {
+    isPublic?: boolean;
+    slug?: string;
+    publicTitle?: string;
+    publicDescription?: string;
+    publicLogoUrl?: string;
+    publicAccentColor?: string;
+    hidePoweredBy?: boolean;
+    excludeFromFeatured?: boolean;
+  };
+
+  // Verify ownership
+  const repo = await prisma.repo.findFirst({
+    where: { id, userId: user.id },
+    select: { id: true },
+  });
+
+  if (!repo) {
+    return c.json({ error: 'Repository not found' }, 404);
+  }
+
+  const updated = await prisma.repo.update({
+    where: { id },
+    data: body,
+    select: {
+      id: true,
+      isPublic: true,
+      slug: true,
+      publicTitle: true,
+      publicDescription: true,
+      publicLogoUrl: true,
+      publicAccentColor: true,
+      hidePoweredBy: true,
+      excludeFromFeatured: true,
+    },
+  });
+
+  console.log(`📝 Updated settings for repo ${id}`);
+
+  return c.json(updated);
+});
+
 // Create a distribution channel
 repos.post('/:id/channels', async (c) => {
   const user = c.get('user');
