@@ -11,6 +11,7 @@ import { changelog } from './routes/changelog.js';
 import { user } from './routes/user.js';
 import { billing } from './routes/billing.js';
 import { organizations } from './routes/organizations.js';
+import { activity } from './routes/activity.js';
 
 const app = new Hono();
 
@@ -28,9 +29,11 @@ app.route('/auth', auth);
 app.route('/repos', repos);
 app.route('/releases', releases);
 app.route('/user', user);
+app.route('/users', user);
 app.route('/billing', billing);
-app.route('/organizations', organizations);
 app.route('/changelog', changelog);
+app.route('/organizations', organizations);
+app.route('/activity', activity);
 
 // Root
 app.get('/', (c) => {

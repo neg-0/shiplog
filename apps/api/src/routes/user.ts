@@ -43,3 +43,33 @@ user.get('/me', requireAuth, async (c) => {
     repoCount: dbUser._count.repos,
   });
 });
+
+// Update user profile
+user.patch('/me', requireAuth, async (c) => {
+  const authUser = c.get('user');
+  const body = await c.req.json();
+  
+  // Only allow updating name for now
+  const { name } = body;
+  
+  if (name !== undefined) {
+    await prisma.user.update({
+      where: { id: authUser.id },
+      data: { name },
+    });
+  }
+  
+  return c.json({ success: true });
+});
+
+// Delete user account
+user.delete('/me', requireAuth, async (c) => {
+  const authUser = c.get('user');
+  
+  // This will cascade delete repos, configs, releases, etc.
+  await prisma.user.delete({
+    where: { id: authUser.id },
+  });
+  
+  return c.json({ success: true });
+});

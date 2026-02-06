@@ -1,53 +1,66 @@
 'use client';
 
-import { Ship, Settings, GitBranch, Bell, LogOut, Menu, X, Clock, Tag, FileText } from 'lucide-react';
+import { Ship, Settings, GitBranch, Bell, LogOut, Menu, X, Clock, Tag } from 'lucide-react';
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { getActivity, getUser, isAuthenticated, clearToken, type ActivityRelease, type User as UserType } from '../../../lib/api';
+import { useRouter } from 'next/navigation';
 
-const mockUser = {
-  name: 'Dustin',
-  avatar: 'https://github.com/neg-0.png',
-};
-
-const mockActivity = [
-  {
-    id: '1',
-    type: 'release',
-    repo: 'neg-0/comp-iq',
-    title: 'v2.4.0 Released',
-    description: 'Fixed RLS policies for company isolation',
-    timestamp: '2 days ago',
-  },
-  {
-    id: '2',
-    type: 'changelog',
-    repo: 'neg-0/comp-iq',
-    title: 'Changelog generated',
-    description: '3 new entries added for v2.4.0',
-    timestamp: '2 days ago',
-  },
-  {
-    id: '3',
-    type: 'release',
-    repo: 'neg-0/comp-iq',
-    title: 'v2.3.0 Released',
-    description: 'Added contact management improvements',
-    timestamp: '5 days ago',
-  },
-];
+function formatTimeAgo(dateString: string | null) {
+  if (!dateString) return 'Unknown time';
+  const date = new Date(dateString);
+  const now = new Date();
+  const seconds = Math.floor((now.getTime() - date.getTime()) / 1000);
+  
+  if (seconds < 60) return 'just now';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  return date.toLocaleDateString();
+}
 
 export default function ActivityPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [activities, setActivities] = useState<ActivityRelease[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [user, setUser] = useState<UserType | null>(null);
+  const router = useRouter();
 
-  const getActivityIcon = (type: string) => {
-    switch (type) {
-      case 'release':
-        return <Tag className="w-5 h-5 text-teal-500" />;
-      case 'changelog':
-        return <FileText className="w-5 h-5 text-blue-500" />;
-      default:
-        return <Clock className="w-5 h-5 text-navy-500" />;
+  useEffect(() => {
+    if (!isAuthenticated()) {
+      router.push('/login');
+      return;
     }
+
+    const fetchData = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        
+        const [userData, activityData] = await Promise.all([
+          getUser(),
+          getActivity()
+        ]);
+        
+        setUser(userData);
+        setActivities(activityData.releases);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to load activity');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, [router]);
+
+  const handleLogout = () => {
+    clearToken();
+    router.push('/login');
   };
 
   return (
@@ -114,17 +127,23 @@ export default function ActivityPage() {
         </nav>
 
         <div className="absolute bottom-6 left-6 right-6">
-          <div className="flex items-center gap-3 px-4 py-3 bg-navy-800 rounded-lg">
-            <img 
-              src={mockUser.avatar} 
-              alt={mockUser.name}
-              className="w-8 h-8 rounded-full"
-            />
-            <span className="font-medium flex-1">{mockUser.name}</span>
-            <button className="text-navy-400 hover:text-white transition">
-              <LogOut className="w-4 h-4" />
-            </button>
-          </div>
+          {user && (
+            <div className="flex items-center gap-3 px-4 py-3 bg-navy-800 rounded-lg">
+              <img 
+                src={user.avatarUrl || 'https://github.com/github.png'}
+                alt={user.name || user.login}
+                className="w-8 h-8 rounded-full"
+              />
+              <span className="font-medium flex-1 truncate">{user.name || user.login}</span>
+              <button
+                onClick={handleLogout}
+                className="text-navy-400 hover:text-white transition"
+                title="Logout"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            </div>
+          )}
         </div>
       </aside>
 
@@ -133,38 +152,58 @@ export default function ActivityPage() {
         <div className="max-w-4xl mx-auto">
           <div className="mb-8">
             <h1 className="text-2xl font-bold text-navy-900">Activity</h1>
-            <p className="text-navy-600">Recent releases and changelog updates</p>
+            <p className="text-navy-600">Recent releases across all your repositories</p>
           </div>
 
-          {/* Activity List */}
-          <div className="space-y-4">
-            {mockActivity.map((item) => (
-              <div 
-                key={item.id}
-                className="bg-white rounded-xl p-4 lg:p-6 shadow-sm border border-navy-100"
-              >
-                <div className="flex items-start gap-4">
-                  <div className="w-10 h-10 bg-navy-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                    {getActivityIcon(item.type)}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                      <h3 className="font-semibold text-navy-900">{item.title}</h3>
-                      <span className="text-sm text-navy-400">{item.timestamp}</span>
+          {loading && (
+            <div className="flex items-center justify-center py-12">
+              <div className="w-8 h-8 border-2 border-teal-600 border-t-transparent rounded-full animate-spin" />
+            </div>
+          )}
+
+          {error && !loading && (
+            <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-6 text-red-700">
+              {error}
+            </div>
+          )}
+
+          {!loading && !error && (
+            <div className="space-y-4">
+              {activities.map((item) => (
+                <Link 
+                  href={`/dashboard/releases/${item.id}`}
+                  key={item.id}
+                  className="block bg-white rounded-xl p-4 lg:p-6 shadow-sm border border-navy-100 hover:border-teal-200 transition group"
+                >
+                  <div className="flex items-start gap-4">
+                    <div className="w-10 h-10 bg-navy-100 rounded-lg flex items-center justify-center flex-shrink-0 group-hover:bg-teal-50 transition">
+                      <Tag className="w-5 h-5 text-teal-600" />
                     </div>
-                    <p className="text-sm text-navy-500 mt-1">{item.repo}</p>
-                    <p className="text-navy-600 mt-2">{item.description}</p>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <h3 className="font-semibold text-navy-900 group-hover:text-teal-700 transition">
+                          [{item.repo.name}] {item.tagName}
+                        </h3>
+                        <span className="text-sm text-navy-400 flex items-center gap-1">
+                          <Clock className="w-3 h-3" />
+                          {item.publishedAt ? `published ${formatTimeAgo(item.publishedAt)}` : 'Draft'}
+                        </span>
+                      </div>
+                      <p className="text-navy-600 mt-1 truncate">
+                        {item.name || 'No title'}
+                      </p>
+                    </div>
                   </div>
-                </div>
-              </div>
-            ))}
-          </div>
+                </Link>
+              ))}
 
-          {mockActivity.length === 0 && (
-            <div className="bg-white rounded-xl p-8 lg:p-12 text-center border border-navy-100">
-              <Bell className="w-12 h-12 lg:w-16 lg:h-16 text-navy-300 mx-auto mb-4" />
-              <h3 className="text-xl font-semibold text-navy-900 mb-2">No activity yet</h3>
-              <p className="text-navy-600">Activity will appear here when you create releases</p>
+              {activities.length === 0 && (
+                <div className="bg-white rounded-xl p-8 lg:p-12 text-center border border-navy-100">
+                  <Bell className="w-12 h-12 lg:w-16 lg:h-16 text-navy-300 mx-auto mb-4" />
+                  <h3 className="text-xl font-semibold text-navy-900 mb-2">No activity yet</h3>
+                  <p className="text-navy-600">Activity will appear here when you have releases.</p>
+                </div>
+              )}
             </div>
           )}
         </div>
