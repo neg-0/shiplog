@@ -1,6 +1,6 @@
 'use client';
 
-import { Ship, Settings, GitBranch, Bell, Menu, X, ArrowLeft, Building2, Users, Plus, Loader2, AlertCircle, Crown, Shield, User } from 'lucide-react';
+import { Ship, Settings, GitBranch, Bell, Menu, X, ArrowLeft, Building2, Users, Plus, Loader2, AlertCircle, Crown, Shield, User as UserIcon } from 'lucide-react';
 import Link from 'next/link';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
@@ -57,7 +57,7 @@ export default function OrganizationsPage() {
     switch (role) {
       case 'OWNER': return <Crown className="w-4 h-4 text-amber-500" />;
       case 'ADMIN': return <Shield className="w-4 h-4 text-blue-500" />;
-      default: return <User className="w-4 h-4 text-navy-400" />;
+      default: return <UserIcon className="w-4 h-4 text-navy-400" />;
     }
   };
 
