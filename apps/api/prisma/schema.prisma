@@ -34,6 +34,9 @@ model User {
   
   // Relations
   repos           Repo[]
+  ownedOrganizations Organization[] @relation("OrgOwner")
+  organizationMemberships OrganizationMember[]
+  organizationInvites OrganizationInvite[]
   
   @@map("users")
 }
@@ -42,6 +45,58 @@ enum SubscriptionTier {
   FREE
   PRO
   TEAM
+}
+
+// ============================================
+// ORGANIZATIONS
+// ============================================
+
+model Organization {
+  id              String   @id @default(cuid())
+  name            String
+  slug            String   @unique
+  githubOrgId     Int?
+  githubOrgLogin  String?
+  ownerId         String
+  owner           User     @relation("OrgOwner", fields: [ownerId], references: [id])
+  members         OrganizationMember[]
+  invites         OrganizationInvite[]
+  repos           Repo[]
+  subscriptionId  String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model OrganizationMember {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role           OrgRole      @default(MEMBER)
+  joinedAt       DateTime     @default(now())
+
+  @@unique([organizationId, userId])
+}
+
+model OrganizationInvite {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  email          String
+  role           OrgRole      @default(MEMBER)
+  invitedById    String
+  invitedBy      User         @relation(fields: [invitedById], references: [id])
+  expiresAt      DateTime
+  createdAt      DateTime     @default(now())
+
+  @@unique([organizationId, email])
+}
+
+enum OrgRole {
+  OWNER
+  ADMIN
+  MEMBER
 }
 
 // ============================================
@@ -71,6 +126,8 @@ model Repo {
   // Relations
   userId          String
   user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organizationId  String?
+  organization    Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
   config          RepoConfig?
   releases        Release[]
   
