@@ -110,16 +110,6 @@ model Repo {
   fullName        String   // e.g., "neg-0/shiplog"
   owner           String   // e.g., "neg-0"
   description     String?
-  slug            String   @unique // e.g., "neg-0-shiplog"
-  isPublic        Boolean  @default(true)
-  
-  // Public page customization
-  publicTitle       String?
-  publicDescription String?
-  publicLogoUrl     String?
-  publicAccentColor String?
-  hidePoweredBy     Boolean   @default(false)
-
   defaultBranch   String   @default("main")
   
   // Public changelog settings
