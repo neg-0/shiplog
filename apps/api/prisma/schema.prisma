@@ -142,6 +142,7 @@ model Channel {
   audience        Audience @default(CUSTOMER)
   
   enabled         Boolean  @default(true)
+  autoPublish     Boolean  @default(true)
   
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt

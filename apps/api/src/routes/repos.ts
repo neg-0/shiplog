@@ -319,6 +319,7 @@ repos.post('/:id/channels', async (c) => {
     webhookUrl: string;
     audience: 'CUSTOMER' | 'DEVELOPER' | 'STAKEHOLDER';
     enabled?: boolean;
+    autoPublish?: boolean;
   };
 
   const repo = await prisma.repo.findFirst({
@@ -342,6 +343,7 @@ repos.post('/:id/channels', async (c) => {
       webhookUrl: body.webhookUrl,
       audience: body.audience,
       enabled: body.enabled ?? true,
+      autoPublish: body.autoPublish ?? true,
     },
   });
 
@@ -358,6 +360,7 @@ repos.patch('/:id/channels/:channelId', async (c) => {
     webhookUrl?: string;
     audience?: 'CUSTOMER' | 'DEVELOPER' | 'STAKEHOLDER';
     enabled?: boolean;
+    autoPublish?: boolean;
   };
 
   const channel = await prisma.channel.findFirst({

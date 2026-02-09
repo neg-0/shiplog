@@ -5,12 +5,14 @@ import { serve } from '@hono/node-server';
 import { webhooks } from './routes/webhooks.js';
 import { auth } from './routes/auth.js';
 import { repos } from './routes/repos.js';
+import { importRouter } from './routes/import.js';
 import { releases } from './routes/releases.js';
 import { health } from './routes/health.js';
 import { changelog } from './routes/changelog.js';
 import { user } from './routes/user.js';
 import { billing } from './routes/billing.js';
 import { publicChangelog } from './routes/public.js';
+import { feedback } from './routes/feedback.js';
 
 const app = new Hono();
 
@@ -26,11 +28,13 @@ app.route('/health', health);
 app.route('/webhooks', webhooks);
 app.route('/auth', auth);
 app.route('/repos', repos);
+app.route('/import', importRouter);
 app.route('/releases', releases);
 app.route('/user', user);
 app.route('/billing', billing);
 app.route('/changelog', changelog);
 app.route('/public', publicChangelog);
+app.route('/feedback', feedback);
 
 // Root
 app.get('/', (c) => {

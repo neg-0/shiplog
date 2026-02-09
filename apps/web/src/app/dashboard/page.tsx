@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { getRepos, getUser, setToken, isAuthenticated, clearToken, type Repo, type User } from '../../lib/api';
+import { FeedbackWidget } from '../components/FeedbackWidget';
 
 function DashboardContent() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -281,6 +282,7 @@ function DashboardContent() {
           )}
         </div>
       </main>
+      <FeedbackWidget userEmail={user?.email} />
     </div>
   );
 }

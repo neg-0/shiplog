@@ -47,7 +47,14 @@ pnpm dev
 
 ## Status
 
-🚧 **Under Development** — MVP in progress
+🟢 **MVP Live** (Beta) — [shiplog.io](https://shiplog.io)
+
+## Key Features
+
+- **Multi-Audience Generation:** Automatically creates Customer, Developer, and Stakeholder versions of every release.
+- **Channel Control:** Configure auto-publishing per channel (Slack/Discord/Email) or review first.
+- **Hosted Changelog:** Beautiful, SEO-friendly page for your users.
+- **Zero Config:** Connects via GitHub OAuth in seconds.
 
 ## Environment Variables
 

@@ -1,10 +1,10 @@
 'use client';
 
-import { Ship, Settings, GitBranch, Bell, Menu, X, ArrowLeft, ExternalLink, Tag, Users, Loader2, AlertCircle, Trash2, HelpCircle, Lock, Zap, Plus } from 'lucide-react';
+import { Ship, Settings, GitBranch, Bell, Menu, X, ArrowLeft, ExternalLink, Tag, Users, Loader2, AlertCircle, Trash2, HelpCircle, Lock, Zap, Plus, History } from 'lucide-react';
 import Link from 'next/link';
 import { useState, useEffect, type FormEvent } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { addChannel, deleteChannel, disconnectRepo, getRepo, getUser, isAuthenticated, updateChannel, type Channel, type RepoDetail, type User } from '../../../../lib/api';
+import { addChannel, deleteChannel, disconnectRepo, getRepo, getUser, isAuthenticated, updateChannel, importHistory, type Channel, type RepoDetail, type User } from '../../../../lib/api';
 
 export default function RepoDetailPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -21,12 +21,16 @@ export default function RepoDetailPage() {
     webhookUrl: '',
     audience: 'CUSTOMER',
     enabled: true,
+    autoPublish: true,
   });
   const [showWebhookHelp, setShowWebhookHelp] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<{ channelId: string; name: string } | null>(null);
   const [showAudienceModal, setShowAudienceModal] = useState(false);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [user, setUser] = useState<User | null>(null);
+  
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<{ imported: number; errors?: string[] } | null>(null);
   
   const params = useParams();
   const router = useRouter();
@@ -76,6 +80,23 @@ export default function RepoDetailPage() {
     }
   };
 
+  const handleImportHistory = async () => {
+    setImporting(true);
+    setImportResult(null);
+    setError(null);
+    try {
+      const result = await importHistory(repoId);
+      setImportResult(result);
+      // Refresh repo data to show new releases
+      const repoData = await getRepo(repoId);
+      setRepo(repoData);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to import history');
+    } finally {
+      setImporting(false);
+    }
+  };
+
   const handleAddChannel = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setChannelError(null);
@@ -95,6 +116,7 @@ export default function RepoDetailPage() {
         webhookUrl: '',
         audience: 'CUSTOMER',
         enabled: true,
+        autoPublish: true,
       });
     } catch (err) {
       setChannelError(err instanceof Error ? err.message : 'Failed to add channel');
@@ -329,6 +351,49 @@ export default function RepoDetailPage() {
                   )}
                 </div>
 
+                {/* Import History */}
+                <div className="bg-white rounded-xl p-4 lg:p-6 shadow-sm border border-navy-100">
+                  <div className="flex items-center gap-3 mb-4">
+                    <History className="w-5 h-5 text-navy-600" />
+                    <h2 className="text-lg font-semibold text-navy-900">Import History</h2>
+                  </div>
+                  <p className="text-sm text-navy-600 mb-4">
+                    Backfill up to 10 past releases from GitHub. These will be added to your dashboard but <strong>not</strong> sent to channels.
+                  </p>
+                  
+                  {importResult && (
+                    <div className="mb-4 p-3 bg-teal-50 border border-teal-200 rounded-lg text-sm">
+                      <p className="text-teal-800 font-medium">Successfully imported {importResult.imported} releases.</p>
+                      {importResult.errors && importResult.errors.length > 0 && (
+                         <div className="mt-2 text-red-600">
+                           <p className="font-medium">Some errors occurred:</p>
+                           <ul className="list-disc list-inside">
+                             {importResult.errors.map((e, i) => <li key={i}>{e}</li>)}
+                           </ul>
+                         </div>
+                      )}
+                    </div>
+                  )}
+
+                  <button
+                    onClick={handleImportHistory}
+                    disabled={importing}
+                    className="w-full px-4 py-2 border border-navy-200 text-navy-600 rounded-lg font-medium hover:bg-navy-50 transition flex items-center justify-center gap-2 disabled:opacity-50"
+                  >
+                    {importing ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Importing...
+                      </>
+                    ) : (
+                      <>
+                        <History className="w-4 h-4" />
+                        Import Last 10 Releases
+                      </>
+                    )}
+                  </button>
+                </div>
+
                 {/* Config */}
                 <div className="bg-white rounded-xl p-4 lg:p-6 shadow-sm border border-navy-100">
                   <div className="flex items-center gap-3 mb-4">
@@ -452,6 +517,18 @@ export default function RepoDetailPage() {
                         />
                       </div>
                     </div>
+                    <div className="flex items-center gap-2 py-1">
+                      <input
+                        type="checkbox"
+                        id="autoPublish"
+                        checked={channelForm.autoPublish}
+                        onChange={(e) => setChannelForm(prev => ({ ...prev, autoPublish: e.target.checked }))}
+                        className="rounded border-navy-200 text-teal-600 focus:ring-teal-500"
+                      />
+                      <label htmlFor="autoPublish" className="text-xs font-medium text-navy-700">
+                        Auto-publish releases to this channel
+                      </label>
+                    </div>
                     <button
                       type="submit"
                       disabled={channelSaving}
@@ -493,6 +570,17 @@ export default function RepoDetailPage() {
                                   }`}
                                 >
                                   {channel.enabled ? '● Active' : '○ Paused'}
+                                </button>
+                                <button
+                                  onClick={() => handleUpdateChannel(channel.id, { autoPublish: !channel.autoPublish })}
+                                  className={`px-2.5 py-1 rounded-full text-xs font-medium transition ${
+                                    channel.autoPublish 
+                                      ? 'bg-blue-50 text-blue-600 hover:bg-blue-100' 
+                                      : 'bg-amber-50 text-amber-600 hover:bg-amber-100'
+                                  }`}
+                                  title={channel.autoPublish ? "Automatically publishes new releases" : "Requires manual approval"}
+                                >
+                                  {channel.autoPublish ? 'Auto: ON' : 'Auto: OFF'}
                                 </button>
                                 <select
                                   value={channel.audience}

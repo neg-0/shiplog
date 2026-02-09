@@ -151,6 +151,13 @@ webhooks.post('/github', async (c) => {
       if (config?.channels?.length) {
         for (const channel of config.channels) {
           if (!channel.enabled) continue;
+          
+          // Skip if auto-publish is disabled for this channel
+          if (channel.autoPublish === false) {
+            console.log(`ℹ️ Skipping auto-publish for channel: ${channel.name}`);
+            continue;
+          }
+
           if (channel.type === 'WEBHOOK') continue;
 
           const audience = channel.audience.toLowerCase() as DistributionTarget['audience'];

@@ -123,6 +123,7 @@ export interface Channel {
   webhookUrl: string;
   audience: 'CUSTOMER' | 'DEVELOPER' | 'STAKEHOLDER';
   enabled: boolean;
+  autoPublish: boolean;
 }
 
 export interface RepoDetail extends Repo {
@@ -219,6 +220,14 @@ export async function deleteChannel(repoId: string, channelId: string): Promise<
   return fetchApi(`/repos/${repoId}/channels/${channelId}`, {
     method: 'DELETE',
   });
+}
+
+export async function importHistory(repoId: string, limit: number = 10): Promise<{ imported: number; errors?: string[] }> {
+  const res = await fetchApi(`/import/repos/${repoId}/backfill`, {
+    method: 'POST',
+    body: JSON.stringify({ limit }),
+  });
+  return res as { imported: number; errors?: string[] };
 }
 
 // ============================================

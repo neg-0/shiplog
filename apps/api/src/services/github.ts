@@ -291,3 +291,30 @@ export async function listUserRepos(
     description: r.description,
   }));
 }
+
+/**
+ * List releases for a repository
+ */
+export async function listReleases(
+  owner: string,
+  repo: string,
+  accessToken: string,
+  limit: number = 10
+): Promise<GitHubRelease[]> {
+  const headers = {
+    'Authorization': `Bearer ${accessToken}`,
+    'Accept': 'application/vnd.github.v3+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+  };
+
+  const response = await fetch(
+    `https://api.github.com/repos/${owner}/${repo}/releases?per_page=${limit}`,
+    { headers }
+  );
+
+  if (!response.ok) {
+    throw new Error(`Failed to list releases: ${response.status}`);
+  }
+
+  return (await response.json()) as GitHubRelease[];
+}
