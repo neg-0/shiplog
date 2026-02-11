@@ -67,13 +67,35 @@ billing.post('/checkout', requireAuth, async (c) => {
 
   let customerId = dbUser.stripeCustomerId;
 
-  // Helper to create a new Stripe customer
+  // Helper to create a new Stripe customer (or find existing by email)
   const createNewCustomer = async () => {
+    // 1. Check if customer already exists in Stripe by email
+    if (dbUser.email) {
+      const existingCustomers = await stripe.customers.list({
+        email: dbUser.email,
+        limit: 1,
+      });
+
+      if (existingCustomers.data.length > 0) {
+        const existingId = existingCustomers.data[0].id;
+        console.log(`♻️ Found existing Stripe customer ${existingId} for ${dbUser.email}`);
+        
+        await prisma.user.update({
+          where: { id: dbUser.id },
+          data: { stripeCustomerId: existingId },
+        });
+        
+        return existingId;
+      }
+    }
+
+    // 2. Create new if not found
     const customer = await stripe.customers.create({
       email: dbUser.email ?? undefined,
       name: dbUser.name ?? dbUser.login,
       metadata: {
         userId: dbUser.id,
+        githubId: dbUser.githubId.toString(), // Add GitHub ID metadata for cross-ref
       },
     });
 
@@ -243,6 +265,7 @@ billing.post('/webhook', async (c) => {
       }
       break;
     }
+    case 'customer.subscription.created':
     case 'customer.subscription.updated':
     case 'customer.subscription.deleted': {
       const subscription = event.data.object as Stripe.Subscription;

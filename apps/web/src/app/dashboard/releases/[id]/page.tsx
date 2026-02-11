@@ -1,11 +1,13 @@
 'use client';
 
 import { DashboardLayout } from '@/components/DashboardLayout';
-import { AlertCircle, ArrowLeft, Check, Code, Copy, Edit3, ExternalLink, Eye, Loader2, RefreshCw, Send, Tag } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/Dialog';
+import { AlertCircle, ArrowLeft, Check, Code, Copy, Edit3, ExternalLink, Eye, Loader2, RefreshCw, Send, Tag, MessageSquare } from 'lucide-react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
+import MDEditor from '@uiw/react-md-editor';
 import { getRelease, getUser, isAuthenticated, publishRelease, regenerateNotes, updateReleaseNotes, type Release, type User } from '../../../../lib/api';
 
 type Tab = 'customer' | 'developer' | 'stakeholder';
@@ -21,8 +23,9 @@ export default function ReleaseDetailPage() {
   const [editContent, setEditContent] = useState('');
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [viewMode, setViewMode] = useState<'rendered' | 'raw'>('rendered');
   const [user, setUser] = useState<User | null>(null);
+  const [showPublishDialog, setShowPublishDialog] = useState(false);
+  const [selectedChannels, setSelectedChannels] = useState<string[]>([]);
 
   const params = useParams();
   const router = useRouter();
@@ -44,6 +47,14 @@ export default function ReleaseDetailPage() {
         ]);
         setRelease(data);
         setUser(userData);
+        // Pre-select enabled channels
+        if (data.repo?.config?.channels) {
+          setSelectedChannels(
+            data.repo.config.channels
+              .filter(c => c.enabled)
+              .map(c => c.id)
+          );
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load release');
       } finally {
@@ -58,7 +69,6 @@ export default function ReleaseDetailPage() {
     if (!release) return;
     try {
       setRegenerating(true);
-      // TODO: Update API to support per-audience regeneration
       await regenerateNotes(releaseId);
       const data = await getRelease(releaseId);
       setRelease(data);
@@ -73,9 +83,10 @@ export default function ReleaseDetailPage() {
     if (!release) return;
     try {
       setPublishing(true);
-      await publishRelease(releaseId);
+      await publishRelease(releaseId, selectedChannels);
       const data = await getRelease(releaseId);
       setRelease(data);
+      setShowPublishDialog(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to publish release');
     } finally {
@@ -87,7 +98,6 @@ export default function ReleaseDetailPage() {
     if (!release?.notes) return;
     setEditContent(release.notes[activeTab]);
     setEditing(true);
-    setViewMode('raw');
   };
 
   const handleSave = async () => {
@@ -98,7 +108,6 @@ export default function ReleaseDetailPage() {
       const data = await getRelease(releaseId);
       setRelease(data);
       setEditing(false);
-      setViewMode('rendered');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save changes');
     } finally {
@@ -195,14 +204,13 @@ export default function ReleaseDetailPage() {
                     <ExternalLink className="w-4 h-4" />
                     GitHub
                   </a>
-                  {release.notes && release.status !== 'PUBLISHED' && (
+                  {release.notes && (
                     <button
-                      onClick={handlePublish}
-                      disabled={publishing}
-                      className="px-4 py-2 text-sm bg-teal-600 text-white rounded-lg hover:bg-teal-500 transition flex items-center gap-2 disabled:opacity-50"
+                      onClick={() => setShowPublishDialog(true)}
+                      className="px-4 py-2 text-sm bg-teal-600 text-white rounded-lg hover:bg-teal-500 transition flex items-center gap-2"
                     >
-                      {publishing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                      Publish
+                      <Send className="w-4 h-4" />
+                      {release.status === 'PUBLISHED' ? 'Republish' : 'Publish'}
                     </button>
                   )}
                 </div>
@@ -217,7 +225,7 @@ export default function ReleaseDetailPage() {
                   {(Object.keys(tabConfig) as Tab[]).map((tab) => (
                     <button
                       key={tab}
-                      onClick={() => { setActiveTab(tab); setEditing(false); setViewMode('rendered'); }}
+                      onClick={() => { setActiveTab(tab); setEditing(false); }}
                       className={`px-6 py-4 text-sm font-medium transition flex-shrink-0 ${activeTab === tab
                           ? 'text-teal-600 border-b-2 border-teal-600 bg-teal-50/50'
                           : 'text-navy-600 hover:text-navy-900 hover:bg-navy-50'
@@ -235,32 +243,7 @@ export default function ReleaseDetailPage() {
                 <div className="p-6">
                   {/* Action Bar */}
                   <div className="flex items-center justify-between mb-4 pb-4 border-b border-navy-100">
-                    {/* View Toggle (when not editing) */}
-                    {!editing && (
-                      <div className="flex items-center gap-1 bg-navy-100 rounded-lg p-1">
-                        <button
-                          onClick={() => setViewMode('rendered')}
-                          className={`px-3 py-1.5 text-sm rounded-md transition flex items-center gap-1.5 ${viewMode === 'rendered'
-                              ? 'bg-white text-navy-900 shadow-sm'
-                              : 'text-navy-600 hover:text-navy-900'
-                            }`}
-                        >
-                          <Eye className="w-3.5 h-3.5" />
-                          Preview
-                        </button>
-                        <button
-                          onClick={() => setViewMode('raw')}
-                          className={`px-3 py-1.5 text-sm rounded-md transition flex items-center gap-1.5 ${viewMode === 'raw'
-                              ? 'bg-white text-navy-900 shadow-sm'
-                              : 'text-navy-600 hover:text-navy-900'
-                            }`}
-                        >
-                          <Code className="w-3.5 h-3.5" />
-                          Markdown
-                        </button>
-                      </div>
-                    )}
-                    {editing && <div />}
+                    <div /> {/* Spacer */}
 
                     {/* Actions */}
                     <div className="flex items-center gap-2">
@@ -295,15 +278,20 @@ export default function ReleaseDetailPage() {
 
                   {editing ? (
                     <div>
-                      <textarea
-                        value={editContent}
-                        onChange={(e) => setEditContent(e.target.value)}
-                        className="w-full h-96 p-4 border border-navy-200 rounded-lg font-mono text-sm text-navy-900 focus:outline-none focus:ring-2 focus:ring-teal-500 resize-y"
-                        placeholder="Enter markdown content..."
-                      />
-                      <div className="flex justify-end gap-2 mt-4">
+                      <div className="mb-4 border border-navy-200 rounded-lg overflow-hidden" data-color-mode="light">
+                        <MDEditor
+                          value={editContent}
+                          onChange={(val) => setEditContent(val || '')}
+                          preview="edit"
+                          height={400}
+                          visibleDragbar={false}
+                          hideToolbar={false}
+                          enableScroll={true}
+                        />
+                      </div>
+                      <div className="flex justify-end gap-2">
                         <button
-                          onClick={() => { setEditing(false); setViewMode('rendered'); }}
+                          onClick={() => { setEditing(false); }}
                           className="px-4 py-2 text-sm text-navy-600 hover:text-navy-900 transition"
                         >
                           Cancel
@@ -318,10 +306,6 @@ export default function ReleaseDetailPage() {
                         </button>
                       </div>
                     </div>
-                  ) : viewMode === 'raw' ? (
-                    <pre className="w-full p-4 bg-navy-50 border border-navy-200 rounded-lg font-mono text-sm text-navy-900 overflow-x-auto whitespace-pre-wrap">
-                      {release.notes[activeTab]}
-                    </pre>
                   ) : (
                     <div className="prose prose-navy max-w-none prose-headings:text-navy-900 prose-p:text-navy-700 prose-li:text-navy-700 prose-strong:text-navy-900 prose-code:bg-navy-100 prose-code:px-1 prose-code:rounded prose-code:text-sm prose-code:before:content-none prose-code:after:content-none">
                       <ReactMarkdown>
@@ -361,6 +345,74 @@ export default function ReleaseDetailPage() {
             )}
           </>
         )}
+
+        {/* Publish Dialog */}
+        <Dialog open={showPublishDialog} onOpenChange={setShowPublishDialog}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Publish Release Notes</DialogTitle>
+              <DialogDescription>
+                Choose where you want to send this update.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              {release?.repo.config?.channels && release.repo.config.channels.length > 0 ? (
+                <div className="space-y-2">
+                  {release.repo.config.channels.map((channel) => (
+                    <div key={channel.id} className="flex items-center gap-3 p-3 rounded-lg border border-navy-100 bg-navy-50/50">
+                      <input
+                        type="checkbox"
+                        checked={selectedChannels.includes(channel.id)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedChannels([...selectedChannels, channel.id]);
+                          } else {
+                            setSelectedChannels(selectedChannels.filter(id => id !== channel.id));
+                          }
+                        }}
+                        className="rounded border-navy-300 text-teal-600 focus:ring-teal-500"
+                      />
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          {channel.type === 'SLACK' ? (
+                            <MessageSquare className="w-4 h-4 text-[#4A154B]" />
+                          ) : (
+                            <MessageSquare className="w-4 h-4 text-[#5865F2]" />
+                          )}
+                          <span className="font-medium text-navy-900">{channel.name}</span>
+                        </div>
+                        <p className="text-xs text-navy-500 capitalize">{channel.audience} Audience</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-6 bg-navy-50 rounded-lg">
+                  <p className="text-navy-600 mb-2">No channels configured.</p>
+                  <Link href={`/dashboard/repos/${release?.repo.id}`} className="text-teal-600 hover:underline text-sm">
+                    Add a channel in settings
+                  </Link>
+                </div>
+              )}
+            </div>
+            <DialogFooter>
+              <button
+                onClick={() => setShowPublishDialog(false)}
+                className="px-4 py-2 text-sm text-navy-600 hover:text-navy-900 transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handlePublish}
+                disabled={publishing || selectedChannels.length === 0}
+                className="px-4 py-2 text-sm bg-teal-600 text-white rounded-lg hover:bg-teal-500 transition disabled:opacity-50 flex items-center gap-2"
+              >
+                {publishing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                Send to {selectedChannels.length} channel{selectedChannels.length !== 1 ? 's' : ''}
+              </button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </DashboardLayout>
   );
