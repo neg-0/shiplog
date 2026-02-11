@@ -261,6 +261,9 @@ export interface Release {
   repo: {
     id: string;
     fullName: string;
+    config?: {
+      channels?: Channel[];
+    };
   };
   notes: ReleaseNotes | null;
 }
