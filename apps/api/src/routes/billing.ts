@@ -58,6 +58,7 @@ billing.post('/checkout', requireAuth, async (c) => {
       name: true,
       login: true,
       stripeCustomerId: true,
+      githubId: true, // Add this
     },
   });
 
