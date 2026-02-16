@@ -1,6 +1,7 @@
 import { Ship, Tag, Calendar, ExternalLink, ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import { FeedbackWidget } from '@/components/FeedbackWidget';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.shiplog.io';
 
@@ -156,6 +157,8 @@ export default async function PublicChangelogPage({ params }: { params: { slug: 
           </div>
         </footer>
       )}
+      
+      <FeedbackWidget repoId={data.id} repoName={data.name} />
     </div>
   );
 }

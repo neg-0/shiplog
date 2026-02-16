@@ -3,6 +3,36 @@ import { prisma } from '../lib/db.js';
 
 export const publicChangelog = new Hono();
 
+// Submit feedback
+publicChangelog.post('/feedback', async (c) => {
+  const { repoId, feedback, email, source } = await c.req.json();
+
+  if (!repoId || !feedback) {
+    return c.json({ error: 'Missing required fields' }, 400);
+  }
+
+  // Log feedback
+  console.log(`[Feedback] Repo: ${repoId}, Content: ${feedback}, Email: ${email}`);
+
+  // Send to Discord if configured
+  if (process.env.DISCORD_FEEDBACK_WEBHOOK_URL) {
+    try {
+      await fetch(process.env.DISCORD_FEEDBACK_WEBHOOK_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content: `**New Feedback** 📝\n**Repo ID:** \`${repoId}\`\n**Message:** ${feedback}\n**Contact:** ${email || 'Anonymous'}\n**Source:** ${source || 'widget'}`,
+        }),
+      });
+    } catch (err) {
+      console.error('Failed to send feedback to Discord', err);
+    }
+  }
+
+  // TODO: Persist to DB in the future
+  return c.json({ success: true });
+});
+
 // Get public changelog for a repo by slug
 publicChangelog.get('/:slug', async (c) => {
   const slug = c.req.param('slug');
