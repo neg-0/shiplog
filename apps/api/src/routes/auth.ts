@@ -155,6 +155,41 @@ auth.get('/github/callback', async (c) => {
   return c.redirect(redirectUrl.toString());
 });
 
+// Demo Login (Bypass for QA/Demos)
+auth.post('/demo', async (c) => {
+  if (process.env.ENABLE_DEMO_LOGIN !== 'true') {
+    return c.json({ error: 'Demo login disabled' }, 403);
+  }
+
+  const DEMO_GITHUB_ID = -1;
+  const DEMO_EMAIL = 'demo@shiplog.io';
+  
+  // Encrypt a dummy token
+  const encryptedAccessToken = await encrypt('demo-access-token');
+
+  const dbUser = await prisma.user.upsert({
+    where: { githubId: DEMO_GITHUB_ID },
+    create: {
+      githubId: DEMO_GITHUB_ID,
+      login: 'demo-user',
+      name: 'Captain Demo',
+      email: DEMO_EMAIL,
+      avatarUrl: 'https://github.com/ghost.png',
+      accessToken: encryptedAccessToken,
+      subscriptionTier: 'PRO', // Give them PRO features for demo
+    },
+    update: {
+      login: 'demo-user', // Reset values just in case
+      accessToken: encryptedAccessToken,
+      subscriptionTier: 'PRO',
+    },
+  });
+
+  const sessionToken = await signToken(dbUser.id);
+  
+  return c.json({ token: sessionToken, user: { id: dbUser.id, login: dbUser.login } });
+});
+
 // Logout
 auth.post('/logout', (c) => {
   // TODO: Invalidate session
