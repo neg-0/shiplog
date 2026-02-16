@@ -27,11 +27,26 @@ const getPriceId = (plan: string | null | undefined) => {
 
 import { SubscriptionTier } from '@prisma/client';
 
-const getTierFromPrice = (priceId?: string | null): SubscriptionTier => {
-  console.log(`[Billing] Resolving tier for priceId: ${priceId}. Expected PRO: ${pricePro}, TEAM: ${priceTeam}`);
-  if (priceId && priceId === pricePro) return 'PRO';
-  if (priceId && priceId === priceTeam) return 'TEAM';
-  console.warn(`[Billing] Price ID mismatch or missing. Defaulting to FREE.`);
+const getTierFromPrice = (price?: Stripe.Price | null): SubscriptionTier => {
+  if (!price) {
+    console.warn('[Billing] No price object provided to resolver. Defaulting to FREE.');
+    return 'FREE';
+  }
+  
+  const priceId = price.id;
+  const lookupKey = price.lookup_key;
+
+  console.log(`[Billing] Resolving tier. ID: ${priceId}, Lookup: ${lookupKey}. Expected PRO: ${pricePro}, TEAM: ${priceTeam}`);
+
+  // Check by ID (Env Var)
+  if (priceId === pricePro) return 'PRO';
+  if (priceId === priceTeam) return 'TEAM';
+
+  // Check by Lookup Key (Fallback/Robustness)
+  if (lookupKey === 'pro_monthly' || lookupKey === 'pro_yearly') return 'PRO';
+  if (lookupKey === 'team_monthly' || lookupKey === 'team_yearly') return 'TEAM';
+
+  console.warn(`[Billing] Price mismatch. ID: ${priceId}, Lookup: ${lookupKey}. Defaulting to FREE.`);
   return 'FREE';
 };
 
@@ -245,8 +260,8 @@ billing.post('/webhook', async (c) => {
         const subscription = await stripe.subscriptions.retrieve(subscriptionId, {
           expand: ['items.data.price'],
         });
-        const priceId = subscription.items.data[0]?.price?.id;
-        const tier = getTierFromPrice(priceId);
+        const price = subscription.items.data[0]?.price;
+        const tier = getTierFromPrice(price as Stripe.Price);
         const trialEndsAt = subscription.trial_end ? new Date(subscription.trial_end * 1000) : null;
 
         const data = {
@@ -273,8 +288,8 @@ billing.post('/webhook', async (c) => {
     case 'customer.subscription.deleted': {
       const subscription = event.data.object as Stripe.Subscription;
       const customerId = subscription.customer as string;
-      const priceId = subscription.items.data[0]?.price?.id;
-      const tier: SubscriptionTier = shouldDowngrade(subscription.status) ? 'FREE' : getTierFromPrice(priceId);
+      const price = subscription.items.data[0]?.price;
+      const tier: SubscriptionTier = shouldDowngrade(subscription.status) ? 'FREE' : getTierFromPrice(price as Stripe.Price);
       const trialEndsAt = subscription.trial_end ? new Date(subscription.trial_end * 1000) : null;
 
       await updateByCustomer(customerId, {
