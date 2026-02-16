@@ -2,7 +2,7 @@
 
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { ConfirmDialog } from '@/components/Dialog';
-import { AlertCircle, ArrowLeft, Bell, ExternalLink, GitBranch, HelpCircle, Loader2, Lock, Plus, Tag, Trash2, Users, X, Zap } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Bell, ExternalLink, GitBranch, HelpCircle, Loader2, Lock, Plus, Settings, Tag, Trash2, Users, X, Zap } from 'lucide-react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useEffect, useState, type FormEvent } from 'react';
@@ -203,6 +203,13 @@ export default function RepoDetailPage() {
                   </div>
                 </div>
                 <div className="flex flex-col sm:flex-row gap-2">
+                  <Link
+                    href={`/dashboard/repos/${repoId}/settings`}
+                    className="px-4 py-2 text-sm text-navy-600 border border-navy-200 rounded-lg hover:bg-navy-50 transition flex items-center justify-center gap-2"
+                  >
+                    <Settings className="w-4 h-4" />
+                    Settings
+                  </Link>
                   <a
                     href={`https://github.com/${repo.fullName}`}
                     target="_blank"
@@ -210,13 +217,8 @@ export default function RepoDetailPage() {
                     className="px-4 py-2 text-sm text-navy-600 border border-navy-200 rounded-lg hover:bg-navy-50 transition flex items-center justify-center gap-2"
                   >
                     <ExternalLink className="w-4 h-4" />
-                    View on GitHub
+                    GitHub
                   </a>
-                  {/* TODO: Wire up Generate Changelog functionality */}
-                  {/* <button className="px-4 py-2 text-sm bg-teal-600 text-white rounded-lg hover:bg-teal-500 transition flex items-center justify-center gap-2">
-                    <Sparkles className="w-4 h-4" />
-                    Generate Changelog
-                  </button> */}
                 </div>
               </div>
             </div>
@@ -447,26 +449,6 @@ export default function RepoDetailPage() {
                     ))
                   )}
                 </div>
-              </div>
-
-              {/* Danger Zone */}
-              <div className="bg-white rounded-xl p-4 lg:p-6 shadow-sm border border-red-200">
-                <h2 className="text-lg font-semibold text-red-600 mb-4">Danger Zone</h2>
-                <p className="text-navy-600 text-sm mb-4">
-                  Disconnecting this repository will remove the webhook and delete all release data.
-                </p>
-                <button
-                  onClick={handleDisconnect}
-                  disabled={disconnecting}
-                  className="px-4 py-2 text-sm text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition flex items-center gap-2 disabled:opacity-50"
-                >
-                  {disconnecting ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Trash2 className="w-4 h-4" />
-                  )}
-                  Disconnect Repository
-                </button>
               </div>
             </div>
           </>
