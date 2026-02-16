@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { prisma } from '../lib/db.js';
 import { requireAuth, decrypt } from '../lib/auth.js';
 import { listUserRepos, createWebhook, deleteWebhook } from '../services/github.js';
+import { importRepoHistory } from '../services/importer.js';
 
 export const repos = new Hono();
 
@@ -243,6 +244,11 @@ repos.post('/connect', async (c) => {
     });
 
     console.log(`🔗 Connected repo: ${body.fullName} (webhook ID: ${webhookId})`);
+
+    // Trigger background import of recent history
+    importRepoHistory(repo.id, accessToken).catch(err => 
+      console.error(`Background import failed for ${body.fullName}:`, err)
+    );
 
     return c.json({
       status: 'connected',
