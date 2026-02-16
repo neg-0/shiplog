@@ -43,8 +43,8 @@ const getTierFromPrice = (price?: Stripe.Price | null): SubscriptionTier => {
   if (priceId === priceTeam) return 'TEAM';
 
   // Check by Lookup Key (Fallback/Robustness)
-  if (lookupKey === 'pro_monthly' || lookupKey === 'pro_yearly') return 'PRO';
-  if (lookupKey === 'team_monthly' || lookupKey === 'team_yearly') return 'TEAM';
+  if (lookupKey?.startsWith('pro_')) return 'PRO';
+  if (lookupKey?.startsWith('team_')) return 'TEAM';
 
   console.warn(`[Billing] Price mismatch. ID: ${priceId}, Lookup: ${lookupKey}. Defaulting to FREE.`);
   return 'FREE';
@@ -261,7 +261,7 @@ billing.post('/webhook', async (c) => {
           expand: ['items.data.price'],
         });
         const price = subscription.items.data[0]?.price;
-        const tier = getTierFromPrice(price as Stripe.Price);
+        const tier = getTierFromPrice(price);
         const trialEndsAt = subscription.trial_end ? new Date(subscription.trial_end * 1000) : null;
 
         const data = {
@@ -294,7 +294,7 @@ billing.post('/webhook', async (c) => {
 
       const customerId = subscription.customer as string;
       const price = subscription.items.data[0]?.price;
-      const tier: SubscriptionTier = shouldDowngrade(subscription.status) ? 'FREE' : getTierFromPrice(price as Stripe.Price);
+      const tier: SubscriptionTier = shouldDowngrade(subscription.status) ? 'FREE' : getTierFromPrice(price);
       const trialEndsAt = subscription.trial_end ? new Date(subscription.trial_end * 1000) : null;
 
       await updateByCustomer(customerId, {
