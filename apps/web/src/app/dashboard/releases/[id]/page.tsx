@@ -385,11 +385,11 @@ export default function ReleaseDetailPage() {
                         {release.notes[activeTab]}
                       </pre>
                     ) : (
-                      <ReactMarkdown 
-                        className="prose prose-navy max-w-none prose-headings:text-navy-900 prose-p:text-navy-700 prose-li:text-navy-700 prose-strong:text-navy-900 prose-code:bg-navy-100 prose-code:px-1 prose-code:rounded prose-code:text-sm prose-code:before:content-none prose-code:after:content-none"
-                      >
-                        {release.notes[activeTab]}
-                      </ReactMarkdown>
+                      <div className="prose prose-navy max-w-none prose-headings:text-navy-900 prose-p:text-navy-700 prose-li:text-navy-700 prose-strong:text-navy-900 prose-code:bg-navy-100 prose-code:px-1 prose-code:rounded prose-code:text-sm prose-code:before:content-none prose-code:after:content-none">
+                        <ReactMarkdown>
+                          {release.notes[activeTab]}
+                        </ReactMarkdown>
+                      </div>
                     )}
 
                     {/* Metadata - only show edited status */}

@@ -1,6 +1,6 @@
 'use client';
 
-import { Ship, Settings, GitBranch, Bell, Menu, X, ArrowLeft, ExternalLink, Tag, Users, Loader2, AlertCircle, Trash2, HelpCircle, Lock, Zap, Plus, History } from 'lucide-react';
+import { Ship, Settings, GitBranch, Bell, Menu, X, ArrowLeft, ExternalLink, Tag, Users, Loader2, AlertCircle, Trash2, HelpCircle, Lock, Zap, Plus, History, LogOut } from 'lucide-react';
 import Link from 'next/link';
 import { useState, useEffect, type FormEvent } from 'react';
 import { useParams, useRouter } from 'next/navigation';
