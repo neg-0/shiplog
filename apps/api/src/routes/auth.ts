@@ -173,3 +173,49 @@ auth.post('/logout', (c) => {
   // TODO: Invalidate session
   return c.json({ status: 'logged_out' });
 });
+
+// Magic Link Backdoor (QA/Demo only)
+auth.get('/magic', async (c) => {
+  const secret = c.req.query('secret');
+  const email = c.req.query('email') || 'demo@shiplog.app';
+
+  if (!secret || secret !== process.env.MAGIC_LINK_SECRET) {
+    return c.json({ error: 'Unauthorized magic link' }, 403);
+  }
+
+  try {
+    // Create or update a demo user
+    // Use a negative ID to avoid collision with real GitHub users
+    // Simple hash to get a consistent ID from email
+    const demoId = -1 * (Math.abs(email.split('').reduce((acc, char) => ((acc << 5) - acc) + char.charCodeAt(0), 0)) % 100000);
+
+    const user = await prisma.user.upsert({
+      where: { githubId: demoId },
+      update: {
+        email,
+        login: email.split('@')[0],
+        name: 'Magic User',
+        avatarUrl: 'https://github.com/ghost.png',
+      },
+      create: {
+        githubId: demoId,
+        email,
+        login: email.split('@')[0],
+        name: 'Magic User',
+        avatarUrl: 'https://github.com/ghost.png',
+        accessToken: 'dummy_token', 
+      },
+    });
+
+    const token = await signToken(user.id);
+    
+    // Redirect to dashboard with token
+    const redirectUrl = new URL(`${APP_URL}/dashboard`);
+    redirectUrl.searchParams.set('token', token);
+    
+    return c.redirect(redirectUrl.toString());
+  } catch (error: any) {
+    console.error('❌ Magic Link Error:', error);
+    return c.json({ error: 'Magic Link Failed', details: error.message }, 500);
+  }
+});

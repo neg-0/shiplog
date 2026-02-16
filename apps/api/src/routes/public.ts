@@ -3,15 +3,13 @@ import { prisma } from '../lib/db.js';
 
 export const publicChangelog = new Hono();
 
-// Get public changelog for a repo by slug
-publicChangelog.get('/:slug', async (c) => {
-  const slug = c.req.param('slug');
-  
-  const repo = await prisma.repo.findFirst({
+// Helper to fetch repo details
+async function getRepoPublicDetails(slugOrFullName: string) {
+  return await prisma.repo.findFirst({
     where: {
       OR: [
-        { slug },
-        { fullName: slug.replace('-', '/') }, // Fallback to fullName
+        { slug: slugOrFullName },
+        { fullName: slugOrFullName },
       ],
       isPublic: true,
     },
@@ -40,10 +38,20 @@ publicChangelog.get('/:slug', async (c) => {
           name: true,
           createdAt: true,
           notes: true,
+          htmlUrl: true, // Needed for frontend
         },
       },
     },
   });
+}
+
+// Get public changelog by org/repo
+publicChangelog.get('/:org/:repo', async (c) => {
+  const org = c.req.param('org');
+  const repoName = c.req.param('repo');
+  const fullName = `${org}/${repoName}`;
+
+  const repo = await getRepoPublicDetails(fullName);
 
   if (!repo) {
     return c.json({ error: 'Changelog not found' }, 404);
@@ -65,10 +73,17 @@ publicChangelog.get('/:slug', async (c) => {
       version: r.tagName,
       name: r.name,
       date: r.createdAt,
+      htmlUrl: r.htmlUrl,
       notes: r.notes,
     })),
   });
 });
+
+// Get public changelog by slug
+publicChangelog.get('/:slug', async (c) => {
+  const slug = c.req.param('slug');
+  const repo = await getRepoPublicDetails(slug);
+
 
 // Get releases list (paginated)
 publicChangelog.get('/:slug/releases', async (c) => {

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import { getChangelog, type Changelog } from '../../../../lib/api';
+import FeedbackWidget from '../../../../components/FeedbackWidget';
 
 export default function ChangelogPage() {
   const params = useParams();
@@ -67,19 +68,35 @@ export default function ChangelogPage() {
   
   return (
     <div className="min-h-screen bg-white">
+      <FeedbackWidget />
       {/* Header */}
       <header className="border-b border-navy-100 bg-navy-50">
         <div className="max-w-4xl mx-auto px-4 py-8">
           <div className="flex items-center gap-3 mb-4">
-            <Ship className="w-6 h-6 text-teal-600" />
-            <span className="text-navy-400">Powered by ShipLog</span>
+            {changelog.showPoweredBy && (
+              <div className="flex items-center gap-2 text-navy-400 text-sm">
+                <Ship className="w-4 h-4" />
+                <span>Powered by ShipLog</span>
+              </div>
+            )}
           </div>
-          <h1 className="text-3xl font-bold text-navy-900 mb-2">
-            {changelog.productName || `${org}/${repo}`}
-          </h1>
+          
+          <div className="flex items-center gap-4 mb-2">
+            {changelog.logoUrl && (
+              <img src={changelog.logoUrl} alt="Logo" className="w-12 h-12 rounded-lg object-contain" />
+            )}
+            <h1 className="text-3xl font-bold text-navy-900">
+              {changelog.name}
+            </h1>
+          </div>
+          
           <p className="text-navy-600">{changelog.description || 'Changelog and release notes'}</p>
 
-          <div className="mt-6 inline-flex items-center gap-2 rounded-full bg-teal-100 px-4 py-2 text-sm font-medium text-teal-700">
+          <div className="mt-6 inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium"
+               style={{ 
+                 backgroundColor: changelog.accentColor ? `${changelog.accentColor}20` : '#e6fffa',
+                 color: changelog.accentColor || '#0d9488'
+               }}>
             Customer Release Notes
           </div>
         </div>

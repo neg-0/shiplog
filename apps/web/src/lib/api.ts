@@ -291,10 +291,11 @@ export async function updateReleaseNotes(id: string, notes: Partial<Pick<Release
 // ============================================
 
 export interface ChangelogRelease {
+  id: string;
   version: string;
   name: string | null;
   date: string;
-  htmlUrl: string;
+  htmlUrl: string | null;
   notes: {
     customer: string;
     developer: string;
@@ -303,18 +304,18 @@ export interface ChangelogRelease {
 }
 
 export interface Changelog {
-  org: string;
-  repo: string;
+  id: string;
+  name: string; // publicTitle or repo name
   fullName: string;
   description: string | null;
-  productName: string;
-  companyName: string;
+  logoUrl: string | null;
+  accentColor: string | null;
+  showPoweredBy: boolean;
   releases: ChangelogRelease[];
 }
 
-export async function getChangelog(org: string, repo: string, audience?: string): Promise<Changelog> {
-  const params = audience ? `?audience=${audience}` : '';
-  const res = await fetch(`/api/changelog/${org}/${repo}${params}`);
+export async function getChangelog(org: string, repo: string): Promise<Changelog> {
+  const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/public/${org}/${repo}`);
   if (!res.ok) {
     const error = await res.json().catch(() => ({ error: 'Not found' }));
     throw new Error(error.error || 'Changelog not found');
