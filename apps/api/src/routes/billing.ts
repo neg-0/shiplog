@@ -286,7 +286,12 @@ billing.post('/webhook', async (c) => {
     case 'customer.subscription.created':
     case 'customer.subscription.updated':
     case 'customer.subscription.deleted': {
-      const subscription = event.data.object as Stripe.Subscription;
+      const eventSubscription = event.data.object as Stripe.Subscription;
+      // Fetch fresh subscription with expanded price to ensure lookup_key is available
+      const subscription = await stripe.subscriptions.retrieve(eventSubscription.id, {
+        expand: ['items.data.price'],
+      });
+
       const customerId = subscription.customer as string;
       const price = subscription.items.data[0]?.price;
       const tier: SubscriptionTier = shouldDowngrade(subscription.status) ? 'FREE' : getTierFromPrice(price as Stripe.Price);
