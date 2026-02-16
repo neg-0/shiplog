@@ -28,8 +28,10 @@ const getPriceId = (plan: string | null | undefined) => {
 import { SubscriptionTier } from '@prisma/client';
 
 const getTierFromPrice = (priceId?: string | null): SubscriptionTier => {
+  console.log(`[Billing] Resolving tier for priceId: ${priceId}. Expected PRO: ${pricePro}, TEAM: ${priceTeam}`);
   if (priceId && priceId === pricePro) return 'PRO';
   if (priceId && priceId === priceTeam) return 'TEAM';
+  console.warn(`[Billing] Price ID mismatch or missing. Defaulting to FREE.`);
   return 'FREE';
 };
 
