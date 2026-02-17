@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { clearToken, type User } from '../lib/api';
+import { DashboardFeedbackWidget } from './DashboardFeedbackWidget';
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -115,9 +116,12 @@ export function DashboardLayout({ children, user }: DashboardLayoutProps) {
       </aside>
 
       {/* Main Content */}
-      <main className="lg:ml-64 p-4 lg:p-8 pt-20 lg:pt-8">
+      <main className="lg:ml-64 p-4 lg:p-8 pt-20 lg:pt-8 min-h-screen">
         {children}
       </main>
+
+      {/* Feedback Widget */}
+      <DashboardFeedbackWidget />
     </div>
   );
 }
