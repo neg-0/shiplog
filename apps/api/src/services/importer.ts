@@ -46,7 +46,10 @@ export async function importRepoHistory(repoId: string, accessToken: string) {
           htmlUrl: ghRelease.html_url,
           isDraft: ghRelease.draft,
           isPrerelease: ghRelease.prerelease,
-          publishedAt: ghRelease.published_at ? new Date(ghRelease.published_at) : null,
+          // Use created_at as fallback for drafts to ensure historical ordering
+          publishedAt: ghRelease.published_at 
+            ? new Date(ghRelease.published_at) 
+            : (ghRelease.created_at ? new Date(ghRelease.created_at) : null),
           status: 'PENDING',
         },
       });
