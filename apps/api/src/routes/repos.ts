@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { prisma } from '../lib/db.js';
 import { requireAuth, decrypt } from '../lib/auth.js';
 import { listUserRepos, createWebhook, deleteWebhook } from '../services/github.js';
+import { importRepoHistory } from '../services/importer.js';
 
 export const repos = new Hono();
 
@@ -87,6 +88,14 @@ repos.get('/:id', async (c) => {
     description: repo.description,
     status: repo.status,
     webhookActive: repo.webhookActive,
+    isPublic: repo.isPublic,
+    slug: repo.slug,
+    publicTitle: repo.publicTitle,
+    publicDescription: repo.publicDescription,
+    publicLogoUrl: repo.publicLogoUrl,
+    publicAccentColor: repo.publicAccentColor,
+    hidePoweredBy: repo.hidePoweredBy,
+    excludeFromFeatured: repo.excludeFromFeatured,
     config: repo.config,
     releases: repo.releases.map(r => ({
       id: r.id,
@@ -236,6 +245,11 @@ repos.post('/connect', async (c) => {
 
     console.log(`🔗 Connected repo: ${body.fullName} (webhook ID: ${webhookId})`);
 
+    // Trigger background import of recent history
+    importRepoHistory(repo.id, accessToken).catch(err => 
+      console.error(`Background import failed for ${body.fullName}:`, err)
+    );
+
     return c.json({
       status: 'connected',
       id: repo.id,
@@ -272,87 +286,127 @@ repos.post('/connect', async (c) => {
 
 // Update repo config
 repos.patch('/:id/config', async (c) => {
-  const user = c.get('user');
-  const id = c.req.param('id');
-  const body = await c.req.json() as {
-    autoGenerate?: boolean;
-    autoPublish?: boolean;
-    generateCustomer?: boolean;
-    generateDeveloper?: boolean;
-    generateStakeholder?: boolean;
-    customerTone?: string;
-    companyName?: string;
-    productName?: string;
-  };
+  try {
+    const user = c.get('user');
+    const id = c.req.param('id');
+    const body = await c.req.json() as {
+      autoGenerate?: boolean;
+      autoPublish?: boolean;
+      generateCustomer?: boolean;
+      generateDeveloper?: boolean;
+      generateStakeholder?: boolean;
+      customerTone?: string;
+      companyName?: string;
+      productName?: string;
+    };
 
-  // Verify ownership
-  const repo = await prisma.repo.findFirst({
-    where: { id, userId: user.id },
-    select: { id: true },
-  });
+    // Verify ownership
+    const repo = await prisma.repo.findFirst({
+      where: { id, userId: user.id },
+      select: { id: true },
+    });
 
-  if (!repo) {
-    return c.json({ error: 'Repository not found' }, 404);
+    if (!repo) {
+      return c.json({ error: 'Repository not found' }, 404);
+    }
+
+    // Explicitly select allowed fields to prevent Prisma errors
+    const { 
+      autoGenerate, autoPublish, generateCustomer, generateDeveloper, 
+      generateStakeholder, customerTone, companyName, productName 
+    } = body;
+    
+    const data = {
+      autoGenerate, autoPublish, generateCustomer, generateDeveloper,
+      generateStakeholder, customerTone, companyName, productName
+    };
+
+    // Remove undefined keys
+    Object.keys(data).forEach(key => data[key as keyof typeof data] === undefined && delete data[key as keyof typeof data]);
+
+    const config = await prisma.repoConfig.upsert({
+      where: { repoId: id },
+      create: {
+        repoId: id,
+        ...data,
+      },
+      update: data,
+    });
+
+    console.log(`📝 Updated config for repo ${id}`);
+
+    return c.json(config);
+  } catch (error) {
+    console.error('Failed to update repo config:', error);
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return c.json({ error: `Failed to update configuration: ${message}` }, 500);
   }
-
-  const config = await prisma.repoConfig.upsert({
-    where: { repoId: id },
-    create: {
-      repoId: id,
-      ...body,
-    },
-    update: body,
-  });
-
-  console.log(`📝 Updated config for repo ${id}`);
-
-  return c.json(config);
 });
 
 // Update repo settings (public changelog options)
 repos.patch('/:id/settings', async (c) => {
-  const user = c.get('user');
-  const id = c.req.param('id');
-  const body = await c.req.json() as {
-    isPublic?: boolean;
-    slug?: string;
-    publicTitle?: string;
-    publicDescription?: string;
-    publicLogoUrl?: string;
-    publicAccentColor?: string;
-    hidePoweredBy?: boolean;
-    excludeFromFeatured?: boolean;
-  };
+  try {
+    const user = c.get('user');
+    const id = c.req.param('id');
+    const body = await c.req.json() as {
+      isPublic?: boolean;
+      slug?: string;
+      publicTitle?: string;
+      publicDescription?: string;
+      publicLogoUrl?: string;
+      publicAccentColor?: string;
+      hidePoweredBy?: boolean;
+      excludeFromFeatured?: boolean;
+    };
 
-  // Verify ownership
-  const repo = await prisma.repo.findFirst({
-    where: { id, userId: user.id },
-    select: { id: true },
-  });
+    // Verify ownership
+    const repo = await prisma.repo.findFirst({
+      where: { id, userId: user.id },
+      select: { id: true },
+    });
 
-  if (!repo) {
-    return c.json({ error: 'Repository not found' }, 404);
+    if (!repo) {
+      return c.json({ error: 'Repository not found' }, 404);
+    }
+
+    // Explicitly select allowed fields
+    const { 
+      isPublic, slug, publicTitle, publicDescription, 
+      publicLogoUrl, publicAccentColor, hidePoweredBy, excludeFromFeatured 
+    } = body;
+
+    const data = {
+      isPublic, slug, publicTitle, publicDescription,
+      publicLogoUrl, publicAccentColor, hidePoweredBy, excludeFromFeatured
+    };
+
+    // Remove undefined keys
+    Object.keys(data).forEach(key => data[key as keyof typeof data] === undefined && delete data[key as keyof typeof data]);
+
+    const updated = await prisma.repo.update({
+      where: { id },
+      data: data,
+      select: {
+        id: true,
+        isPublic: true,
+        slug: true,
+        publicTitle: true,
+        publicDescription: true,
+        publicLogoUrl: true,
+        publicAccentColor: true,
+        hidePoweredBy: true,
+        excludeFromFeatured: true,
+      },
+    });
+
+    console.log(`📝 Updated settings for repo ${id}`);
+
+    return c.json(updated);
+  } catch (error) {
+    console.error('Failed to update repo settings:', error);
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return c.json({ error: `Failed to update settings: ${message}` }, 500);
   }
-
-  const updated = await prisma.repo.update({
-    where: { id },
-    data: body,
-    select: {
-      id: true,
-      isPublic: true,
-      slug: true,
-      publicTitle: true,
-      publicDescription: true,
-      publicLogoUrl: true,
-      publicAccentColor: true,
-      hidePoweredBy: true,
-      excludeFromFeatured: true,
-    },
-  });
-
-  console.log(`📝 Updated settings for repo ${id}`);
-
-  return c.json(updated);
 });
 
 // Create a distribution channel

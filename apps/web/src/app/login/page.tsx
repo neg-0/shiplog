@@ -1,7 +1,42 @@
-import { Ship, GitBranch } from 'lucide-react';
+'use client';
+
+import { Ship, GitBranch, Key, Loader2 } from 'lucide-react';
 import Link from 'next/link';
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 
 export default function LoginPage() {
+  const [demoLoading, setDemoLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const router = useRouter();
+
+  const handleDemoLogin = async () => {
+    try {
+      setDemoLoading(true);
+      setError(null);
+      const res = await fetch('/api/auth/demo', {
+        method: 'POST',
+      });
+      
+      if (!res.ok) {
+        const data = await res.json();
+        setError(data.error || 'Demo login failed');
+        return;
+      }
+
+      const data = await res.json();
+      if (data.token) {
+        // Redirect to dashboard with token to let it handle session setup
+        window.location.href = `/dashboard?token=${data.token}`;
+      }
+    } catch (err) {
+      console.error(err);
+      setError('Failed to connect to server');
+    } finally {
+      setDemoLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-navy-50 to-navy-100 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl p-8 w-full max-w-md">
@@ -25,6 +60,26 @@ export default function LoginPage() {
           <GitBranch className="w-5 h-5" />
           Continue with GitHub
         </a>
+
+        {/* Demo Login Button */}
+        <button 
+          onClick={handleDemoLogin}
+          disabled={demoLoading}
+          className="w-full mt-3 bg-white border border-navy-200 text-navy-700 py-4 px-6 rounded-xl font-semibold hover:bg-navy-50 hover:border-navy-300 transition flex items-center justify-center gap-3"
+        >
+          {demoLoading ? (
+            <Loader2 className="w-5 h-5 animate-spin" />
+          ) : (
+            <Key className="w-5 h-5" />
+          )}
+          {demoLoading ? 'Connecting...' : 'Try Demo Mode'}
+        </button>
+
+        {error && (
+          <div className="mt-4 p-3 bg-red-50 text-red-700 text-sm rounded-lg text-center border border-red-200">
+            {error}
+          </div>
+        )}
 
         <div className="mt-6 text-center">
           <p className="text-sm text-navy-500">

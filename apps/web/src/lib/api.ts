@@ -141,6 +141,14 @@ export interface Channel {
 export interface RepoDetail extends Repo {
   owner: string;
   webhookActive: boolean;
+  isPublic?: boolean;
+  slug?: string;
+  publicTitle?: string;
+  publicDescription?: string;
+  publicLogoUrl?: string;
+  publicAccentColor?: string;
+  hidePoweredBy?: boolean;
+  excludeFromFeatured?: boolean;
   config: {
     autoGenerate: boolean;
     autoPublish: boolean;
@@ -204,6 +212,22 @@ export async function updateRepoConfig(id: string, config: Partial<RepoDetail['c
   return fetchApi(`/repos/${id}/config`, {
     method: 'PATCH',
     body: JSON.stringify(config),
+  });
+}
+
+export async function updateRepoSettings(id: string, settings: {
+  isPublic?: boolean;
+  slug?: string;
+  publicTitle?: string;
+  publicDescription?: string;
+  publicLogoUrl?: string;
+  publicAccentColor?: string;
+  hidePoweredBy?: boolean;
+  excludeFromFeatured?: boolean;
+}): Promise<void> {
+  return fetchApi(`/repos/${id}/settings`, {
+    method: 'PATCH',
+    body: JSON.stringify(settings),
   });
 }
 

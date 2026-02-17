@@ -70,9 +70,9 @@ export default function Home() {
             <span className="text-teal-600">ship themselves</span>
           </h1>
           <p className="text-xl text-navy-600 mb-8 max-w-2xl mx-auto">
-            One release. Three audiences. Zero effort.
+            One commit. Three audiences. Zero friction.
             <br />
-            Automatically generate changelogs tailored for customers, developers, and stakeholders.
+            ShipLog automatically generates AI-written changelogs tailored for customers, developers, and stakeholders.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <Link 

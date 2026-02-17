@@ -62,13 +62,14 @@ publicChangelog.get('/:slug', async (c) => {
         },
       },
       releases: {
-        orderBy: { createdAt: 'desc' },
+        where: { publishedAt: { not: null } },
+        orderBy: { publishedAt: 'desc' },
         take: 20,
         select: {
           id: true,
           tagName: true,
           name: true,
-          createdAt: true,
+          publishedAt: true,
           notes: {
             select: {
               id: true,
@@ -101,7 +102,7 @@ publicChangelog.get('/:slug', async (c) => {
       id: r.id,
       version: r.tagName,
       name: r.name,
-      date: r.createdAt,
+      date: r.publishedAt,
       notes: r.notes ? {
         customer: r.notes.customer,
         developer: r.notes.developer,
@@ -131,18 +132,18 @@ publicChangelog.get('/:slug/releases', async (c) => {
 
   const [releases, total] = await Promise.all([
     prisma.release.findMany({
-      where: { repoId: repo.id },
-      orderBy: { createdAt: 'desc' },
+      where: { repoId: repo.id, publishedAt: { not: null } },
+      orderBy: { publishedAt: 'desc' },
       skip: (page - 1) * limit,
       take: limit,
       select: {
         id: true,
         tagName: true,
         name: true,
-        createdAt: true,
+        publishedAt: true,
       },
     }),
-    prisma.release.count({ where: { repoId: repo.id } }),
+    prisma.release.count({ where: { repoId: repo.id, publishedAt: { not: null } } }),
   ]);
 
   return c.json({
@@ -150,7 +151,7 @@ publicChangelog.get('/:slug/releases', async (c) => {
       id: r.id,
       version: r.tagName,
       name: r.name,
-      date: r.createdAt,
+      date: r.publishedAt,
     })),
     pagination: { page, limit, total, pages: Math.ceil(total / limit) },
   });
@@ -177,13 +178,14 @@ publicChangelog.get('/:slug/releases/:version', async (c) => {
     where: {
       repoId: repo.id,
       tagName: version,
+      publishedAt: { not: null },
     },
     select: {
       id: true,
       tagName: true,
       name: true,
       body: true,
-      createdAt: true,
+      publishedAt: true,
       notes: {
         select: {
           id: true,
@@ -205,7 +207,7 @@ publicChangelog.get('/:slug/releases/:version', async (c) => {
     version: release.tagName,
     name: release.name,
     body: release.body,
-    date: release.createdAt,
+    date: release.publishedAt,
     notes: release.notes ? {
       customer: release.notes.customer,
       developer: release.notes.developer,

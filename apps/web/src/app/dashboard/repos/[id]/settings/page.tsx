@@ -3,11 +3,11 @@
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { ArrowLeft, Save, Loader2, AlertCircle, Check } from 'lucide-react';
 import Link from 'next/link';
-import { useParams, useRouter } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { getRepo, getUser, isAuthenticated, updateRepoConfig, type RepoDetail, type User } from '../../../../../lib/api';
+import { getRepo, getUser, isAuthenticated, updateRepoConfig, updateRepoSettings, type RepoDetail, type User } from '../../../../../lib/api';
 
-export default function RepoSettingsPage() {
+export default function RepoSettingsPage({ params }: { params: { id: string } }) {
   const [repo, setRepo] = useState<RepoDetail | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
@@ -25,9 +25,8 @@ export default function RepoSettingsPage() {
     customerTone: 'friendly',
   });
 
-  const params = useParams();
   const router = useRouter();
-  const repoId = params.id as string;
+  const repoId = params.id;
 
   useEffect(() => {
     if (!isAuthenticated()) {
@@ -50,9 +49,9 @@ export default function RepoSettingsPage() {
         setConfig({
           autoGenerate: repoData.config?.autoGenerate ?? true,
           autoPublish: repoData.config?.autoPublish ?? false,
-          excludeFromFeatured: (repoData as any).excludeFromFeatured ?? false, // Cast for now until types sync
-          publicTitle: (repoData as any).publicTitle ?? '',
-          publicDescription: (repoData as any).publicDescription ?? '',
+          excludeFromFeatured: repoData.excludeFromFeatured ?? false,
+          publicTitle: repoData.publicTitle ?? '',
+          publicDescription: repoData.publicDescription ?? '',
           customerTone: repoData.config?.customerTone ?? 'friendly',
         });
       } catch (err) {
@@ -72,15 +71,18 @@ export default function RepoSettingsPage() {
     setSuccess(false);
 
     try {
-      await updateRepoConfig(repoId, {
-        autoGenerate: config.autoGenerate,
-        autoPublish: config.autoPublish,
-        customerTone: config.customerTone,
-        // @ts-ignore - API needs to support these new fields on root/config
-        excludeFromFeatured: config.excludeFromFeatured,
-        publicTitle: config.publicTitle,
-        publicDescription: config.publicDescription,
-      });
+      await Promise.all([
+        updateRepoConfig(repoId, {
+          autoGenerate: config.autoGenerate,
+          autoPublish: config.autoPublish,
+          customerTone: config.customerTone,
+        }),
+        updateRepoSettings(repoId, {
+          excludeFromFeatured: config.excludeFromFeatured,
+          publicTitle: config.publicTitle,
+          publicDescription: config.publicDescription,
+        })
+      ]);
       setSuccess(true);
       setTimeout(() => setSuccess(false), 3000);
     } catch (err) {
