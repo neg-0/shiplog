@@ -12,6 +12,7 @@ interface GitHubRelease {
   draft: boolean;
   prerelease: boolean;
   published_at: string | null;
+  created_at: string;
 }
 
 interface GitHubCommit {
