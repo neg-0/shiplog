@@ -3,6 +3,7 @@ import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import { serve } from '@hono/node-server';
 import { webhooks } from './routes/webhooks.js';
+import { feedback } from './routes/feedback.js';
 import { auth } from './routes/auth.js';
 import { repos } from './routes/repos.js';
 import { releases } from './routes/releases.js';
@@ -27,6 +28,7 @@ app.use('*', cors({
 // Routes
 app.route('/health', health);
 app.route('/webhooks', webhooks);
+app.route('/feedback', feedback);
 app.route('/auth', auth);
 app.route('/repos', repos);
 app.route('/releases', releases);
