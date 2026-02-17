@@ -125,7 +125,7 @@ export default async function PublicChangelogPage({ params }: { params: { slug: 
                 {/* Show first audience notes (usually Customer) */}
                 {release.notes && (
                   <div className="prose prose-gray max-w-none">
-                    <ReactMarkdown className="text-gray-700">
+                    <ReactMarkdown>
                       {release.notes.customer || release.notes.developer || release.notes.stakeholder || ''}
                     </ReactMarkdown>
                   </div>
