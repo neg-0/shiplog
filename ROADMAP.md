@@ -1,6 +1,6 @@
 # ShipLog Roadmap
 
-> **Source of Truth:** `/home/neg0/.openclaw/workspace-captain/memory/goals.md`
+> **Source of Truth:** Managed by Mission Control
 > **Last Updated:** 2026-02-16
 
 ## 🎯 Active Goals

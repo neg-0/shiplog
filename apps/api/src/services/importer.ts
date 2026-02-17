@@ -46,7 +46,7 @@ export async function importRepoHistory(repoId: string, accessToken: string) {
           htmlUrl: ghRelease.html_url,
           isDraft: ghRelease.draft,
           isPrerelease: ghRelease.prerelease,
-          publishedAt: ghRelease.published_at ? new Date(ghRelease.published_at) : new Date(),
+          publishedAt: ghRelease.published_at ? new Date(ghRelease.published_at) : null,
           status: 'PENDING',
         },
       });

@@ -7,18 +7,20 @@ import { useRouter } from 'next/navigation';
 
 export default function LoginPage() {
   const [demoLoading, setDemoLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const router = useRouter();
 
   const handleDemoLogin = async () => {
     try {
       setDemoLoading(true);
+      setError(null);
       const res = await fetch('/api/auth/demo', {
         method: 'POST',
       });
       
       if (!res.ok) {
         const data = await res.json();
-        alert(data.error || 'Demo login failed');
+        setError(data.error || 'Demo login failed');
         return;
       }
 
@@ -29,7 +31,7 @@ export default function LoginPage() {
       }
     } catch (err) {
       console.error(err);
-      alert('Failed to connect to server');
+      setError('Failed to connect to server');
     } finally {
       setDemoLoading(false);
     }
@@ -72,6 +74,12 @@ export default function LoginPage() {
           )}
           {demoLoading ? 'Connecting...' : 'Try Demo Mode'}
         </button>
+
+        {error && (
+          <div className="mt-4 p-3 bg-red-50 text-red-700 text-sm rounded-lg text-center border border-red-200">
+            {error}
+          </div>
+        )}
 
         <div className="mt-6 text-center">
           <p className="text-sm text-navy-500">
