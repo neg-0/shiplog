@@ -365,3 +365,29 @@ enum DistributionStatus {
   FAILED
   SKIPPED
 }
+
+// ============================================
+// MARKETING / PRE-GENERATED CONTENT
+// ============================================
+
+model PreGenChangelog {
+  id          String   @id @default(cuid())
+  repoUrl     String   // e.g. https://github.com/owner/repo
+  repoOwner   String   // owner
+  repoName    String   // repo
+  slug        String   @unique // owner-repo
+  
+  // The content
+  title       String?
+  body        String   @db.Text // The generated changelog
+  
+  // Tracking
+  email       String?  // Who we sent it to
+  views       Int      @default(0)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@index([slug])
+  @@map("pre_gen_changelogs")
+}

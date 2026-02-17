@@ -15,6 +15,7 @@ import { organizations } from './routes/organizations.js';
 import { activity } from './routes/activity.js';
 import { admin } from './routes/admin.js';
 import { publicChangelog } from './routes/public.js';
+import { preview } from './routes/preview.js';
 
 const app = new Hono();
 
@@ -40,6 +41,7 @@ app.route('/organizations', organizations);
 app.route('/activity', activity);
 app.route('/admin', admin);
 app.route('/public', publicChangelog);
+app.route('/preview', preview);
 
 // Root
 app.get('/', (c) => {
