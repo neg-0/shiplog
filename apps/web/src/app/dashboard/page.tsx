@@ -22,8 +22,16 @@ function DashboardContent() {
     const token = searchParams.get('token');
     if (token) {
       setToken(token);
-      // Remove token from URL
-      router.replace('/dashboard');
+      // Check if user has repos to decide redirection
+      getRepos().then(({ repos }) => {
+        if (repos.length === 0) {
+          router.replace('/dashboard/repos/connect');
+        } else {
+          router.replace('/dashboard');
+        }
+      }).catch(() => {
+        router.replace('/dashboard');
+      });
     }
   }, [searchParams, router]);
 
