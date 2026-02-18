@@ -9,8 +9,8 @@ export const auth = new Hono();
 
 const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID;
 const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET;
-const APP_URL = process.env.APP_URL || 'http://localhost:3000';
-const API_URL = process.env.API_URL || 'http://localhost:3001';
+const APP_URL = process.env.APP_URL || 'https://shiplog.io';
+const API_URL = process.env.API_URL || 'https://api.shiplog.io';
 
 // In-memory state storage (valid for 10 minutes)
 const pendingStates = new Map<string, number>();

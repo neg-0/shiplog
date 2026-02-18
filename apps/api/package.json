@@ -2,6 +2,7 @@
   "name": "@shiplog/api",
   "version": "0.1.0",
   "private": true,
+  "homepage": "https://api.shiplog.io",
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
