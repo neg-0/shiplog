@@ -2,6 +2,8 @@ import { Hono } from 'hono';
 import { prisma } from '../lib/db.js';
 import { signToken } from '../lib/jwt.js';
 import { encrypt } from '../lib/auth.js';
+import { listReleases, fetchReleaseData } from '../services/github.js';
+import { generateReleaseNotes } from '../services/generator.js';
 
 export const auth = new Hono();
 
@@ -155,16 +157,109 @@ auth.get('/github/callback', async (c) => {
   return c.redirect(redirectUrl.toString());
 });
 
-// Demo Login (Bypass for QA/Demos)
+// Demo Login & Sales Tool (Internal Only)
 auth.post('/demo', async (c) => {
-  if (process.env.ENABLE_DEMO_LOGIN !== 'true') {
-    return c.json({ error: 'Demo login disabled' }, 403);
+  // 1. Stealth Check
+  const demoToken = c.req.header('X-Demo-Token');
+  if (!process.env.DEMO_ACCESS_TOKEN || demoToken !== process.env.DEMO_ACCESS_TOKEN) {
+    // Return 401 with generic error to hide existence
+    return c.json({ error: 'Unauthorized' }, 401);
   }
 
+  // 2. Sales Tool: Import Repo & Generate Preview
+  const body = await c.req.json().catch(() => ({}));
+  if (body.repoUrl || body.repo) {
+    const repoString = (body.repoUrl || body.repo) as string;
+    
+    // Parse owner/repo
+    // Supports: "owner/repo" or "https://github.com/owner/repo"
+    const match = repoString.match(/github\.com\/([^\/]+)\/([^\/]+)/) || repoString.match(/^([^\/]+)\/([^\/]+)$/);
+    
+    if (!match) {
+      return c.json({ error: 'Invalid repo format. Use "owner/repo" or full URL.' }, 400);
+    }
+    
+    const owner = match[1];
+    const repoName = match[2].replace(/\.git$/, '');
+    const slug = `${owner}-${repoName}`.toLowerCase();
+    
+    // Check cache
+    const existing = await prisma.preGenChangelog.findUnique({
+      where: { slug },
+    });
+    
+    if (existing) {
+      return c.json({ 
+        previewUrl: `${APP_URL}/preview/${existing.slug}`,
+        status: 'existing',
+        slug: existing.slug
+      });
+    }
+
+    try {
+      // Use system token if available (env.GITHUB_TOKEN), else unauthenticated (public only)
+      const accessToken = process.env.GITHUB_TOKEN || ''; 
+      
+      // Fetch latest release
+      const releases = await listReleases(owner, repoName, accessToken, 1);
+      
+      if (!releases || releases.length === 0) {
+        return c.json({ error: 'No releases found for this repository' }, 404);
+      }
+      
+      const release = releases[0];
+      
+      // Fetch detailed data for generation
+      const data = await fetchReleaseData(owner, repoName, release.tag_name, accessToken);
+      
+      // Generate Content
+      const notes = await generateReleaseNotes({
+        tagName: data.release.tagName,
+        previousTag: data.previousTag ?? undefined,
+        releaseBody: data.release.body ?? undefined,
+        commits: data.commits,
+        pullRequests: data.pullRequests.map(pr => ({
+          ...pr,
+          body: pr.body ?? undefined
+        })),
+        repoConfig: {
+          companyName: owner,
+          productName: repoName,
+          customerTone: 'professional',
+        },
+      });
+
+      // Save Result
+      const preGen = await prisma.preGenChangelog.create({
+        data: {
+          slug,
+          repoUrl: `https://github.com/${owner}/${repoName}`,
+          repoOwner: owner,
+          repoName: repoName,
+          title: `Changelog for ${repoName} ${release.tag_name}`,
+          body: JSON.stringify(notes),
+        },
+      });
+
+      return c.json({ 
+        previewUrl: `${APP_URL}/preview/${preGen.slug}`,
+        status: 'created',
+        slug: preGen.slug
+      });
+      
+    } catch (err: any) {
+      console.error(`Sales tool error for ${owner}/${repoName}:`, err);
+      const isRateLimit = err.message?.includes('403') || err.message?.includes('rate limit');
+      return c.json({ 
+        error: isRateLimit ? 'GitHub rate limit exceeded' : `Failed to generate: ${err.message}` 
+      }, 500);
+    }
+  }
+
+  // 3. Demo Login Session (if no repo provided)
   const DEMO_GITHUB_ID = -1;
   const DEMO_EMAIL = 'demo@shiplog.io';
   
-  // Encrypt a dummy token
   const encryptedAccessToken = await encrypt('demo-access-token');
 
   const dbUser = await prisma.user.upsert({
@@ -176,10 +271,10 @@ auth.post('/demo', async (c) => {
       email: DEMO_EMAIL,
       avatarUrl: 'https://github.com/ghost.png',
       accessToken: encryptedAccessToken,
-      subscriptionTier: 'PRO', // Give them PRO features for demo
+      subscriptionTier: 'PRO',
     },
     update: {
-      login: 'demo-user', // Reset values just in case
+      login: 'demo-user',
       accessToken: encryptedAccessToken,
       subscriptionTier: 'PRO',
     },
@@ -192,6 +287,5 @@ auth.post('/demo', async (c) => {
 
 // Logout
 auth.post('/logout', (c) => {
-  // TODO: Invalidate session
   return c.json({ status: 'logged_out' });
 });

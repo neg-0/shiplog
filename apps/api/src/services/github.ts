@@ -68,6 +68,17 @@ export interface ReleaseData {
   }>;
 }
 
+function getHeaders(accessToken?: string) {
+  const headers: Record<string, string> = {
+    'Accept': 'application/vnd.github.v3+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+  };
+  if (accessToken) {
+    headers['Authorization'] = `Bearer ${accessToken}`;
+  }
+  return headers;
+}
+
 /**
  * Fetch release data with commits and PRs between tags
  */
@@ -75,13 +86,9 @@ export async function fetchReleaseData(
   owner: string,
   repo: string,
   tagName: string,
-  accessToken: string
+  accessToken?: string
 ): Promise<ReleaseData> {
-  const headers = {
-    'Authorization': `Bearer ${accessToken}`,
-    'Accept': 'application/vnd.github.v3+json',
-    'X-GitHub-Api-Version': '2022-11-28',
-  };
+  const headers = getHeaders(accessToken);
 
   // 1. Get the release
   const releaseRes = await fetch(
@@ -205,13 +212,16 @@ export async function createWebhook(
   secret: string,
   accessToken: string
 ): Promise<{ id: number }> {
+  const headers = getHeaders(accessToken);
+  // Webhook creation requires auth, so accessToken must be present.
+  // Assuming caller ensures this, but headers map handles it.
+  
   const response = await fetch(
     `https://api.github.com/repos/${owner}/${repo}/hooks`,
     {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Accept': 'application/vnd.github.v3+json',
+        ...headers,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -246,14 +256,13 @@ export async function deleteWebhook(
   webhookId: number,
   accessToken: string
 ): Promise<void> {
+  const headers = getHeaders(accessToken);
+  
   const response = await fetch(
     `https://api.github.com/repos/${owner}/${repo}/hooks/${webhookId}`,
     {
       method: 'DELETE',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Accept': 'application/vnd.github.v3+json',
-      },
+      headers,
     }
   );
 
@@ -268,13 +277,12 @@ export async function deleteWebhook(
 export async function listUserRepos(
   accessToken: string
 ): Promise<Array<{ id: number; name: string; full_name: string; owner: string; description: string | null }>> {
+  const headers = getHeaders(accessToken);
+  
   const response = await fetch(
     'https://api.github.com/user/repos?per_page=100&sort=updated',
     {
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Accept': 'application/vnd.github.v3+json',
-      },
+      headers,
     }
   );
 
@@ -299,16 +307,15 @@ export async function listUserRepos(
 export async function listReleases(
   owner: string,
   repo: string,
-  accessToken: string,
+  accessToken?: string,
   perPage = 5
 ): Promise<GitHubRelease[]> {
+  const headers = getHeaders(accessToken);
+  
   const response = await fetch(
     `https://api.github.com/repos/${owner}/${repo}/releases?per_page=${perPage}`,
     {
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Accept': 'application/vnd.github.v3+json',
-      },
+      headers,
     }
   );
 
