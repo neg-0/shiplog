@@ -10,22 +10,22 @@
 - [x] TanStack/query [Preview](https://shiplog.io/preview/tanstack-query)
 - [x] trpc/trpc [Preview](https://shiplog.io/preview/trpc-trpc)
 - [x] withastro/astro [Preview](https://shiplog.io/preview/withastro-astro)
+- [x] shadcn-ui/ui [Preview](https://shiplog.io/preview/shadcn-ui-ui)
+- [x] remix-run/remix [Preview](https://shiplog.io/preview/remix-run-remix)
+- [x] vitejs/vite [Preview](https://shiplog.io/preview/vitejs-vite)
+- [x] sveltejs/svelte [Preview](https://shiplog.io/preview/sveltejs-svelte)
+- [x] vuejs/core [Preview](https://shiplog.io/preview/vuejs-core)
+- [x] axios/axios [Preview](https://shiplog.io/preview/axios-axios)
+- [x] expressjs/express [Preview](https://shiplog.io/preview/expressjs-express)
+- [x] nestjs/nest [Preview](https://shiplog.io/preview/nestjs-nest)
+- [x] fastify/fastify [Preview](https://shiplog.io/preview/fastify-fastify)
+- [x] prisma/prisma [Preview](https://shiplog.io/preview/prisma-prisma)
+- [x] typeorm/typeorm [Preview](https://shiplog.io/preview/typeorm-typeorm)
 
-## In Progress (Generating)
-- shadcn-ui/ui
-- remix-run/remix
-- vitejs/vite
-- sveltejs/svelte
-- vuejs/core
-- axios/axios
-- expressjs/express
+## Completed
+- [ ] sequelize/sequelize [Preview](https://shiplog.io/preview/sequelize-sequelize)
 
 ## Next Batch (To Do)
-- [ ] nestjs/nest
-- [ ] fastify/fastify
-- [ ] prisma/prisma
-- [ ] typeorm/typeorm
-- [ ] sequelize/sequelize
 - [ ] reduxjs/redux
 - [ ] facebook/jest
 - [ ] cypress-io/cypress
