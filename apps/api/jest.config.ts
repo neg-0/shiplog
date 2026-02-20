@@ -16,6 +16,8 @@ const config: JestConfigWithTsJest = {
       },
     ],
   },
+  setupFilesAfterEnv: ['<rootDir>/src/test/setup.ts'],
+  testMatch: ['**/__tests__/**/*.test.ts'],
 };
 
 export default config;
