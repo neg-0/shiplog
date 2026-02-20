@@ -31,7 +31,7 @@ organizations.post('/', async (c) => {
     return c.json({ error: 'Organization slug already exists' }, 400);
   }
 
-  const org = await prisma.$transaction(async (tx) => {
+  const org = await prisma.$transaction(async (tx: any) => {
     const created = await tx.organization.create({
       data: {
         name: body.name,
@@ -76,7 +76,7 @@ organizations.get('/', async (c) => {
   });
 
   return c.json({
-    organizations: orgs.map((org) => ({
+    organizations: orgs.map((org: any) => ({
       id: org.id,
       name: org.name,
       slug: org.slug,
@@ -144,7 +144,7 @@ organizations.get('/:id', async (c) => {
     subscriptionId: org.subscriptionId,
     createdAt: org.createdAt,
     updatedAt: org.updatedAt,
-    members: org.members.map((member) => ({
+    members: org.members.map((member: any) => ({
       id: member.id,
       role: member.role,
       joinedAt: member.joinedAt,
@@ -284,7 +284,7 @@ organizations.get('/:id/members', async (c) => {
   });
 
   return c.json({
-    members: members.map((entry) => ({
+    members: members.map((entry: any) => ({
       id: entry.id,
       role: entry.role,
       joinedAt: entry.joinedAt,
