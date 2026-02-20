@@ -4,7 +4,17 @@ import { requireAuth } from '../lib/auth.js';
 
 export const activity = new Hono();
 
-// Get recent activity (releases)
+/**
+ * @module activity
+ * @description Routes for fetching recent user activity.
+ */
+
+/**
+ * GET /
+ * @description Fetch recent releases across all repositories for the authenticated user.
+ * @param {string} [limit=50] - Number of items to retrieve (default: 50).
+ * @returns {object} JSON object containing an array of recent releases with repo details.
+ */
 activity.get('/', requireAuth, async (c) => {
   const authUser = c.get('user');
 
