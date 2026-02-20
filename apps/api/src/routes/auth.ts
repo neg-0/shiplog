@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { prisma } from '../lib/db.js';
+import { logger } from '../lib/logger.js';
 import { signToken } from '../lib/jwt.js';
 import { encrypt } from '../lib/auth.js';
 import { githubCallbackSchema } from '../lib/schemas.js';
@@ -52,7 +53,7 @@ auth.get('/github', (c) => {
     state,
   });
 
-  console.log(`🔑 OAuth initiated with state: ${state.slice(0, 8)}...`);
+  logger.info(`🔑 OAuth initiated`, { state: state.slice(0, 8) + '...' });
 
   return c.redirect(`https://github.com/login/oauth/authorize?${params}`);
 });
@@ -75,6 +76,7 @@ auth.get('/github/callback', async (c) => {
   const state = c.req.query('state');
 
     console.log(`🔑 OAuth callback with state: ${state?.slice(0, 8)}...`);
+  logger.info(`🔑 OAuth callback`, { state: state?.slice(0, 8) + '...' });
 
     if (!pendingStates.has(state)) {
       console.log(`❌ Invalid state. Known states: ${pendingStates.size}`);
@@ -83,6 +85,13 @@ auth.get('/github/callback', async (c) => {
 
     // Remove used state
     pendingStates.delete(state);
+  if (!state || !pendingStates.has(state)) {
+    logger.warn(`❌ Invalid state. Known states: ${pendingStates.size}`, { state });
+    return c.json({ error: 'Invalid OAuth state' }, 400);
+  }
+
+  // Remove used state
+  pendingStates.delete(state);
 
   if (!GITHUB_CLIENT_ID || !GITHUB_CLIENT_SECRET) {
     return c.json({ error: 'GitHub OAuth not configured' }, 500);
@@ -170,7 +179,7 @@ auth.get('/github/callback', async (c) => {
   const redirectUrl = new URL(`${APP_URL}/dashboard`);
   redirectUrl.searchParams.set('token', sessionToken);
 
-  console.log(`✅ OAuth complete for ${ghUser.login}`);
+  logger.info(`✅ OAuth complete for ${ghUser.login}`, { login: ghUser.login });
 
   return c.redirect(redirectUrl.toString());
 });

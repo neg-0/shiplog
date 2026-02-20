@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import Stripe from 'stripe';
 import { prisma } from '../lib/db.js';
+import { logger } from '../lib/logger.js';
 import { requireAuth } from '../lib/auth.js';
 import { checkoutSchema } from '../lib/schemas.js';
 import { apiLimiter } from '../lib/rate-limit.js';
@@ -19,7 +20,7 @@ const priceTeam = process.env.STRIPE_PRICE_TEAM;
 const APP_URL = process.env.APP_URL || 'http://localhost:3000';
 
 if (!stripeSecret) {
-  console.warn('⚠️ STRIPE_SECRET_KEY is not set');
+  logger.warn('STRIPE_SECRET_KEY is not set');
 }
 
 const stripe = new Stripe(stripeSecret || '', {
@@ -36,14 +37,14 @@ import { SubscriptionTier } from '@prisma/client';
 
 const getTierFromPrice = (price?: Stripe.Price | null): SubscriptionTier => {
   if (!price) {
-    console.warn('[Billing] No price object provided to resolver. Defaulting to FREE.');
+    logger.warn('[Billing] No price object provided to resolver. Defaulting to FREE.');
     return 'FREE';
   }
   
   const priceId = price.id;
   const lookupKey = price.lookup_key;
 
-  console.log(`[Billing] Resolving tier. ID: ${priceId}, Lookup: ${lookupKey}. Expected PRO: ${pricePro}, TEAM: ${priceTeam}`);
+  logger.info(`[Billing] Resolving tier`, { priceId, lookupKey, pricePro, priceTeam });
 
   // Check by ID (Env Var)
   if (pricePro && priceId === pricePro) return 'PRO';
@@ -53,7 +54,7 @@ const getTierFromPrice = (price?: Stripe.Price | null): SubscriptionTier => {
   if (lookupKey?.startsWith('pro_')) return 'PRO';
   if (lookupKey?.startsWith('team_')) return 'TEAM';
 
-  console.warn(`[Billing] Price mismatch. ID: ${priceId}, Lookup: ${lookupKey}. Defaulting to FREE.`);
+  logger.warn(`[Billing] Price mismatch. Defaulting to FREE.`, { priceId, lookupKey });
   return 'FREE';
 };
 
@@ -117,6 +118,9 @@ billing.post('/checkout', requireAuth, apiLimiter, async (c) => {
         limit: 1,
       });
 
+      if (existingCustomers.data.length > 0) {
+        const existingId = existingCustomers.data[0].id;
+        logger.info(`♻️ Found existing Stripe customer for user`, { customerId: existingId, email: dbUser.email });
       const existingCustomer = existingCustomers.data[0];
       if (existingCustomer) {
         const existingId = existingCustomer.id;
@@ -176,7 +180,7 @@ billing.post('/checkout', requireAuth, apiLimiter, async (c) => {
   } catch (error: unknown) {
     // If customer doesn't exist (switched from live to test mode), create new one
     if (error instanceof Error && error.message.includes('No such customer')) {
-      console.log(`⚠️ Stale customer ID ${customerId}, creating new customer...`);
+      logger.warn(`⚠️ Stale customer ID ${customerId}, creating new customer...`, { customerId });
       customerId = await createNewCustomer();
       
       const session = await stripe.checkout.sessions.create({
@@ -280,7 +284,7 @@ billing.post('/webhook', async (c) => {
   try {
     event = stripe.webhooks.constructEvent(rawBody, signature, stripeWebhookSecret);
   } catch (err) {
-    console.error('❌ Stripe webhook signature verification failed', err);
+    logger.error('❌ Stripe webhook signature verification failed', { error: err });
     return c.json({ error: 'Invalid signature' }, 400);
   }
 
