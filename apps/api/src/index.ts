@@ -30,7 +30,7 @@ app.use('*', async (c, next) => {
 app.use('*', logger());
 app.use('*', requestLogger);
 app.use('*', cors({
-  origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+  origin: process.env.CORS_ORIGIN || 'https://shiplog.io',
   credentials: true,
 }));
 

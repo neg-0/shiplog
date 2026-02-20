@@ -19,7 +19,7 @@ const stripeSecret = process.env.STRIPE_SECRET_KEY;
 const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 const pricePro = process.env.STRIPE_PRICE_PRO;
 const priceTeam = process.env.STRIPE_PRICE_TEAM;
-const APP_URL = process.env.APP_URL || 'http://localhost:3000';
+const APP_URL = process.env.APP_URL || 'https://shiplog.io';
 
 if (!stripeSecret) {
   logger.warn('STRIPE_SECRET_KEY is not set');

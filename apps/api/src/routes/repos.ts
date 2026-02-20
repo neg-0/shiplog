@@ -22,7 +22,7 @@ import {
  */
 export const repos = new Hono();
 
-const API_URL = process.env.API_URL || 'http://localhost:3001';
+const API_URL = process.env.API_URL || 'https://api.shiplog.io';
 
 // All routes require auth
 repos.use('*', requireAuth);

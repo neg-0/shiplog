@@ -6,51 +6,53 @@
 - [x] iamkun/dayjs
 - [x] bigskysoftware/htmx
 - [x] serverless/serverless
-- [x] microsoft/monaco-editor (In Progress)
+- [x] microsoft/monaco-editor [Preview](https://shiplog.io/preview/microsoft-monaco-editor)
+- [x] TanStack/query [Preview](https://shiplog.io/preview/tanstack-query)
+- [x] trpc/trpc [Preview](https://shiplog.io/preview/trpc-trpc)
+- [x] withastro/astro [Preview](https://shiplog.io/preview/withastro-astro)
+- [x] shadcn-ui/ui [Preview](https://shiplog.io/preview/shadcn-ui-ui)
+- [x] remix-run/remix [Preview](https://shiplog.io/preview/remix-run-remix)
+- [x] vitejs/vite [Preview](https://shiplog.io/preview/vitejs-vite)
+- [x] sveltejs/svelte [Preview](https://shiplog.io/preview/sveltejs-svelte)
+- [x] vuejs/core [Preview](https://shiplog.io/preview/vuejs-core)
+- [x] axios/axios [Preview](https://shiplog.io/preview/axios-axios)
+- [x] expressjs/express [Preview](https://shiplog.io/preview/expressjs-express)
+- [x] nestjs/nest [Preview](https://shiplog.io/preview/nestjs-nest)
+- [x] fastify/fastify [Preview](https://shiplog.io/preview/fastify-fastify)
+- [x] prisma/prisma [Preview](https://shiplog.io/preview/prisma-prisma)
+- [x] typeorm/typeorm [Preview](https://shiplog.io/preview/typeorm-typeorm)
+
+## Completed
+- [ ] sequelize/sequelize [Preview](https://shiplog.io/preview/sequelize-sequelize)
 
 ## Next Batch (To Do)
-1. TanStack/query
-2. trpc/trpc
-3. shadcn-ui/ui
-4. remix-run/remix
-5. withastro/astro
-6. vitejs/vite
-7. sveltejs/svelte
-8. vuejs/core
-9. axios/axios
-10. expressjs/express
-11. nestjs/nest
-12. fastify/fastify
-13. prisma/prisma
-14. typeorm/typeorm
-15. sequelize/sequelize
-16. reduxjs/redux
-17. facebook/jest
-18. cypress-io/cypress
-19. puppeteer/puppeteer
-20. microsoft/playwright
-21. storybookjs/storybook
-22. tailwindlabs/tailwindcss
-23. emotion-js/emotion
-24. styled-components/styled-components
-25. mui/material-ui
-26. ant-design/ant-design
-27. chakra-ui/chakra-ui
-28. mantinedev/mantine
-29. radix-ui/primitives
-30. pmndrs/react-three-fiber
-31. pmndrs/zustand
-32. pmndrs/jotai
-33. reduxjs/redux-toolkit
-34. mobxjs/mobx
-35. stitely/xstate
-36. jaredpalmer/formik
-37. react-hook-form/react-hook-form
-38. vercel/swr
-39. vercel/pkg
-40. vercel/turbo
-41. vercel/ncc
-42. vercel/serve
-43. vercel/micro
-44. vercel/style-guides
-45. vercel/og-image
+- [ ] reduxjs/redux
+- [ ] facebook/jest
+- [ ] cypress-io/cypress
+- [ ] puppeteer/puppeteer
+- [ ] microsoft/playwright
+- [ ] storybookjs/storybook
+- [ ] tailwindlabs/tailwindcss
+- [ ] emotion-js/emotion
+- [ ] styled-components/styled-components
+- [ ] mui/material-ui
+- [ ] ant-design/ant-design
+- [ ] chakra-ui/chakra-ui
+- [ ] mantinedev/mantine
+- [ ] radix-ui/primitives
+- [ ] pmndrs/react-three-fiber
+- [ ] pmndrs/zustand
+- [ ] pmndrs/jotai
+- [ ] reduxjs/redux-toolkit
+- [ ] mobxjs/mobx
+- [ ] stitely/xstate
+- [ ] jaredpalmer/formik
+- [ ] react-hook-form/react-hook-form
+- [ ] vercel/swr
+- [ ] vercel/pkg
+- [ ] vercel/turbo
+- [ ] vercel/ncc
+- [ ] vercel/serve
+- [ ] vercel/micro
+- [ ] vercel/style-guides
+- [ ] vercel/og-image

@@ -349,11 +349,11 @@ function truncateForDiscord(text: string, maxLength = 4000): string {
 }
 
 // ============================================
-// EMAIL (via Resend)
+// EMAIL (via SendGrid)
 // ============================================
 
 /**
- * Send release notes via email using Resend.
+ * Send release notes via email using SendGrid.
  *
  * @param target - The distribution target containing the recipient email.
  * @param payload - The release payload.
@@ -369,13 +369,13 @@ async function sendEmail(
     return { target, success: false, error: 'Missing email' };
   }
 
-  const resendApiKey = process.env.RESEND_API_KEY;
+  const sendGridApiKey = process.env.SENDGRID_API_KEY;
 
-  if (!resendApiKey) {
+  if (!sendGridApiKey) {
     return {
       target,
       success: false,
-      error: 'RESEND_API_KEY not configured',
+      error: 'SENDGRID_API_KEY not configured',
     };
   }
 
@@ -387,27 +387,39 @@ async function sendEmail(
         : 'Release Notes';
 
   try {
-    const response = await fetchWithRetry('https://api.resend.com/emails', {
+    const emailPayload = {
+      personalizations: [
+        {
+          to: [{ email: target.email }],
+          subject: `[${payload.repoFullName}] ${payload.tagName} - ${audienceLabel}`,
+        },
+      ],
+      from: { email: 'noreply@negativezeroinc.com', name: 'ShipLog' },
+      content: [
+        {
+          type: 'text/html',
+          value: markdownToHtml(notes, payload),
+        },
+      ],
+    };
+
+    const response = await fetchWithRetry('https://api.sendgrid.com/v3/mail/send', {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${resendApiKey}`,
+        Authorization: `Bearer ${sendGridApiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        from: 'ShipLog <releases@shiplog.io>',
-        to: target.email,
-        subject: `[${payload.repoFullName}] ${payload.tagName} - ${audienceLabel}`,
-        html: markdownToHtml(notes, payload),
-      }),
+      body: JSON.stringify(emailPayload),
     });
 
-    const responseData = await response.json();
+    // SendGrid returns 202 on success with empty body
+    const responseData = response.status === 202 ? null : await response.json().catch(() => null);
 
     return {
       target,
       success: response.ok,
       responseCode: response.status,
-      error: response.ok ? undefined : JSON.stringify(responseData),
+      error: response.ok ? undefined : (responseData ? JSON.stringify(responseData) : 'SendGrid API error'),
     };
   } catch (error) {
     return {

@@ -1,6 +1,7 @@
 {
   "name": "shiplog",
   "private": true,
+  "homepage": "https://shiplog.io",
   "scripts": {
     "dev": "pnpm -r dev",
     "build": "pnpm -r build",
