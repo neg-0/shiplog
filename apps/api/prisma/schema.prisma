@@ -28,6 +28,7 @@ model User {
   stripeSubscriptionId String?
   subscriptionStatus   String? // active, canceled, past_due, etc.
   trialEndsAt          DateTime?
+  stripeLastEventTimestamp Int?
   
   lastLogoutAt    DateTime?
 

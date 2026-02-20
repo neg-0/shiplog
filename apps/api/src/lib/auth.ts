@@ -1,5 +1,8 @@
 /**
- * Auth middleware and token encryption utilities
+ * Authentication middleware and encryption utilities.
+ *
+ * @module auth
+ * @description Provides middleware for JWT verification and utilities for encrypting/decrypting sensitive data (like tokens).
  */
 
 import type { Context, Next } from 'hono';
@@ -23,6 +26,11 @@ declare module 'hono' {
 // ENCRYPTION UTILITIES
 // ============================================
 
+/**
+ * Encode bytes to Base64URL string.
+ * @param bytes - Data to encode.
+ * @returns Base64URL string.
+ */
 function base64UrlEncode(bytes: Uint8Array): string {
   return Buffer.from(bytes)
     .toString('base64')
@@ -31,6 +39,11 @@ function base64UrlEncode(bytes: Uint8Array): string {
     .replace(/=+$/g, '');
 }
 
+/**
+ * Decode Base64URL string to bytes.
+ * @param str - Base64URL string.
+ * @returns Decoded bytes.
+ */
 function base64UrlDecode(str: string): Uint8Array {
   const base64 = str.replace(/-/g, '+').replace(/_/g, '/');
   const padded = base64.padEnd(base64.length + (4 - (base64.length % 4)) % 4, '=');
@@ -41,6 +54,11 @@ function base64UrlDecode(str: string): Uint8Array {
   return new Uint8Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
 }
 
+/**
+ * Derive an AES-GCM key from the JWT_SECRET.
+ * @returns CryptoKey for AES-GCM.
+ * @throws Error if JWT_SECRET is not set.
+ */
 async function deriveAesKey(): Promise<CryptoKey> {
   const secret = process.env.JWT_SECRET;
   if (!secret) throw new Error('JWT_SECRET is not set');
@@ -72,8 +90,14 @@ async function deriveAesKey(): Promise<CryptoKey> {
 }
 
 /**
- * Encrypt a string (e.g., access token) using AES-GCM
- * Returns: v1.<iv>.<ciphertext>
+ * Encrypt a string using AES-GCM.
+ *
+ * @description
+ * Generates a random IV and encrypts the plaintext. Returns a formatted string containing version, IV, and ciphertext.
+ * Format: `v1.<iv_base64>.<ciphertext_base64>`
+ *
+ * @param plaintext - The string to encrypt.
+ * @returns Encrypted string.
  */
 export async function encrypt(plaintext: string): Promise<string> {
   const key = await deriveAesKey();
@@ -85,7 +109,11 @@ export async function encrypt(plaintext: string): Promise<string> {
 }
 
 /**
- * Decrypt a string that was encrypted with encrypt()
+ * Decrypt a string encrypted by `encrypt()`.
+ *
+ * @param encrypted - The encrypted string (format: `v1.<iv>.<ciphertext>`).
+ * @returns The original plaintext.
+ * @throws Error if format is invalid or decryption fails.
  */
 export async function decrypt(encrypted: string): Promise<string> {
   if (!encrypted.startsWith('v1.')) {
@@ -97,12 +125,18 @@ export async function decrypt(encrypted: string): Promise<string> {
     throw new Error('Invalid encrypted format');
   }
 
-  const [, ivStr, ciphertextStr] = parts;
-  const iv = base64UrlDecode(ivStr) as Uint8Array<ArrayBuffer>;
-  const ciphertext = base64UrlDecode(ciphertextStr) as Uint8Array<ArrayBuffer>;
+  const ivStr = parts[1];
+  const ciphertextStr = parts[2];
+
+  if (!ivStr || !ciphertextStr) {
+    throw new Error('Invalid encrypted format');
+  }
+
+  const iv = base64UrlDecode(ivStr);
+  const ciphertext = base64UrlDecode(ciphertextStr);
 
   const key = await deriveAesKey();
-  const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext);
+  const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv as any }, key, ciphertext as any);
 
   return new TextDecoder().decode(decrypted);
 }
@@ -112,8 +146,15 @@ export async function decrypt(encrypted: string): Promise<string> {
 // ============================================
 
 /**
- * Middleware that requires a valid JWT token
- * Sets c.get('user') with user data from database
+ * Middleware to enforce authentication.
+ *
+ * @description
+ * Verifies the Bearer token in the Authorization header.
+ * If valid, fetches the user from the database and attaches it to the request context.
+ *
+ * @param c - Hono context.
+ * @param next - Next middleware.
+ * @returns Response or calls next().
  */
 export async function requireAuth(c: Context, next: Next) {
   const authHeader = c.req.header('Authorization');
@@ -157,11 +198,19 @@ export async function requireAuth(c: Context, next: Next) {
   // Attach user to context
   c.set('user', user);
 
-  await next();
+  return next();
 }
 
 /**
- * Optional auth - doesn't fail if no token, but sets user if valid
+ * Middleware for optional authentication.
+ *
+ * @description
+ * Checks for a Bearer token. If present and valid, attaches the user to the context.
+ * Does not block the request if the token is missing or invalid.
+ *
+ * @param c - Hono context.
+ * @param next - Next middleware.
+ * @returns Calls next().
  */
 export async function optionalAuth(c: Context, next: Next) {
   const authHeader = c.req.header('Authorization');
