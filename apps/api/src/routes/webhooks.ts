@@ -6,6 +6,7 @@ import { fetchReleaseData } from '../services/github.js';
 import { generateReleaseNotes } from '../services/generator.js';
 import { decrypt } from '../lib/auth.js';
 import { distributeReleaseWithResults, type DistributionTarget } from '../services/distributor.js';
+import { metrics } from '../lib/metrics.js';
 
 /**
  * @module webhooks
@@ -140,6 +141,8 @@ webhooks.post('/github', async (c) => {
       );
 
       // Generate AI release notes
+      console.log(`🤖 Generating release notes...`);
+      const start = Date.now();
       logger.info(`🤖 Generating release notes...`);
       const notes = await generateReleaseNotes({
         tagName: releaseData.release.tagName,
@@ -156,6 +159,9 @@ webhooks.post('/github', async (c) => {
           customerTone: connectedRepo.config?.customerTone ?? 'friendly',
         },
       });
+      const duration = Date.now() - start;
+      metrics.generationTimeTotal += duration;
+      metrics.generationCount++;
 
       logger.info(`✅ Generated notes (${notes.tokensUsed} tokens used)`, { tokensUsed: notes.tokensUsed });
 
@@ -272,6 +278,9 @@ webhooks.post('/github', async (c) => {
         data: { status: 'PUBLISHED' },
       });
 
+      metrics.releasesProcessed++;
+      metrics.distributionsSent += distributionResults.length;
+
       return c.json({
         status: 'processed',
         release: release.tag_name,
@@ -282,6 +291,8 @@ webhooks.post('/github', async (c) => {
       });
 
     } catch (error) {
+      console.error('❌ Error processing release:', error);
+      metrics.errorCounts++;
       logger.error('❌ Error processing release', { error });
       return c.json({ 
         status: 'error', 

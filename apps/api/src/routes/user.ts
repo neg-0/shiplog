@@ -1,6 +1,8 @@
 import { Hono } from 'hono';
+import { zValidator } from '@hono/zod-validator';
 import { prisma } from '../lib/db.js';
 import { requireAuth } from '../lib/auth.js';
+import { updateUserSchema } from '../lib/schemas.js';
 import { apiLimiter } from '../lib/rate-limit.js';
 
 /**
@@ -53,6 +55,23 @@ user.get('/me', requireAuth, apiLimiter, async (c) => {
   });
 });
 
+// Update user profile
+user.patch(
+  '/me',
+  requireAuth,
+  zValidator('json', updateUserSchema),
+  async (c) => {
+    const authUser = c.get('user');
+    const { name } = c.req.valid('json');
+
+    if (name !== undefined) {
+      await prisma.user.update({
+        where: { id: authUser.id },
+        data: { name },
+      });
+    }
+
+    return c.json({ success: true });
 /**
  * PATCH /me
  * @description Update user profile information.
@@ -72,9 +91,7 @@ user.patch('/me', requireAuth, apiLimiter, async (c) => {
       data: { name },
     });
   }
-  
-  return c.json({ success: true });
-});
+);
 
 /**
  * DELETE /me
