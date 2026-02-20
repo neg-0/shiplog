@@ -25,8 +25,15 @@ function verifyGitHubSignature(payload: string, signature: string | undefined, s
   const hmac = createHmac('sha256', secret);
   const digest = 'sha256=' + hmac.update(payload).digest('hex');
   
+  const signatureBuffer = Buffer.from(signature);
+  const digestBuffer = Buffer.from(digest);
+
+  if (signatureBuffer.length !== digestBuffer.length) {
+    return false;
+  }
+
   try {
-    return timingSafeEqual(Buffer.from(signature), Buffer.from(digest));
+    return timingSafeEqual(signatureBuffer, digestBuffer);
   } catch {
     return false;
   }
@@ -45,7 +52,17 @@ webhooks.post('/github', async (c) => {
   const signature = c.req.header('x-hub-signature-256');
   const event = c.req.header('x-github-event');
 
-  let payload: { action?: string; release?: { tag_name: string }; repository?: { full_name: string } };
+  // Verify signature presence early to prevent unnecessary processing
+  if (!signature) {
+    return c.json({ error: 'No signature' }, 401);
+  }
+
+  let payload: {
+    action?: string;
+    release?: { id: number; tag_name: string };
+    repository?: { full_name: string }
+  };
+
   try {
     payload = JSON.parse(body);
   } catch {
@@ -93,6 +110,16 @@ webhooks.post('/github', async (c) => {
       if (!verifyGitHubSignature(body, signature, connectedRepo.webhookSecret)) {
         console.error(`❌ Invalid signature for ${repo.full_name}`);
         return c.json({ error: 'Invalid signature' }, 401);
+      }
+
+      // Check if release already exists to prevent replay attacks
+      const existingRelease = await prisma.release.findUnique({
+        where: { githubId: release.id },
+      });
+
+      if (existingRelease) {
+        console.log(`⚠️ Release ${release.id} already processed.`);
+        return c.json({ status: 'ignored', reason: 'already_processed' });
       }
 
       // Decrypt the user's GitHub token
