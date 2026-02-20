@@ -30,6 +30,8 @@ model User {
   trialEndsAt          DateTime?
   stripeLastEventTimestamp Int?
   
+  lastLogoutAt    DateTime?
+
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   
