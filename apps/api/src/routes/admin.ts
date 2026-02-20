@@ -1,7 +1,13 @@
-import { Hono, type Context, type Next } from 'hono';
-import { Prisma } from '@prisma/client';
+import { Hono } from 'hono';
+import { zValidator } from '@hono/zod-validator';
 import { prisma } from '../lib/db.js';
 import { requireAuth } from '../lib/auth.js';
+import { updateUserAdminSchema } from '../lib/schemas.js';
+
+// Admin emails from environment variable
+const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean);
+import { Hono, type Context, type Next } from 'hono';
+import { Prisma } from '@prisma/client';
 import { apiLimiter } from '../lib/rate-limit.js';
 
 // Admin middleware
@@ -164,6 +170,13 @@ admin.get('/users/:id', async (c) => {
   return c.json(user);
 });
 
+// Update user
+admin.patch(
+  '/users/:id',
+  zValidator('json', updateUserAdminSchema),
+  async (c) => {
+    const userId = c.req.param('id');
+    const { subscriptionTier } = c.req.valid('json');
 /**
  * PATCH /users/:id
  * @description Update a user's information.
@@ -184,8 +197,16 @@ admin.patch('/users/:id', async (c) => {
     },
   });
 
-  return c.json(updated);
-});
+    const updated = await prisma.user.update({
+      where: { id: userId },
+      data: {
+        ...(subscriptionTier && { subscriptionTier }),
+      },
+    });
+
+    return c.json(updated);
+  }
+);
 
 /**
  * DELETE /users/:id

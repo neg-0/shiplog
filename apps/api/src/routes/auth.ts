@@ -1,8 +1,10 @@
 import { Hono } from 'hono';
+import { zValidator } from '@hono/zod-validator';
 import { prisma } from '../lib/db.js';
 import { logger } from '../lib/logger.js';
 import { signToken } from '../lib/jwt.js';
 import { encrypt } from '../lib/auth.js';
+import { githubCallbackSchema } from '../lib/schemas.js';
 
 /**
  * @module auth
@@ -56,6 +58,12 @@ auth.get('/github', (c) => {
   return c.redirect(`https://github.com/login/oauth/authorize?${params}`);
 });
 
+// GitHub OAuth callback
+auth.get(
+  '/github/callback',
+  zValidator('query', githubCallbackSchema),
+  async (c) => {
+    const { code, state } = c.req.valid('query');
 /**
  * GET /github/callback
  * @description Handles the GitHub OAuth callback. Exchange code for token, fetch user profile, create/update user in DB, and issue session token.
@@ -67,12 +75,16 @@ auth.get('/github/callback', async (c) => {
   const code = c.req.query('code');
   const state = c.req.query('state');
 
+    console.log(`🔑 OAuth callback with state: ${state?.slice(0, 8)}...`);
   logger.info(`🔑 OAuth callback`, { state: state?.slice(0, 8) + '...' });
 
-  if (!code) {
-    return c.json({ error: 'No code provided' }, 400);
-  }
+    if (!pendingStates.has(state)) {
+      console.log(`❌ Invalid state. Known states: ${pendingStates.size}`);
+      return c.json({ error: 'Invalid OAuth state' }, 400);
+    }
 
+    // Remove used state
+    pendingStates.delete(state);
   if (!state || !pendingStates.has(state)) {
     logger.warn(`❌ Invalid state. Known states: ${pendingStates.size}`, { state });
     return c.json({ error: 'Invalid OAuth state' }, 400);

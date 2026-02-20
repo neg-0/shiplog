@@ -1,10 +1,16 @@
 import { Hono } from 'hono';
+import { zValidator } from '@hono/zod-validator';
 import { prisma } from '../lib/db.js';
 import { logger } from '../lib/logger.js';
 import { requireAuth, decrypt } from '../lib/auth.js';
 import { apiLimiter } from '../lib/rate-limit.js';
 import { fetchReleaseData } from '../services/github.js';
 import { generateReleaseNotes } from '../services/generator.js';
+import {
+  regenerateNotesSchema,
+  publishReleaseSchema,
+  updateNotesSchema,
+} from '../lib/schemas.js';
 
 /**
  * @module releases
@@ -77,6 +83,16 @@ releases.get('/:id', async (c) => {
   });
 });
 
+// Regenerate notes for a release
+releases.post(
+  '/:id/regenerate',
+  zValidator('json', regenerateNotesSchema),
+  async (c) => {
+    const user = c.get('user');
+    const id = c.req.param('id');
+    const body = c.req.valid('json');
+
+    const release = await prisma.release.findFirst({
 /**
  * POST /:id/regenerate
  * @description Trigger regeneration of release notes using AI.
@@ -200,6 +216,16 @@ releases.post('/:id/regenerate', async (c) => {
   }
 });
 
+// Manually publish/distribute a release
+releases.post(
+  '/:id/publish',
+  zValidator('json', publishReleaseSchema),
+  async (c) => {
+    const user = c.get('user');
+    const id = c.req.param('id');
+    const body = c.req.valid('json');
+
+    const release = await prisma.release.findFirst({
 /**
  * POST /:id/publish
  * @description Mark release as published and trigger distribution to channels.
@@ -260,6 +286,16 @@ releases.post('/:id/publish', async (c) => {
   });
 });
 
+// Update generated notes (manual edit)
+releases.patch(
+  '/:id/notes',
+  zValidator('json', updateNotesSchema),
+  async (c) => {
+    const user = c.get('user');
+    const id = c.req.param('id');
+    const body = c.req.valid('json');
+
+    const release = await prisma.release.findFirst({
 /**
  * PATCH /:id/notes
  * @description Manually edit the generated release notes.
