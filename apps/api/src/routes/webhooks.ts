@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { prisma } from '../lib/db.js';
+import { logger, setLoggerContext } from '../lib/logger.js';
 import { fetchReleaseData } from '../services/github.js';
 import { generateReleaseNotes } from '../services/generator.js';
 import { decrypt } from '../lib/auth.js';
@@ -72,13 +73,19 @@ webhooks.post('/github', async (c) => {
   }
 
   logInfo(`📥 Received GitHub webhook: ${event}`);
+  logger.info(`📥 Received GitHub webhook: ${event}`, { event });
 
   // Handle release events
   if (event === 'release' && payload.action === 'published') {
     const release = payload.release!;
     const repo = payload.repository!;
+    setLoggerContext({ repo: repo.full_name });
 
     logInfo(`🚀 New release: ${repo.full_name} @ ${release.tag_name}`);
+    logger.info(`🚀 New release: ${repo.full_name} @ ${release.tag_name}`, {
+      repo: repo.full_name,
+      tagName: release.tag_name
+    });
     
     try {
       // Find the connected repository in our database
@@ -100,17 +107,20 @@ webhooks.post('/github', async (c) => {
 
       if (!connectedRepo) {
         logInfo(`⚠️ No connected repo found for ${repo.full_name}`);
+        logger.warn(`⚠️ No connected repo found for ${repo.full_name}`, { repo: repo.full_name });
         return c.json({ status: 'ignored', reason: 'repo_not_connected' });
       }
 
       // Verify signature using the repo's webhook secret
       if (!connectedRepo.webhookSecret) {
         logError(`⚠️ No webhook secret for repo ${repo.full_name}`);
+        logger.error(`⚠️ No webhook secret for repo ${repo.full_name}`, { repo: repo.full_name });
         return c.json({ error: 'Webhook secret not configured' }, 500);
       }
 
       if (!verifyGitHubSignature(body, signature, connectedRepo.webhookSecret)) {
         logError(`❌ Invalid signature for ${repo.full_name}`);
+        logger.error(`❌ Invalid signature for ${repo.full_name}`, { repo: repo.full_name });
         return c.json({ error: 'Invalid signature' }, 401);
       }
 
@@ -129,6 +139,7 @@ webhooks.post('/github', async (c) => {
 
       // Fetch detailed release data
       logInfo(`📊 Fetching release data for ${repo.full_name}...`);
+      logger.info(`📊 Fetching release data for ${repo.full_name}...`, { repo: repo.full_name });
       const releaseData = await fetchReleaseData(
         connectedRepo.owner, 
         connectedRepo.name, 
@@ -137,6 +148,27 @@ webhooks.post('/github', async (c) => {
       );
 
       // Create the release record early to track status
+      // Generate AI release notes
+      logger.info(`🤖 Generating release notes...`);
+      const notes = await generateReleaseNotes({
+        tagName: releaseData.release.tagName,
+        previousTag: releaseData.previousTag ?? undefined,
+        releaseBody: releaseData.release.body ?? undefined,
+        commits: releaseData.commits,
+        pullRequests: releaseData.pullRequests.map(pr => ({
+          ...pr,
+          body: pr.body ?? undefined,
+        })),
+        repoConfig: {
+          productName: connectedRepo.config?.productName ?? connectedRepo.name,
+          companyName: connectedRepo.config?.companyName ?? connectedRepo.owner,
+          customerTone: connectedRepo.config?.customerTone ?? 'friendly',
+        },
+      });
+
+      logger.info(`✅ Generated notes (${notes.tokensUsed} tokens used)`, { tokensUsed: notes.tokensUsed });
+
+      // Create the release record
       const savedRelease = await prisma.release.create({
         data: {
           repoId: connectedRepo.id,
@@ -208,6 +240,7 @@ webhooks.post('/github', async (c) => {
         where: { id: savedRelease.id },
         data: { status: 'READY' }
       });
+      logger.info(`💾 Saved release: ${savedRelease.id}`, { releaseId: savedRelease.id });
 
       const distributionTargets: Array<DistributionTarget & {
         channelId?: string;
@@ -254,6 +287,10 @@ webhooks.post('/github', async (c) => {
       });
 
       logInfo(`📤 Distributing release ${savedRelease.id} to ${distributionTargets.length} targets`);
+      logger.info(`📤 Distributing release ${savedRelease.id} to ${distributionTargets.length} targets`, {
+        releaseId: savedRelease.id,
+        targetCount: distributionTargets.length
+      });
 
       const releaseWithRepo = {
         ...savedRelease,
@@ -317,6 +354,7 @@ webhooks.post('/github', async (c) => {
 
     } catch (error) {
       logError('❌ Error processing release:', {}, error);
+      logger.error('❌ Error processing release', { error });
       return c.json({ 
         status: 'error', 
         message: error instanceof Error ? error.message : 'Unknown error' 
