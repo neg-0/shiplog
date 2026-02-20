@@ -6,29 +6,63 @@ import { generateReleaseNotes } from '../services/generator.js';
 import { decrypt } from '../lib/auth.js';
 import { distributeReleaseWithResults, type DistributionTarget } from '../services/distributor.js';
 
+/**
+ * @module webhooks
+ * @description Routes for handling external webhooks (GitHub).
+ */
 export const webhooks = new Hono();
 
-// Verify GitHub webhook signature
+/**
+ * Verify GitHub webhook signature HMAC.
+ * @param payload - Raw request body.
+ * @param signature - Signature from header.
+ * @param secret - Webhook secret.
+ * @returns boolean indicating validity.
+ */
 function verifyGitHubSignature(payload: string, signature: string | undefined, secret: string): boolean {
   if (!signature) return false;
   
   const hmac = createHmac('sha256', secret);
   const digest = 'sha256=' + hmac.update(payload).digest('hex');
   
+  const signatureBuffer = Buffer.from(signature);
+  const digestBuffer = Buffer.from(digest);
+
+  if (signatureBuffer.length !== digestBuffer.length) {
+    return false;
+  }
+
   try {
-    return timingSafeEqual(Buffer.from(signature), Buffer.from(digest));
+    return timingSafeEqual(signatureBuffer, digestBuffer);
   } catch {
     return false;
   }
 }
 
+/**
+ * POST /github
+ * @description Handle GitHub webhooks (release events).
+ * @header {string} x-hub-signature-256 - HMAC signature.
+ * @header {string} x-github-event - Event type.
+ * @returns {object} Processing status.
+ */
 webhooks.post('/github', async (c) => {
   // Get raw body for signature verification
   const body = await c.req.text();
   const signature = c.req.header('x-hub-signature-256');
   const event = c.req.header('x-github-event');
 
-  let payload: { action?: string; release?: { tag_name: string }; repository?: { full_name: string } };
+  // Verify signature presence early to prevent unnecessary processing
+  if (!signature) {
+    return c.json({ error: 'No signature' }, 401);
+  }
+
+  let payload: {
+    action?: string;
+    release?: { id: number; tag_name: string };
+    repository?: { full_name: string }
+  };
+
   try {
     payload = JSON.parse(body);
   } catch {
@@ -76,6 +110,16 @@ webhooks.post('/github', async (c) => {
       if (!verifyGitHubSignature(body, signature, connectedRepo.webhookSecret)) {
         console.error(`❌ Invalid signature for ${repo.full_name}`);
         return c.json({ error: 'Invalid signature' }, 401);
+      }
+
+      // Check if release already exists to prevent replay attacks
+      const existingRelease = await prisma.release.findUnique({
+        where: { githubId: release.id },
+      });
+
+      if (existingRelease) {
+        console.log(`⚠️ Release ${release.id} already processed.`);
+        return c.json({ status: 'ignored', reason: 'already_processed' });
       }
 
       // Decrypt the user's GitHub token
