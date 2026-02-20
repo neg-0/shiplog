@@ -5,6 +5,7 @@ import { fetchReleaseData } from '../services/github.js';
 import { generateReleaseNotes } from '../services/generator.js';
 import { decrypt } from '../lib/auth.js';
 import { distributeReleaseWithResults, type DistributionTarget } from '../services/distributor.js';
+import { metrics } from '../lib/metrics.js';
 
 export const webhooks = new Hono();
 
@@ -92,6 +93,7 @@ webhooks.post('/github', async (c) => {
 
       // Generate AI release notes
       console.log(`🤖 Generating release notes...`);
+      const start = Date.now();
       const notes = await generateReleaseNotes({
         tagName: releaseData.release.tagName,
         previousTag: releaseData.previousTag ?? undefined,
@@ -107,6 +109,9 @@ webhooks.post('/github', async (c) => {
           customerTone: connectedRepo.config?.customerTone ?? 'friendly',
         },
       });
+      const duration = Date.now() - start;
+      metrics.generationTimeTotal += duration;
+      metrics.generationCount++;
 
       console.log(`✅ Generated notes (${notes.tokensUsed} tokens used)`);
 
@@ -220,6 +225,9 @@ webhooks.post('/github', async (c) => {
         data: { status: 'PUBLISHED' },
       });
 
+      metrics.releasesProcessed++;
+      metrics.distributionsSent += distributionResults.length;
+
       return c.json({
         status: 'processed',
         release: release.tag_name,
@@ -231,6 +239,7 @@ webhooks.post('/github', async (c) => {
 
     } catch (error) {
       console.error('❌ Error processing release:', error);
+      metrics.errorCounts++;
       return c.json({ 
         status: 'error', 
         message: error instanceof Error ? error.message : 'Unknown error' 
