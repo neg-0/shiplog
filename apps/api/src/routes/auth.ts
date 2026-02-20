@@ -169,37 +169,6 @@ auth.get(
   }
 );
 
-  const encryptedAccessToken = await encrypt(tokenData.access_token);
-
-  const dbUser = await prisma.user.upsert({
-    where: { githubId: ghUser.id },
-    create: {
-      githubId: ghUser.id,
-      login: ghUser.login,
-      name: ghUser.name ?? null,
-      email: email ?? null,
-      avatarUrl: ghUser.avatar_url ?? null,
-      accessToken: encryptedAccessToken,
-    },
-    update: {
-      login: ghUser.login,
-      name: ghUser.name ?? null,
-      email: email ?? null,
-      avatarUrl: ghUser.avatar_url ?? null,
-      accessToken: encryptedAccessToken,
-    },
-  });
-
-  const sessionToken = await signToken(dbUser.id);
-
-  const redirectUrl = new URL(`${APP_URL}/dashboard`);
-  redirectUrl.searchParams.set('token', sessionToken);
-
-  logger.info(`✅ OAuth complete for ${ghUser.login}`, { login: ghUser.login });
-
-  return c.redirect(redirectUrl.toString());
-});
-
 /**
  * POST /demo
  * @description Creates a session for a demo user (only enabled if ENABLE_DEMO_LOGIN=true).

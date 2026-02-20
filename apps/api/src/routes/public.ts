@@ -16,17 +16,6 @@ const publicLimit = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   limit: 100,
 });
-/**
- * POST /feedback
- * @description Submit feedback for a specific repository.
- * @body {string} repoId - Repository UUID.
- * @body {string} feedback - Feedback text.
- * @body {string} [email] - User email.
- * @body {string} [source] - Source of feedback (e.g., widget).
- * @returns {object} Success confirmation.
- */
-publicChangelog.post('/feedback', async (c) => {
-  const { repoId, feedback, email, source } = await c.req.json();
 
 const feedbackLimit = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
@@ -44,7 +33,10 @@ const feedbackSchema = z.object({
   source: z.string().optional(),
 });
 
-// Submit feedback
+/**
+ * POST /feedback
+ * @description Submit feedback for a specific repository.
+ */
 publicChangelog.post('/feedback', feedbackLimit, zValidator('json', feedbackSchema), async (c) => {
   const { repoId, feedback, email, source } = c.req.valid('json');
 
@@ -52,8 +44,7 @@ publicChangelog.post('/feedback', feedbackLimit, zValidator('json', feedbackSche
   const safeFeedback = sanitizeHtml(feedback);
 
   // Log feedback
-  console.log(`[Feedback] Repo: ${repoId}, Content: ${safeFeedback}, Email: ${email}`);
-  logger.info(`Feedback received`, { repoId, feedback, email });
+  logger.info(`Feedback received`, { repoId, feedback: safeFeedback, email });
 
   // Send to Discord if configured
   if (process.env.DISCORD_FEEDBACK_WEBHOOK_URL) {
@@ -164,17 +155,11 @@ const listReleasesSchema = z.object({
   limit: z.string().optional().transform(v => Math.min(50, Math.max(1, parseInt(v || '20')))),
 });
 
-// Get releases list (paginated)
-publicChangelog.get('/:slug/releases', zValidator('query', listReleasesSchema), async (c) => {
 /**
  * GET /:slug/releases
  * @description Get paginated releases for a repository.
- * @param {string} slug - Repository slug.
- * @param {string} [page=1] - Page number.
- * @param {string} [limit=20] - Releases per page.
- * @returns {object} Array of releases and pagination info.
  */
-publicChangelog.get('/:slug/releases', async (c) => {
+publicChangelog.get('/:slug/releases', zValidator('query', listReleasesSchema), async (c) => {
   const slug = c.req.param('slug');
   const { page, limit } = c.req.valid('query');
 

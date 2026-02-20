@@ -55,10 +55,16 @@ user.get('/me', requireAuth, apiLimiter, async (c) => {
   });
 });
 
-// Update user profile
+/**
+ * PATCH /me
+ * @description Update user profile information.
+ * @body {string} [name] - New display name.
+ * @returns {object} Success message.
+ */
 user.patch(
   '/me',
   requireAuth,
+  apiLimiter,
   zValidator('json', updateUserSchema),
   async (c) => {
     const authUser = c.get('user');
@@ -72,24 +78,6 @@ user.patch(
     }
 
     return c.json({ success: true });
-/**
- * PATCH /me
- * @description Update user profile information.
- * @body {string} [name] - New display name.
- * @returns {object} Success message.
- */
-user.patch('/me', requireAuth, apiLimiter, async (c) => {
-  const authUser = c.get('user');
-  const body = await c.req.json();
-  
-  // Only allow updating name for now
-  const { name } = body;
-  
-  if (name !== undefined) {
-    await prisma.user.update({
-      where: { id: authUser.id },
-      data: { name },
-    });
   }
 );
 

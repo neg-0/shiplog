@@ -22,6 +22,7 @@ const createOrgSchema = z.object({
   githubOrgId: z.number().optional(),
   githubOrgLogin: z.string().optional(),
 });
+
 /**
  * POST /
  * @description Create a new organization.
@@ -32,16 +33,6 @@ const createOrgSchema = z.object({
  * @returns {object} The created organization.
  * @throws 400 if name or slug is missing or slug already exists.
  */
-organizations.post('/', async (c) => {
-  const user = c.get('user');
-  const body = await c.req.json() as {
-    name: string;
-    slug: string;
-    githubOrgId?: number;
-    githubOrgLogin?: string;
-  };
-
-// Create organization
 organizations.post('/', validate(createOrgSchema), async (c) => {
   const user = c.get('user');
   const body = c.req.valid('json');
@@ -196,8 +187,6 @@ const updateOrgSchema = z.object({
   subscriptionId: z.string().nullable().optional(),
 });
 
-// Update organization
-organizations.patch('/:id', validate(updateOrgSchema), async (c) => {
 /**
  * PATCH /:id
  * @description Update an organization's details.
@@ -207,7 +196,7 @@ organizations.patch('/:id', validate(updateOrgSchema), async (c) => {
  * @returns {object} Updated organization.
  * @throws 403 if user is not an owner/admin.
  */
-organizations.patch('/:id', async (c) => {
+organizations.patch('/:id', validate(updateOrgSchema), async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
   const body = c.req.valid('json');
@@ -253,8 +242,6 @@ const inviteSchema = z.object({
   expiresAt: z.string().datetime().optional(),
 });
 
-// Invite member by email
-organizations.post('/:id/invite', validate(inviteSchema), async (c) => {
 /**
  * POST /:id/invite
  * @description Invite a user to the organization by email.
@@ -265,7 +252,7 @@ organizations.post('/:id/invite', validate(inviteSchema), async (c) => {
  * @throws 403 if user is not an owner/admin.
  * @throws 400 if user is already a member.
  */
-organizations.post('/:id/invite', async (c) => {
+organizations.post('/:id/invite', validate(inviteSchema), async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
   const body = c.req.valid('json');

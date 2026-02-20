@@ -5,9 +5,9 @@ import { z } from 'zod';
 import { prisma } from '../lib/db.js';
 import { logger } from '../lib/logger.js';
 import { requireAuth } from '../lib/auth.js';
-import { validate } from '../lib/validation.js';
 import { checkoutSchema } from '../lib/schemas.js';
 import { apiLimiter } from '../lib/rate-limit.js';
+import { SubscriptionTier } from '@prisma/client';
 
 /**
  * @module billing
@@ -34,8 +34,6 @@ const getPriceId = (plan: string | null | undefined) => {
   if (plan === 'team') return priceTeam;
   return null;
 };
-
-import { SubscriptionTier } from '@prisma/client';
 
 const getTierFromPrice = (price?: Stripe.Price | null): SubscriptionTier => {
   if (!price) {
@@ -64,19 +62,6 @@ const shouldDowngrade = (status?: Stripe.Subscription.Status) => {
   return status === 'canceled' || status === 'unpaid' || status === 'incomplete_expired';
 };
 
-const checkoutSchema = z.object({
-  plan: z.string(),
-});
-
-billing.post('/checkout', requireAuth, validate(checkoutSchema), async (c) => {
-billing.post(
-  '/checkout',
-  requireAuth,
-  zValidator('json', checkoutSchema),
-  async (c) => {
-    if (!stripeSecret) {
-      return c.json({ error: 'Stripe not configured' }, 500);
-    }
 /**
  * POST /checkout
  * @description Create a Stripe Checkout Session for a subscription.
@@ -85,18 +70,16 @@ billing.post(
  * @throws 400 if plan is invalid.
  * @throws 404 if user not found.
  */
-billing.post('/checkout', requireAuth, apiLimiter, async (c) => {
-  if (!stripeSecret) {
-    return c.json({ error: 'Stripe not configured' }, 500);
-  }
+billing.post(
+  '/checkout',
+  requireAuth,
+  apiLimiter,
+  zValidator('json', checkoutSchema),
+  async (c) => {
+    if (!stripeSecret) {
+      return c.json({ error: 'Stripe not configured' }, 500);
+    }
 
-  const user = c.get('user');
-  // Support query param too? The original code did. I'll stick to body via validation for consistency,
-  // but if I need to support query, I'd need zValidator('query') too.
-  // Original: const plan = c.req.query('plan') ?? ...
-  // Let's stick to body from schema.
-  const { plan } = c.req.valid('json');
-  const priceId = getPriceId(plan);
     const user = c.get('user');
     const { plan } = c.req.valid('json');
     const priceId = getPriceId(plan);
@@ -106,108 +89,81 @@ billing.post('/checkout', requireAuth, apiLimiter, async (c) => {
     }
 
     const dbUser = await prisma.user.findUnique({
-    where: { id: user.id },
-    select: {
-      id: true,
-      email: true,
-      name: true,
-      login: true,
-      stripeCustomerId: true,
-      githubId: true,
-      subscriptionStatus: true,
-      subscriptionTier: true,
-      stripeSubscriptionId: true,
-    },
-  });
+      where: { id: user.id },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        login: true,
+        stripeCustomerId: true,
+        githubId: true,
+        subscriptionStatus: true,
+        subscriptionTier: true,
+        stripeSubscriptionId: true,
+      },
+    });
 
-  if (!dbUser) {
-    return c.json({ error: 'User not found' }, 404);
-  }
-
-  // Prevent double subscription
-  if (dbUser.stripeSubscriptionId && dbUser.subscriptionStatus === 'active' && dbUser.subscriptionTier !== 'FREE') {
-    return c.json({
-      error: 'You already have an active subscription. Please manage it in the billing portal.',
-      redirect: '/dashboard/settings'
-    }, 400);
-  }
-
-  let customerId = dbUser.stripeCustomerId;
-
-  // Helper to create a new Stripe customer (or find existing by email)
-  const createNewCustomer = async () => {
-    // 1. Check if customer already exists in Stripe by email
-    if (dbUser.email) {
-      const existingCustomers = await stripe.customers.list({
-        email: dbUser.email,
-        limit: 1,
-      });
-
-      if (existingCustomers.data.length > 0) {
-        const existingId = existingCustomers.data[0].id;
-        logger.info(`♻️ Found existing Stripe customer for user`, { customerId: existingId, email: dbUser.email });
-      const existingCustomer = existingCustomers.data[0];
-      if (existingCustomer) {
-        const existingId = existingCustomer.id;
-        console.log(`♻️ Found existing Stripe customer ${existingId} for ${dbUser.email}`);
-        
-        await prisma.user.update({
-          where: { id: dbUser.id },
-          data: { stripeCustomerId: existingId },
-        });
-        
-        return existingId;
-      }
+    if (!dbUser) {
+      return c.json({ error: 'User not found' }, 404);
     }
 
-    // 2. Create new if not found
-    const customer = await stripe.customers.create({
-      email: dbUser.email ?? undefined,
-      name: dbUser.name ?? dbUser.login,
-      metadata: {
-        userId: dbUser.id,
-        githubId: dbUser.githubId.toString(), // Add GitHub ID metadata for cross-ref
-      },
-    });
+    // Prevent double subscription
+    if (dbUser.stripeSubscriptionId && dbUser.subscriptionStatus === 'active' && dbUser.subscriptionTier !== 'FREE') {
+      return c.json({
+        error: 'You already have an active subscription. Please manage it in the billing portal.',
+        redirect: '/dashboard/settings'
+      }, 400);
+    }
 
-    await prisma.user.update({
-      where: { id: dbUser.id },
-      data: { stripeCustomerId: customer.id },
-    });
+    let customerId = dbUser.stripeCustomerId;
 
-    return customer.id;
-  };
+    // Helper to create a new Stripe customer (or find existing by email)
+    const createNewCustomer = async () => {
+      // 1. Check if customer already exists in Stripe by email
+      if (dbUser.email) {
+        const existingCustomers = await stripe.customers.list({
+          email: dbUser.email,
+          limit: 1,
+        });
 
-  if (!customerId) {
-    customerId = await createNewCustomer();
-  }
+        const existingCustomer = existingCustomers.data[0];
+        if (existingCustomer) {
+          const existingId = existingCustomer.id;
+          logger.info(`♻️ Found existing Stripe customer for user`, { customerId: existingId, email: dbUser.email });
+          
+          await prisma.user.update({
+            where: { id: dbUser.id },
+            data: { stripeCustomerId: existingId },
+          });
+          
+          return existingId;
+        }
+      }
 
-  // Try to create checkout session, handle stale customer IDs
-  try {
-    const session = await stripe.checkout.sessions.create({
-      mode: 'subscription',
-      customer: customerId,
-      line_items: [{ price: priceId, quantity: 1 }],
-      allow_promotion_codes: true,
-      subscription_data: {
-        trial_period_days: 14,
-      },
-      success_url: `${APP_URL}/dashboard/settings?checkout=success`,
-      cancel_url: `${APP_URL}/dashboard/settings?checkout=cancel`,
-      client_reference_id: dbUser.id,
-      metadata: {
-        userId: dbUser.id,
-        plan: plan.toUpperCase(),
-      },
-    });
+      // 2. Create new if not found
+      const customer = await stripe.customers.create({
+        email: dbUser.email ?? undefined,
+        name: dbUser.name ?? dbUser.login,
+        metadata: {
+          userId: dbUser.id,
+          githubId: dbUser.githubId.toString(), // Add GitHub ID metadata for cross-ref
+        },
+      });
 
-    return c.json({ url: session.url });
-  } catch (error: unknown) {
-    // If customer doesn't exist (switched from live to test mode), create new one
-    if (error instanceof Error && error.message.includes('No such customer')) {
-      logger.warn(`⚠️ Stale customer ID ${customerId}, creating new customer...`, { customerId });
+      await prisma.user.update({
+        where: { id: dbUser.id },
+        data: { stripeCustomerId: customer.id },
+      });
+
+      return customer.id;
+    };
+
+    if (!customerId) {
       customerId = await createNewCustomer();
-      
+    }
+
+    // Try to create checkout session, handle stale customer IDs
+    try {
       const session = await stripe.checkout.sessions.create({
         mode: 'subscription',
         customer: customerId,
@@ -226,10 +182,35 @@ billing.post('/checkout', requireAuth, apiLimiter, async (c) => {
       });
 
       return c.json({ url: session.url });
+    } catch (error: unknown) {
+      // If customer doesn't exist (switched from live to test mode), create new one
+      if (error instanceof Error && error.message.includes('No such customer')) {
+        logger.warn(`⚠️ Stale customer ID ${customerId}, creating new customer...`, { customerId });
+        customerId = await createNewCustomer();
+        
+        const session = await stripe.checkout.sessions.create({
+          mode: 'subscription',
+          customer: customerId,
+          line_items: [{ price: priceId, quantity: 1 }],
+          allow_promotion_codes: true,
+          subscription_data: {
+            trial_period_days: 14,
+          },
+          success_url: `${APP_URL}/dashboard/settings?checkout=success`,
+          cancel_url: `${APP_URL}/dashboard/settings?checkout=cancel`,
+          client_reference_id: dbUser.id,
+          metadata: {
+            userId: dbUser.id,
+            plan: plan.toUpperCase(),
+          },
+        });
+
+        return c.json({ url: session.url });
+      }
+      throw error;
     }
-    throw error;
   }
-});
+);
 
 /**
  * POST /portal
@@ -320,7 +301,7 @@ billing.post('/webhook', async (c) => {
         where: { ownerId: userId },
       });
 
-      console.log(`[Billing] Syncing organizations for user ${userId}. Found ${orgs.length} orgs. Tier: ${tier}`);
+      logger.info(`[Billing] Syncing organizations for user ${userId}. Found ${orgs.length} orgs. Tier: ${tier}`);
 
       for (const org of orgs) {
         await prisma.organization.update({
@@ -331,11 +312,11 @@ billing.post('/webhook', async (c) => {
         });
       }
     } catch (error) {
-      console.error(`[Billing] Failed to sync organizations for user ${userId}:`, error);
+      logger.error(`[Billing] Failed to sync organizations for user ${userId}:`, error);
     }
   };
 
-  const updateByCustomer = async (customerId: string, data: Record<string, unknown>, tier: SubscriptionTier, subscriptionId: string) => {
+  const updateByCustomer = async (customerId: string, data: Record<string, any>, tier: SubscriptionTier, subscriptionId: string) => {
     // Find users first to sync organizations
     const users = await prisma.user.findMany({
       where: { stripeCustomerId: customerId },
@@ -404,7 +385,7 @@ billing.post('/webhook', async (c) => {
             await updateByCustomer(customerId, data, tier, subscriptionId);
           }
         } catch (error) {
-          console.error('Error processing checkout.session.completed:', error);
+          logger.error('Error processing checkout.session.completed:', error);
           return c.json({ error: 'Webhook processing failed' }, 500);
         }
       }
@@ -432,7 +413,7 @@ billing.post('/webhook', async (c) => {
           trialEndsAt,
         }, tier, subscription.id);
       } catch (error) {
-        console.error('Error processing customer.subscription event:', error);
+        logger.error('Error processing customer.subscription event:', error);
         return c.json({ error: 'Webhook processing failed' }, 500);
       }
       break;

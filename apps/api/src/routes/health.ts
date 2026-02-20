@@ -23,12 +23,6 @@ health.get('/metrics', (c) => {
     ? metrics.generationTimeTotal / metrics.generationCount
     : 0;
 
-/**
- * GET /
- * @description Simple health check endpoint.
- * @returns {object} Status, timestamp, and uptime.
- */
-health.get('/', (c) => {
   return c.json({
     totalRequests: metrics.totalRequests,
     releasesProcessed: metrics.releasesProcessed,
@@ -38,6 +32,11 @@ health.get('/', (c) => {
   });
 });
 
+/**
+ * GET /
+ * @description Detailed health check endpoint.
+ * @returns {object} Status, timestamp, and results of database, GitHub, and Stripe checks.
+ */
 health.get('/', async (c) => {
   const results = {
     database: false,
