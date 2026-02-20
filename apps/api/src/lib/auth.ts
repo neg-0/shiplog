@@ -10,8 +10,6 @@ import { verifyToken } from './jwt.js';
 import { prisma } from './db.js';
 import { setLoggerContext } from './logger.js';
 
-const JWT_SECRET = process.env.JWT_SECRET;
-
 // Extend Hono context with user
 declare module 'hono' {
   interface ContextVariableMap {
@@ -20,6 +18,7 @@ declare module 'hono' {
       githubId: number;
       login: string;
       email: string | null;
+      lastLogoutAt: Date | null;
     };
   }
 }
@@ -62,12 +61,33 @@ function base64UrlDecode(str: string): Uint8Array {
  * @throws Error if JWT_SECRET is not set.
  */
 async function deriveAesKey(): Promise<CryptoKey> {
-  if (!JWT_SECRET) throw new Error('JWT_SECRET is not set');
+  const secret = process.env.JWT_SECRET;
+  if (!secret) throw new Error('JWT_SECRET is not set');
 
-  // Derive a stable 256-bit key from JWT_SECRET
-  const secretBytes = new TextEncoder().encode(JWT_SECRET);
-  const hash = await crypto.subtle.digest('SHA-256', secretBytes);
-  return await crypto.subtle.importKey('raw', hash, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+  // Derive a stable 256-bit key from JWT_SECRET using PBKDF2
+  const secretBytes = new TextEncoder().encode(secret);
+  const salt = new TextEncoder().encode('shiplog-secure-salt-v1'); // Fixed salt for determinism
+
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    secretBytes,
+    { name: 'PBKDF2' },
+    false,
+    ['deriveKey']
+  );
+
+  return await crypto.subtle.deriveKey(
+    {
+      name: 'PBKDF2',
+      salt,
+      iterations: 100000,
+      hash: 'SHA-256',
+    },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
 }
 
 /**
@@ -159,11 +179,21 @@ export async function requireAuth(c: Context, next: Next) {
       githubId: true,
       login: true,
       email: true,
+      lastLogoutAt: true,
     },
   });
 
   if (!user) {
     return c.json({ error: 'User not found' }, 401);
+  }
+
+  // Check revocation
+  if (user.lastLogoutAt && payload.iat) {
+    const logoutTime = Math.floor(user.lastLogoutAt.getTime() / 1000);
+    // Revoke if token issued before last logout
+    if (payload.iat < logoutTime) {
+      return c.json({ error: 'Token revoked' }, 401);
+    }
   }
 
   // Attach user to context
@@ -199,10 +229,22 @@ export async function optionalAuth(c: Context, next: Next) {
           githubId: true,
           login: true,
           email: true,
+          lastLogoutAt: true,
         },
       });
 
       if (user) {
+        let valid = true;
+        if (user.lastLogoutAt && payload.iat) {
+          const logoutTime = Math.floor(user.lastLogoutAt.getTime() / 1000);
+          if (payload.iat < logoutTime) {
+            valid = false;
+          }
+        }
+
+        if (valid) {
+          c.set('user', user);
+        }
         c.set('user', user);
         setLoggerContext({ userId: user.id });
       }
