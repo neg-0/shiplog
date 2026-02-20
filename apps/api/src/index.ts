@@ -16,11 +16,17 @@ import { activity } from './routes/activity.js';
 import { admin } from './routes/admin.js';
 import { publicChangelog } from './routes/public.js';
 import { preview } from './routes/preview.js';
+import { metrics } from './lib/metrics.js';
 import { authLimiter, webhookLimiter, publicLimiter } from './lib/rate-limit.js';
 
 const app = new Hono();
 
 // Middleware
+app.use('*', async (c, next) => {
+  metrics.totalRequests++;
+  await next();
+});
+app.use('*', logger());
 app.use('*', requestLogger);
 app.use('*', cors({
   origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
@@ -59,6 +65,12 @@ app.get('/', (c) => {
     status: 'operational',
     docs: 'https://shiplog.io/docs',
   });
+});
+
+app.onError((err, c) => {
+  console.error(err);
+  metrics.errorCounts++;
+  return c.json({ error: 'Internal Server Error' }, 500);
 });
 
 const port = parseInt(process.env.PORT || '3001');
