@@ -1,9 +1,11 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import Stripe from 'stripe';
+import { z } from 'zod';
 import { prisma } from '../lib/db.js';
 import { logger } from '../lib/logger.js';
 import { requireAuth } from '../lib/auth.js';
+import { validate } from '../lib/validation.js';
 import { checkoutSchema } from '../lib/schemas.js';
 import { apiLimiter } from '../lib/rate-limit.js';
 
@@ -62,6 +64,11 @@ const shouldDowngrade = (status?: Stripe.Subscription.Status) => {
   return status === 'canceled' || status === 'unpaid' || status === 'incomplete_expired';
 };
 
+const checkoutSchema = z.object({
+  plan: z.string(),
+});
+
+billing.post('/checkout', requireAuth, validate(checkoutSchema), async (c) => {
 billing.post(
   '/checkout',
   requireAuth,
@@ -83,6 +90,13 @@ billing.post('/checkout', requireAuth, apiLimiter, async (c) => {
     return c.json({ error: 'Stripe not configured' }, 500);
   }
 
+  const user = c.get('user');
+  // Support query param too? The original code did. I'll stick to body via validation for consistency,
+  // but if I need to support query, I'd need zValidator('query') too.
+  // Original: const plan = c.req.query('plan') ?? ...
+  // Let's stick to body from schema.
+  const { plan } = c.req.valid('json');
+  const priceId = getPriceId(plan);
     const user = c.get('user');
     const { plan } = c.req.valid('json');
     const priceId = getPriceId(plan);
@@ -99,12 +113,23 @@ billing.post('/checkout', requireAuth, apiLimiter, async (c) => {
       name: true,
       login: true,
       stripeCustomerId: true,
-      githubId: true, // Add this
+      githubId: true,
+      subscriptionStatus: true,
+      subscriptionTier: true,
+      stripeSubscriptionId: true,
     },
   });
 
   if (!dbUser) {
     return c.json({ error: 'User not found' }, 404);
+  }
+
+  // Prevent double subscription
+  if (dbUser.stripeSubscriptionId && dbUser.subscriptionStatus === 'active' && dbUser.subscriptionTier !== 'FREE') {
+    return c.json({
+      error: 'You already have an active subscription. Please manage it in the billing portal.',
+      redirect: '/dashboard/settings'
+    }, 400);
   }
 
   let customerId = dbUser.stripeCustomerId;

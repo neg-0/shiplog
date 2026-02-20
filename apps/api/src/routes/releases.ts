@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { z } from 'zod';
 import { zValidator } from '@hono/zod-validator';
 import { prisma } from '../lib/db.js';
 import { logger } from '../lib/logger.js';
@@ -6,6 +7,9 @@ import { requireAuth, decrypt } from '../lib/auth.js';
 import { apiLimiter } from '../lib/rate-limit.js';
 import { fetchReleaseData } from '../services/github.js';
 import { generateReleaseNotes } from '../services/generator.js';
+import { sanitizeHtml } from '../lib/sanitize.js';
+import { validate } from '../lib/validation.js';
+import { rateLimit } from '../middleware/rate-limit.js';
 import {
   regenerateNotesSchema,
   publishReleaseSchema,
@@ -22,6 +26,17 @@ export const releases = new Hono();
 releases.use('*', requireAuth);
 releases.use('*', apiLimiter);
 
+// Helper for repo access (Owner or Org Member) via release
+const releaseAccess = (userId: string) => ({
+  repo: {
+    OR: [
+      { userId },
+      { organization: { members: { some: { userId } } } }
+    ]
+  }
+});
+
+// Get release with generated notes
 /**
  * GET /:id
  * @description Get detailed information for a specific release, including generated notes.
@@ -35,7 +50,10 @@ releases.get('/:id', async (c) => {
   const id = c.req.param('id');
   
   const release = await prisma.release.findFirst({
-    where: { id },
+    where: {
+      id,
+      ...releaseAccess(user.id)
+    },
     include: {
       notes: true,
       repo: {
@@ -43,18 +61,15 @@ releases.get('/:id', async (c) => {
           id: true,
           fullName: true,
           userId: true,
+          owner: true,
+          name: true,
         },
       },
     },
   });
 
   if (!release) {
-    return c.json({ error: 'Release not found' }, 404);
-  }
-
-  // Verify ownership
-  if (release.repo.userId !== user.id) {
-    return c.json({ error: 'Unauthorized' }, 403);
+    return c.json({ error: 'Release not found or unauthorized' }, 404);
   }
 
   return c.json({
@@ -83,7 +98,18 @@ releases.get('/:id', async (c) => {
   });
 });
 
+const regenerateSchema = z.object({
+  tone: z.string().optional(),
+});
+
+const regenerateLimitMiddleware = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  limit: 10,
+  message: 'Too many regeneration requests. Please try again later.'
+});
+
 // Regenerate notes for a release
+releases.post('/:id/regenerate', regenerateLimitMiddleware, validate(regenerateSchema), async (c) => {
 releases.post(
   '/:id/regenerate',
   zValidator('json', regenerateNotesSchema),
@@ -91,7 +117,6 @@ releases.post(
     const user = c.get('user');
     const id = c.req.param('id');
     const body = c.req.valid('json');
-
     const release = await prisma.release.findFirst({
 /**
  * POST /:id/regenerate
@@ -105,10 +130,13 @@ releases.post(
 releases.post('/:id/regenerate', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
-  const body = await c.req.json() as { tone?: string };
+  const body = c.req.valid('json');
   
   const release = await prisma.release.findFirst({
-    where: { id },
+    where: {
+      id,
+      ...releaseAccess(user.id)
+    },
     include: {
       repo: {
         include: {
@@ -123,6 +151,7 @@ releases.post('/:id/regenerate', async (c) => {
     return c.json({ error: 'Release not found' }, 404);
   }
 
+  console.log(`🔄 Regenerating notes for release ${id}`);
   if (release.repo.userId !== user.id) {
     return c.json({ error: 'Unauthorized' }, 403);
   }
@@ -137,6 +166,8 @@ releases.post('/:id/regenerate', async (c) => {
     });
 
     // Decrypt token and fetch release data
+    // Note: If repo is Org repo, we might need a different token strategy.
+    // Assuming for now the repo.user.accessToken is the one to use (creator/connector).
     const accessToken = await decrypt(release.repo.user.accessToken);
     const releaseData = await fetchReleaseData(
       release.repo.owner,
@@ -216,7 +247,12 @@ releases.post('/:id/regenerate', async (c) => {
   }
 });
 
+const publishSchema = z.object({
+  channels: z.array(z.string()).optional(),
+});
+
 // Manually publish/distribute a release
+releases.post('/:id/publish', validate(publishSchema), async (c) => {
 releases.post(
   '/:id/publish',
   zValidator('json', publishReleaseSchema),
@@ -224,7 +260,6 @@ releases.post(
     const user = c.get('user');
     const id = c.req.param('id');
     const body = c.req.valid('json');
-
     const release = await prisma.release.findFirst({
 /**
  * POST /:id/publish
@@ -237,10 +272,13 @@ releases.post(
 releases.post('/:id/publish', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
-  const body = await c.req.json() as { channels?: string[] };
+  const body = c.req.valid('json');
   
   const release = await prisma.release.findFirst({
-    where: { id },
+    where: {
+      id,
+      ...releaseAccess(user.id)
+    },
     include: {
       notes: true,
       repo: {
@@ -251,10 +289,6 @@ releases.post('/:id/publish', async (c) => {
 
   if (!release) {
     return c.json({ error: 'Release not found' }, 404);
-  }
-
-  if (release.repo.userId !== user.id) {
-    return c.json({ error: 'Unauthorized' }, 403);
   }
 
   if (!release.notes) {
@@ -286,7 +320,14 @@ releases.post('/:id/publish', async (c) => {
   });
 });
 
+const notesSchema = z.object({
+  customer: z.string().optional(),
+  developer: z.string().optional(),
+  stakeholder: z.string().optional(),
+});
+
 // Update generated notes (manual edit)
+releases.patch('/:id/notes', validate(notesSchema), async (c) => {
 releases.patch(
   '/:id/notes',
   zValidator('json', updateNotesSchema),
@@ -294,7 +335,6 @@ releases.patch(
     const user = c.get('user');
     const id = c.req.param('id');
     const body = c.req.valid('json');
-
     const release = await prisma.release.findFirst({
 /**
  * PATCH /:id/notes
@@ -308,14 +348,13 @@ releases.patch(
 releases.patch('/:id/notes', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
-  const body = await c.req.json() as { 
-    customer?: string; 
-    developer?: string; 
-    stakeholder?: string;
-  };
+  const body = c.req.valid('json');
   
   const release = await prisma.release.findFirst({
-    where: { id },
+    where: {
+      id,
+      ...releaseAccess(user.id)
+    },
     include: {
       notes: true,
       repo: {
@@ -328,25 +367,21 @@ releases.patch('/:id/notes', async (c) => {
     return c.json({ error: 'Release not found' }, 404);
   }
 
-  if (release.repo.userId !== user.id) {
-    return c.json({ error: 'Unauthorized' }, 403);
-  }
-
   if (!release.notes) {
     return c.json({ error: 'No generated notes to edit' }, 400);
   }
 
   const updateData: Record<string, string | boolean> = {};
   if (body.customer !== undefined) {
-    updateData.customer = body.customer;
+    updateData.customer = sanitizeHtml(body.customer);
     updateData.customerEdited = true;
   }
   if (body.developer !== undefined) {
-    updateData.developer = body.developer;
+    updateData.developer = sanitizeHtml(body.developer);
     updateData.developerEdited = true;
   }
   if (body.stakeholder !== undefined) {
-    updateData.stakeholder = body.stakeholder;
+    updateData.stakeholder = sanitizeHtml(body.stakeholder);
     updateData.stakeholderEdited = true;
   }
 
