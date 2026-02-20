@@ -12,11 +12,12 @@ const config: JestConfigWithTsJest = {
       'ts-jest',
       {
         useESM: true,
+        isolatedModules: true,
       },
     ],
   },
   setupFilesAfterEnv: ['<rootDir>/src/test/setup.ts'],
-  testMatch: ['**/*.test.ts'],
+  testMatch: ['**/__tests__/**/*.test.ts', '**/*.test.ts'],
 };
 
 export default config;
