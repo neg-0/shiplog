@@ -1,37 +1,30 @@
 import { Hono } from 'hono';
+import { setCookie, getCookie, deleteCookie } from 'hono/cookie';
 import { prisma } from '../lib/db.js';
 import { signToken } from '../lib/jwt.js';
-import { encrypt } from '../lib/auth.js';
+import { encrypt, requireAuth } from '../lib/auth.js';
 
 export const auth = new Hono();
 
-const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID;
-const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET;
-const APP_URL = process.env.APP_URL || 'http://localhost:3000';
-const API_URL = process.env.API_URL || 'http://localhost:3001';
-
-// In-memory state storage (valid for 10 minutes)
-const pendingStates = new Map<string, number>();
-const STATE_TTL_MS = 10 * 60 * 1000;
-
-// Clean up expired states periodically
-setInterval(() => {
-  const now = Date.now();
-  for (const [state, createdAt] of pendingStates) {
-    if (now - createdAt > STATE_TTL_MS) {
-      pendingStates.delete(state);
-    }
-  }
-}, 60 * 1000);
-
 // Initiate GitHub OAuth
 auth.get('/github', (c) => {
+  const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID;
+  const API_URL = process.env.API_URL || 'http://localhost:3001';
+
   if (!GITHUB_CLIENT_ID) {
     return c.json({ error: 'GitHub OAuth not configured' }, 500);
   }
 
   const state = crypto.randomUUID();
-  pendingStates.set(state, Date.now());
+
+  // Set secure cookie for state
+  setCookie(c, 'oauth_state', state, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'Lax',
+    maxAge: 60 * 10, // 10 minutes
+    path: '/',
+  });
 
   const params = new URLSearchParams({
     client_id: GITHUB_CLIENT_ID,
@@ -47,8 +40,13 @@ auth.get('/github', (c) => {
 
 // GitHub OAuth callback
 auth.get('/github/callback', async (c) => {
+  const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID;
+  const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET;
+  const APP_URL = process.env.APP_URL || 'http://localhost:3000';
+
   const code = c.req.query('code');
   const state = c.req.query('state');
+  const storedState = getCookie(c, 'oauth_state');
 
   console.log(`🔑 OAuth callback with state: ${state?.slice(0, 8)}...`);
 
@@ -56,13 +54,13 @@ auth.get('/github/callback', async (c) => {
     return c.json({ error: 'No code provided' }, 400);
   }
 
-  if (!state || !pendingStates.has(state)) {
-    console.log(`❌ Invalid state. Known states: ${pendingStates.size}`);
+  if (!state || !storedState || state !== storedState) {
+    console.log(`❌ Invalid state. Received: ${state}, Stored: ${storedState}`);
     return c.json({ error: 'Invalid OAuth state' }, 400);
   }
 
-  // Remove used state
-  pendingStates.delete(state);
+  // Remove used state cookie
+  deleteCookie(c, 'oauth_state');
 
   if (!GITHUB_CLIENT_ID || !GITHUB_CLIENT_SECRET) {
     return c.json({ error: 'GitHub OAuth not configured' }, 500);
@@ -191,7 +189,11 @@ auth.post('/demo', async (c) => {
 });
 
 // Logout
-auth.post('/logout', (c) => {
-  // TODO: Invalidate session
+auth.post('/logout', requireAuth, async (c) => {
+  const user = c.get('user');
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { lastLogoutAt: new Date() },
+  });
   return c.json({ status: 'logged_out' });
 });
