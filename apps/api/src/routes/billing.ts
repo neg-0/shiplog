@@ -275,8 +275,17 @@ billing.post('/webhook', async (c) => {
 
   const updateByCustomer = async (customerId: string, data: Record<string, unknown>) => {
     await prisma.user.updateMany({
-      where: { stripeCustomerId: customerId },
-      data,
+      where: {
+        stripeCustomerId: customerId,
+        OR: [
+          { stripeLastEventTimestamp: { lt: event.created } },
+          { stripeLastEventTimestamp: null },
+        ],
+      },
+      data: {
+        ...data,
+        stripeLastEventTimestamp: event.created,
+      },
     });
   };
 
@@ -288,28 +297,42 @@ billing.post('/webhook', async (c) => {
       const userId = session.client_reference_id ?? session.metadata?.userId;
 
       if (customerId && subscriptionId) {
-        const subscription = await stripe.subscriptions.retrieve(subscriptionId, {
-          expand: ['items.data.price'],
-        });
-        const price = subscription.items.data[0]?.price;
-        const tier = getTierFromPrice(price);
-        const trialEndsAt = subscription.trial_end ? new Date(subscription.trial_end * 1000) : null;
-
-        const data = {
-          stripeCustomerId: customerId,
-          stripeSubscriptionId: subscriptionId,
-          subscriptionStatus: subscription.status,
-          subscriptionTier: tier,
-          trialEndsAt,
-        };
-
-        if (userId) {
-          await prisma.user.update({
-            where: { id: userId },
-            data,
+        try {
+          const subscription = await stripe.subscriptions.retrieve(subscriptionId, {
+            expand: ['items.data.price'],
           });
-        } else {
-          await updateByCustomer(customerId, data);
+          const price = subscription.items.data[0]?.price;
+          const tier = getTierFromPrice(price);
+          const trialEndsAt = subscription.trial_end ? new Date(subscription.trial_end * 1000) : null;
+
+          const data = {
+            stripeCustomerId: customerId,
+            stripeSubscriptionId: subscriptionId,
+            subscriptionStatus: subscription.status,
+            subscriptionTier: tier,
+            trialEndsAt,
+          };
+
+          if (userId) {
+            await prisma.user.updateMany({
+              where: {
+                id: userId,
+                OR: [
+                  { stripeLastEventTimestamp: { lt: event.created } },
+                  { stripeLastEventTimestamp: null },
+                ],
+              },
+              data: {
+                ...data,
+                stripeLastEventTimestamp: event.created,
+              },
+            });
+          } else {
+            await updateByCustomer(customerId, data);
+          }
+        } catch (error) {
+          console.error('Error processing checkout.session.completed:', error);
+          return c.json({ error: 'Webhook processing failed' }, 500);
         }
       }
       break;
@@ -317,23 +340,28 @@ billing.post('/webhook', async (c) => {
     case 'customer.subscription.created':
     case 'customer.subscription.updated':
     case 'customer.subscription.deleted': {
-      const eventSubscription = event.data.object as Stripe.Subscription;
-      // Fetch fresh subscription with expanded price to ensure lookup_key is available
-      const subscription = await stripe.subscriptions.retrieve(eventSubscription.id, {
-        expand: ['items.data.price'],
-      });
+      try {
+        const eventSubscription = event.data.object as Stripe.Subscription;
+        // Fetch fresh subscription with expanded price to ensure lookup_key is available
+        const subscription = await stripe.subscriptions.retrieve(eventSubscription.id, {
+          expand: ['items.data.price'],
+        });
 
-      const customerId = subscription.customer as string;
-      const price = subscription.items.data[0]?.price;
-      const tier: SubscriptionTier = shouldDowngrade(subscription.status) ? 'FREE' : getTierFromPrice(price);
-      const trialEndsAt = subscription.trial_end ? new Date(subscription.trial_end * 1000) : null;
+        const customerId = subscription.customer as string;
+        const price = subscription.items.data[0]?.price;
+        const tier: SubscriptionTier = shouldDowngrade(subscription.status) ? 'FREE' : getTierFromPrice(price);
+        const trialEndsAt = subscription.trial_end ? new Date(subscription.trial_end * 1000) : null;
 
-      await updateByCustomer(customerId, {
-        stripeSubscriptionId: subscription.id,
-        subscriptionStatus: subscription.status,
-        subscriptionTier: tier,
-        trialEndsAt,
-      });
+        await updateByCustomer(customerId, {
+          stripeSubscriptionId: subscription.id,
+          subscriptionStatus: subscription.status,
+          subscriptionTier: tier,
+          trialEndsAt,
+        });
+      } catch (error) {
+        console.error('Error processing customer.subscription event:', error);
+        return c.json({ error: 'Webhook processing failed' }, 500);
+      }
       break;
     }
     default:
