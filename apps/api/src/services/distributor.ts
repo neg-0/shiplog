@@ -5,6 +5,7 @@
 
 import type { Release } from '@prisma/client';
 import type { GeneratedNotes } from './generator.js';
+import { logError, logInfo } from '../lib/logger.js';
 
 export interface DistributionTarget {
   type: 'slack' | 'discord' | 'email' | 'hosted';
@@ -12,6 +13,8 @@ export interface DistributionTarget {
   webhookUrl?: string; // For Slack/Discord
   email?: string; // For email
   name?: string;
+  channelId?: string; // Optional channel ID for tracking
+  emailRecipientId?: string; // Optional recipient ID for tracking
 }
 
 interface DistributionPayload {
@@ -67,6 +70,7 @@ export async function distributeReleaseWithResults(
     if (result.status === 'fulfilled') {
       return result.value;
     }
+    logError('Distribution target failed unexpectedly', { target: sanitizeTarget(targets[index]) }, result.reason);
     return {
       target: targets[index],
       success: false,
@@ -102,6 +106,7 @@ async function distributeToTarget(
         return { target, success: false, error: 'Unknown target type' };
     }
   } catch (error) {
+    logError('Error distributing to target', { target: sanitizeTarget(target), payload }, error);
     return {
       target,
       success: false,
@@ -113,6 +118,12 @@ async function distributeToTarget(
 // ============================================
 // HELPER FUNCTIONS
 // ============================================
+
+function sanitizeTarget(target: DistributionTarget): Omit<DistributionTarget, 'webhookUrl'> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { webhookUrl, ...rest } = target;
+  return rest;
+}
 
 function getNotesForAudience(
   notes: DistributionPayload['notes'],
@@ -129,6 +140,40 @@ function getNotesForAudience(
       return notes.customer;
   }
 }
+
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit,
+  retries = 3,
+  backoff = 1000
+): Promise<Response> {
+  const safeUrl = url.includes('hooks.slack.com') || url.includes('discord.com')
+    ? url.split('/').slice(0, 3).join('/') + '/...'
+    : url;
+
+  try {
+    const response = await fetch(url, options);
+
+    if (response.ok) return response;
+
+    // Retry on 5xx or 429
+    if (retries > 0 && (response.status === 429 || response.status >= 500)) {
+      logInfo(`Retrying request to ${safeUrl} (status ${response.status})`, { retriesLeft: retries });
+      await new Promise((resolve) => setTimeout(resolve, backoff));
+      return fetchWithRetry(url, options, retries - 1, backoff * 2);
+    }
+
+    return response;
+  } catch (error) {
+     if (retries > 0) {
+       logInfo(`Retrying request to ${safeUrl} (network error)`, { retriesLeft: retries, error });
+       await new Promise((resolve) => setTimeout(resolve, backoff));
+       return fetchWithRetry(url, options, retries - 1, backoff * 2);
+     }
+     throw error;
+  }
+}
+
 
 // ============================================
 // SLACK
@@ -173,18 +218,26 @@ async function sendToSlack(
     ],
   };
 
-  const response = await fetch(target.webhookUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(slackPayload),
-  });
+  try {
+    const response = await fetchWithRetry(target.webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(slackPayload),
+    });
 
-  return {
-    target,
-    success: response.ok,
-    responseCode: response.status,
-    error: response.ok ? undefined : await response.text(),
-  };
+    return {
+      target,
+      success: response.ok,
+      responseCode: response.status,
+      error: response.ok ? undefined : await response.text(),
+    };
+  } catch (error) {
+    return {
+      target,
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown network error',
+    };
+  }
 }
 
 function truncateForSlack(text: string, maxLength = 2900): string {
@@ -221,18 +274,26 @@ async function sendToDiscord(
     ],
   };
 
-  const response = await fetch(target.webhookUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(discordPayload),
-  });
+  try {
+    const response = await fetchWithRetry(target.webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(discordPayload),
+    });
 
-  return {
-    target,
-    success: response.ok,
-    responseCode: response.status,
-    error: response.ok ? undefined : await response.text(),
-  };
+    return {
+      target,
+      success: response.ok,
+      responseCode: response.status,
+      error: response.ok ? undefined : await response.text(),
+    };
+  } catch (error) {
+    return {
+      target,
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown network error',
+    };
+  }
 }
 
 function truncateForDiscord(text: string, maxLength = 4000): string {
@@ -270,28 +331,36 @@ async function sendEmail(
         ? 'Developer Notes'
         : 'Release Notes';
 
-  const response = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${resendApiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      from: 'ShipLog <releases@shiplog.io>',
-      to: target.email,
-      subject: `[${payload.repoFullName}] ${payload.tagName} - ${audienceLabel}`,
-      html: markdownToHtml(notes, payload),
-    }),
-  });
+  try {
+    const response = await fetchWithRetry('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${resendApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: 'ShipLog <releases@shiplog.io>',
+        to: target.email,
+        subject: `[${payload.repoFullName}] ${payload.tagName} - ${audienceLabel}`,
+        html: markdownToHtml(notes, payload),
+      }),
+    });
 
-  const responseData = await response.json();
+    const responseData = await response.json();
 
-  return {
-    target,
-    success: response.ok,
-    responseCode: response.status,
-    error: response.ok ? undefined : JSON.stringify(responseData),
-  };
+    return {
+      target,
+      success: response.ok,
+      responseCode: response.status,
+      error: response.ok ? undefined : JSON.stringify(responseData),
+    };
+  } catch (error) {
+    return {
+      target,
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown network error',
+    };
+  }
 }
 
 function markdownToHtml(markdown: string, payload: DistributionPayload): string {
