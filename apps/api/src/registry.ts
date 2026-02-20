@@ -1,0 +1,33 @@
+import { Hono } from 'hono';
+import { webhooks } from './routes/webhooks.js';
+import { feedback } from './routes/feedback.js';
+import { auth } from './routes/auth.js';
+import { repos } from './routes/repos.js';
+import { releases } from './routes/releases.js';
+import { health } from './routes/health.js';
+import { changelog } from './routes/changelog.js';
+import { user } from './routes/user.js';
+import { billing } from './routes/billing.js';
+import { organizations } from './routes/organizations.js';
+import { activity } from './routes/activity.js';
+import { admin } from './routes/admin.js';
+import { publicChangelog } from './routes/public.js';
+import { preview } from './routes/preview.js';
+
+export const registerV1Routes = (app: Hono) => {
+  app.route('/health', health);
+  app.route('/webhooks', webhooks);
+  app.route('/feedback', feedback);
+  app.route('/auth', auth);
+  app.route('/repos', repos);
+  app.route('/releases', releases);
+  app.route('/user', user);
+  app.route('/users', user);
+  app.route('/billing', billing);
+  app.route('/changelog', changelog);
+  app.route('/organizations', organizations);
+  app.route('/activity', activity);
+  app.route('/admin', admin);
+  app.route('/public', publicChangelog);
+  app.route('/preview', preview);
+};

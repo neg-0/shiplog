@@ -1,57 +1,5 @@
-import { Hono } from 'hono';
-import { cors } from 'hono/cors';
-import { logger } from 'hono/logger';
 import { serve } from '@hono/node-server';
-import { webhooks } from './routes/webhooks.js';
-import { feedback } from './routes/feedback.js';
-import { auth } from './routes/auth.js';
-import { repos } from './routes/repos.js';
-import { releases } from './routes/releases.js';
-import { health } from './routes/health.js';
-import { changelog } from './routes/changelog.js';
-import { user } from './routes/user.js';
-import { billing } from './routes/billing.js';
-import { organizations } from './routes/organizations.js';
-import { activity } from './routes/activity.js';
-import { admin } from './routes/admin.js';
-import { publicChangelog } from './routes/public.js';
-import { preview } from './routes/preview.js';
-
-const app = new Hono();
-
-// Middleware
-app.use('*', logger());
-app.use('*', cors({
-  origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
-  credentials: true,
-}));
-
-// Routes
-app.route('/health', health);
-app.route('/webhooks', webhooks);
-app.route('/feedback', feedback);
-app.route('/auth', auth);
-app.route('/repos', repos);
-app.route('/releases', releases);
-app.route('/user', user);
-app.route('/users', user);
-app.route('/billing', billing);
-app.route('/changelog', changelog);
-app.route('/organizations', organizations);
-app.route('/activity', activity);
-app.route('/admin', admin);
-app.route('/public', publicChangelog);
-app.route('/preview', preview);
-
-// Root
-app.get('/', (c) => {
-  return c.json({
-    name: 'ShipLog API',
-    version: '0.1.0',
-    status: 'operational',
-    docs: 'https://shiplog.io/docs',
-  });
-});
+import { app } from './app.js';
 
 const port = parseInt(process.env.PORT || '3001');
 
