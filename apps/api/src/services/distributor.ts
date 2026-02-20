@@ -33,7 +33,15 @@ export interface DistributionResult {
 }
 
 /**
- * Distribute release notes to all configured targets
+ * Distribute release notes to all configured targets (Slack, Discord, Email, etc.).
+ *
+ * @description
+ * Orchestrates the distribution process by calling `distributeReleaseWithResults` but ignoring the detailed results.
+ *
+ * @param release - The release entity from the database, including optional repo information.
+ * @param notes - The generated release notes (customer, developer, stakeholder versions).
+ * @param targets - An array of distribution targets configured for the repository.
+ * @returns A promise that resolves when all distribution attempts have completed.
  */
 export async function distributeRelease(
   release: Release & { repo?: { fullName: string } },
@@ -43,6 +51,17 @@ export async function distributeRelease(
   await distributeReleaseWithResults(release, notes, targets);
 }
 
+/**
+ * Distribute release notes and return detailed results for each target.
+ *
+ * @description
+ * Prepares the payload and iterates through all targets, attempting distribution in parallel (via `Promise.allSettled`).
+ *
+ * @param release - The release entity from the database.
+ * @param notes - The generated release notes.
+ * @param targets - An array of distribution targets.
+ * @returns A promise that resolves to an array of `DistributionResult` objects indicating success or failure for each target.
+ */
 export async function distributeReleaseWithResults(
   release: Release & { repo?: { fullName: string } },
   notes: GeneratedNotes,
@@ -76,7 +95,15 @@ export async function distributeReleaseWithResults(
 }
 
 /**
- * Distribute release notes to a single target
+ * Distribute release notes to a single specific target.
+ *
+ * @description
+ * Routes the distribution to the appropriate handler (Slack, Discord, Email) based on the target type.
+ * Also selects the appropriate version of the notes based on the target audience.
+ *
+ * @param target - The distribution target configuration.
+ * @param payload - The data payload containing release info and notes.
+ * @returns A promise that resolves to the result of the distribution attempt.
  */
 async function distributeToTarget(
   target: DistributionTarget,
@@ -134,6 +161,14 @@ function getNotesForAudience(
 // SLACK
 // ============================================
 
+/**
+ * Send release notes to a Slack channel via webhook.
+ *
+ * @param target - The distribution target containing the webhook URL.
+ * @param payload - The release payload.
+ * @param notes - The release notes formatted for Slack (although passed as string, Slack uses `mrkdwn`).
+ * @returns A promise that resolves to the distribution result.
+ */
 async function sendToSlack(
   target: DistributionTarget,
   payload: DistributionPayload,
@@ -196,6 +231,14 @@ function truncateForSlack(text: string, maxLength = 2900): string {
 // DISCORD
 // ============================================
 
+/**
+ * Send release notes to a Discord channel via webhook.
+ *
+ * @param target - The distribution target containing the webhook URL.
+ * @param payload - The release payload.
+ * @param notes - The release notes.
+ * @returns A promise that resolves to the distribution result.
+ */
 async function sendToDiscord(
   target: DistributionTarget,
   payload: DistributionPayload,
@@ -244,6 +287,14 @@ function truncateForDiscord(text: string, maxLength = 4000): string {
 // EMAIL (via Resend)
 // ============================================
 
+/**
+ * Send release notes via email using Resend.
+ *
+ * @param target - The distribution target containing the recipient email.
+ * @param payload - The release payload.
+ * @param notes - The release notes (Markdown format).
+ * @returns A promise that resolves to the distribution result.
+ */
 async function sendEmail(
   target: DistributionTarget,
   payload: DistributionPayload,
@@ -294,6 +345,16 @@ async function sendEmail(
   };
 }
 
+/**
+ * Convert Markdown release notes to HTML for email distribution.
+ *
+ * @description
+ * Applies basic styling and structure to the Markdown content.
+ *
+ * @param markdown - The release notes in Markdown format.
+ * @param payload - The release payload for context.
+ * @returns An HTML string ready for email sending.
+ */
 function markdownToHtml(markdown: string, payload: DistributionPayload): string {
   let html = markdown
     .replace(/^### (.+)$/gm, '<h3 style="color: #102a43; margin-top: 16px;">$1</h3>')
