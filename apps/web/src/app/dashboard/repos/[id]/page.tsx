@@ -210,6 +210,14 @@ export default function RepoDetailPage() {
                     <Settings className="w-4 h-4" />
                     Settings
                   </Link>
+                  <Link
+                    href={`/c/${repo.slug || repo.fullName.replace('/', '-')}`}
+                    target="_blank"
+                    className="px-4 py-2 text-sm text-navy-600 border border-navy-200 rounded-lg hover:bg-navy-50 transition flex items-center justify-center gap-2"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                    View Changelog
+                  </Link>
                   <a
                     href={`https://github.com/${repo.fullName}`}
                     target="_blank"
