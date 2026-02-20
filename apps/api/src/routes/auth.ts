@@ -3,6 +3,10 @@ import { prisma } from '../lib/db.js';
 import { signToken } from '../lib/jwt.js';
 import { encrypt } from '../lib/auth.js';
 
+/**
+ * @module auth
+ * @description Authentication routes using GitHub OAuth.
+ */
 export const auth = new Hono();
 
 const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID;
@@ -26,7 +30,11 @@ if (process.env.NODE_ENV !== 'test') {
   }, 60 * 1000);
 }
 
-// Initiate GitHub OAuth
+/**
+ * GET /github
+ * @description Initiates the GitHub OAuth flow.
+ * @returns {Response} Redirects the user to GitHub's authorization page.
+ */
 auth.get('/github', (c) => {
   if (!GITHUB_CLIENT_ID) {
     return c.json({ error: 'GitHub OAuth not configured' }, 500);
@@ -47,7 +55,13 @@ auth.get('/github', (c) => {
   return c.redirect(`https://github.com/login/oauth/authorize?${params}`);
 });
 
-// GitHub OAuth callback
+/**
+ * GET /github/callback
+ * @description Handles the GitHub OAuth callback. Exchange code for token, fetch user profile, create/update user in DB, and issue session token.
+ * @param {string} code - Authorization code from GitHub.
+ * @param {string} state - CSRF state token.
+ * @returns {Response} Redirects to the dashboard with a session token.
+ */
 auth.get('/github/callback', async (c) => {
   const code = c.req.query('code');
   const state = c.req.query('state');
@@ -157,7 +171,12 @@ auth.get('/github/callback', async (c) => {
   return c.redirect(redirectUrl.toString());
 });
 
-// Demo Login (Bypass for QA/Demos)
+/**
+ * POST /demo
+ * @description Creates a session for a demo user (only enabled if ENABLE_DEMO_LOGIN=true).
+ * @returns {object} Session token and user info.
+ * @throws 403 if demo login is disabled.
+ */
 auth.post('/demo', async (c) => {
   if (process.env.ENABLE_DEMO_LOGIN !== 'true') {
     return c.json({ error: 'Demo login disabled' }, 403);
@@ -192,7 +211,11 @@ auth.post('/demo', async (c) => {
   return c.json({ token: sessionToken, user: { id: dbUser.id, login: dbUser.login } });
 });
 
-// Logout
+/**
+ * POST /logout
+ * @description Logs out the user (currently client-side only token removal).
+ * @returns {object} Logout status.
+ */
 auth.post('/logout', (c) => {
   // TODO: Invalidate session
   return c.json({ status: 'logged_out' });
