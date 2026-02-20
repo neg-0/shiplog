@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { prisma } from '../lib/db.js';
 import { requireAuth } from '../lib/auth.js';
+import { apiLimiter } from '../lib/rate-limit.js';
 
 // Admin emails from environment variable
 const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean);
@@ -17,7 +18,7 @@ const requireAdmin = async (c: any, next: any) => {
 export const admin = new Hono();
 
 // Apply auth + admin middleware to all routes
-admin.use('*', requireAuth, requireAdmin);
+admin.use('*', requireAuth, apiLimiter, requireAdmin);
 
 // Get metrics dashboard data
 admin.get('/metrics', async (c) => {
