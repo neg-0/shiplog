@@ -227,13 +227,13 @@ auth.post('/demo', async (c) => {
       const release = releases[0];
       
       // Fetch detailed data for generation
-      const data = await fetchReleaseData(owner, repoName, release.tag_name, accessToken);
+      const data = await fetchReleaseData(owner, repoName, release?.tag_name, accessToken);
       
       // Generate Content
       const notes = await generateReleaseNotes({
-        tagName: data.release.tagName,
+        tagName: data.release?.tagName,
         previousTag: data.previousTag ?? undefined,
-        releaseBody: data.release.body ?? undefined,
+        releaseBody: data.release?.body ?? undefined,
         commits: data.commits,
         pullRequests: data.pullRequests.map(pr => ({
           ...pr,
@@ -253,7 +253,7 @@ auth.post('/demo', async (c) => {
           repoUrl: `https://github.com/${owner}/${repoName}`,
           repoOwner: owner,
           repoName: repoName,
-          title: `Changelog for ${repoName} ${release.tag_name}`,
+          title: `Changelog for ${repoName} ${release?.tag_name}`,
           body: JSON.stringify(notes),
         },
       });

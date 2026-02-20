@@ -6,13 +6,5 @@ export const validate = (schema: z.ZodSchema) => zValidator('json', schema, (res
   if (!result.success) {
     return c.json({ error: 'Invalid input', details: result.error.errors }, 400);
   }
+  return undefined;
 });
-
-export const commonSchemas = {
-  pagination: z.object({
-    page: z.string().optional().transform(v => parseInt(v || '1')),
-    limit: z.string().optional().transform(v => parseInt(v || '20')),
-  }),
-  id: z.string().cuid(),
-  email: z.string().email(),
-};

@@ -112,8 +112,8 @@ const regenerateLimitMiddleware = rateLimit({
  */
 releases.post(
   '/:id/regenerate',
-  regenerateLimitMiddleware,
-  zValidator('json', regenerateNotesSchema),
+  regenerateLimitMiddleware as any,
+  zValidator("json", regenerateNotesSchema as any),
   async (c) => {
     const user = c.get('user');
     const id = c.req.param('id');
@@ -169,7 +169,7 @@ releases.post(
         repoConfig: {
           productName: release.repo.config?.productName ?? release.repo.name,
           companyName: release.repo.config?.companyName ?? release.repo.owner,
-          customerTone: body.tone ?? release.repo.config?.customerTone ?? 'friendly',
+          customerTone: (body as any).tone ?? release.repo.config?.customerTone ?? 'friendly',
         },
       });
 
@@ -238,7 +238,7 @@ releases.post(
  */
 releases.post(
   '/:id/publish',
-  zValidator('json', publishReleaseSchema),
+  zValidator('json', publishReleaseSchema as any),
   async (c) => {
     const user = c.get('user');
     const id = c.req.param('id');
@@ -302,7 +302,7 @@ releases.post(
  */
 releases.patch(
   '/:id/notes',
-  zValidator('json', updateNotesSchema),
+  zValidator('json', updateNotesSchema as any),
   async (c) => {
     const user = c.get('user');
     const id = c.req.param('id');

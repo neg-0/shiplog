@@ -37,4 +37,5 @@ export function rateLimit(config: RateLimitConfig) {
 
     await next();
   };
+  return undefined;
 }

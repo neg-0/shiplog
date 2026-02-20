@@ -5,7 +5,6 @@ import { prisma } from '../lib/db.js';
 import { requireAuth } from '../lib/auth.js';
 import { apiLimiter } from '../lib/rate-limit.js';
 import { updateUserAdminSchema } from '../lib/schemas.js';
-import { SubscriptionTier, Prisma } from '@prisma/client';
 
 // Admin middleware
 const requireAdmin = async (c: Context, next: Next) => {
@@ -79,7 +78,7 @@ const listUsersSchema = z.object({
 admin.get('/users', zValidator('query', listUsersSchema), async (c) => {
   const { page, limit, search, tier } = c.req.valid('query');
 
-  const where: Prisma.UserWhereInput = {};
+  const where: any = {};
   
   if (search) {
     where.OR = [
@@ -90,7 +89,7 @@ admin.get('/users', zValidator('query', listUsersSchema), async (c) => {
   }
   
   if (tier) {
-    where.subscriptionTier = tier as SubscriptionTier;
+    where.subscriptionTier = tier as string;
   }
 
   const [users, total] = await Promise.all([
@@ -171,7 +170,7 @@ admin.patch(
     const updated = await prisma.user.update({
       where: { id: userId },
       data: {
-        ...(subscriptionTier && { subscriptionTier: subscriptionTier as SubscriptionTier }),
+        ...(subscriptionTier && { subscriptionTier: subscriptionTier as string }),
       },
     });
 

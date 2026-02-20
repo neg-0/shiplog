@@ -10,7 +10,7 @@ if (args.length === 0) {
 }
 
 const fullName = args[0];
-const [owner, name] = fullName.split('/');
+const [owner, name] = fullName!.split('/');
 
 async function main() {
   let token = process.env.GITHUB_TOKEN;

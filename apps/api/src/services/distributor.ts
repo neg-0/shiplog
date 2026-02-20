@@ -1,9 +1,9 @@
+type Release = { id: string; repoId: string; githubReleaseId: number; tagName: string; name: string; body: string; status: string; htmlUrl?: string; };
 /**
  * ShipLog Distribution Service
  * Sends generated notes to configured channels (Slack, Discord, Email, Hosted)
  */
 
-import type { Release } from '@prisma/client';
 import type { GeneratedNotes } from './generator.js';
 import { logError, logInfo } from '../lib/logger.js';
 
@@ -73,7 +73,7 @@ export async function distributeReleaseWithResults(
   const payload: DistributionPayload = {
     repoFullName: release.repo?.fullName ?? 'unknown',
     tagName: release.tagName,
-    releaseUrl: release.htmlUrl,
+    releaseUrl: (release as any).htmlUrl ?? '',
     notes: {
       customer: notes.customer,
       developer: notes.developer,

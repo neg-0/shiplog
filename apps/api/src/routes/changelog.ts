@@ -69,7 +69,7 @@ changelog.get('/:org/:repo', async (c) => {
     description: connectedRepo.description,
     productName: connectedRepo.config?.productName || connectedRepo.name,
     companyName: connectedRepo.config?.companyName || connectedRepo.owner,
-    releases: releases.map(release => ({
+    releases: releases.map((release: any) => ({
       version: release.tagName,
       name: release.name,
       date: release.publishedAt?.toISOString().split('T')[0],
@@ -111,7 +111,7 @@ changelog.get('/', async (c) => {
   });
 
   return c.json({
-    changelogs: repos.map(r => ({
+    changelogs: repos.map((r: any) => ({
       fullName: r.fullName,
       description: r.description,
       releaseCount: r._count.releases,

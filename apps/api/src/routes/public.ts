@@ -24,7 +24,7 @@ const feedbackLimit = rateLimit({
 });
 
 // Apply general rate limit to all public routes
-publicChangelog.use('*', publicLimit);
+publicChangelog.use('*', publicLimit as any);
 
 const feedbackSchema = z.object({
   repoId: z.string().min(1),
@@ -37,7 +37,7 @@ const feedbackSchema = z.object({
  * POST /feedback
  * @description Submit feedback for a specific repository.
  */
-publicChangelog.post('/feedback', feedbackLimit, zValidator('json', feedbackSchema), async (c) => {
+publicChangelog.post('/feedback', feedbackLimit as any, zValidator('json', feedbackSchema as any), async (c) => {
   const { repoId, feedback, email, source } = c.req.valid('json');
 
   // Sanitize feedback content
@@ -159,7 +159,7 @@ const listReleasesSchema = z.object({
  * GET /:slug/releases
  * @description Get paginated releases for a repository.
  */
-publicChangelog.get('/:slug/releases', zValidator('query', listReleasesSchema), async (c) => {
+publicChangelog.get('/:slug/releases', zValidator('query', listReleasesSchema as any), async (c) => {
   const slug = c.req.param('slug');
   const { page, limit } = c.req.valid('query');
 

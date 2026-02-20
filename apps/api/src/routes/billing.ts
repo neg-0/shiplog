@@ -1,3 +1,4 @@
+type SubscriptionTier = "FREE" | "PRO" | "TEAM";
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import Stripe from 'stripe';
@@ -7,7 +8,7 @@ import { logger } from '../lib/logger.js';
 import { requireAuth } from '../lib/auth.js';
 import { checkoutSchema } from '../lib/schemas.js';
 import { apiLimiter } from '../lib/rate-limit.js';
-import { SubscriptionTier } from '@prisma/client';
+
 
 /**
  * @module billing
@@ -312,7 +313,7 @@ billing.post('/webhook', async (c) => {
         });
       }
     } catch (error) {
-      logger.error(`[Billing] Failed to sync organizations for user ${userId}:`, error);
+      logger.error(`[Billing] Failed to sync organizations for user ${userId}:`, { error: error instanceof Error ? error.message : String(error) });
     }
   };
 
@@ -385,7 +386,7 @@ billing.post('/webhook', async (c) => {
             await updateByCustomer(customerId, data, tier, subscriptionId);
           }
         } catch (error) {
-          logger.error('Error processing checkout.session.completed:', error);
+          logger.error('Error processing checkout.session.completed:', { error: error instanceof Error ? error.message : String(error) });
           return c.json({ error: 'Webhook processing failed' }, 500);
         }
       }
@@ -413,7 +414,7 @@ billing.post('/webhook', async (c) => {
           trialEndsAt,
         }, tier, subscription.id);
       } catch (error) {
-        logger.error('Error processing customer.subscription event:', error);
+        logger.error('Error processing customer.subscription event:', { error: error instanceof Error ? error.message : String(error) });
         return c.json({ error: 'Webhook processing failed' }, 500);
       }
       break;
