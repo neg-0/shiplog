@@ -1,11 +1,22 @@
 import { Hono } from 'hono';
+import { zValidator } from '@hono/zod-validator';
 import { prisma } from '../lib/db.js';
 import { requireAuth } from '../lib/auth.js';
+import { updateUserSchema } from '../lib/schemas.js';
+import { apiLimiter } from '../lib/rate-limit.js';
 
+/**
+ * @module user
+ * @description Routes for managing user profile.
+ */
 export const user = new Hono();
 
-// Get current user info
-user.get('/me', requireAuth, async (c) => {
+/**
+ * GET /me
+ * @description Get current authenticated user's profile and usage stats.
+ * @returns {object} User profile details.
+ */
+user.get('/me', requireAuth, apiLimiter, async (c) => {
   const authUser = c.get('user');
   
   const dbUser = await prisma.user.findUnique({
@@ -45,7 +56,29 @@ user.get('/me', requireAuth, async (c) => {
 });
 
 // Update user profile
-user.patch('/me', requireAuth, async (c) => {
+user.patch(
+  '/me',
+  requireAuth,
+  zValidator('json', updateUserSchema),
+  async (c) => {
+    const authUser = c.get('user');
+    const { name } = c.req.valid('json');
+
+    if (name !== undefined) {
+      await prisma.user.update({
+        where: { id: authUser.id },
+        data: { name },
+      });
+    }
+
+    return c.json({ success: true });
+/**
+ * PATCH /me
+ * @description Update user profile information.
+ * @body {string} [name] - New display name.
+ * @returns {object} Success message.
+ */
+user.patch('/me', requireAuth, apiLimiter, async (c) => {
   const authUser = c.get('user');
   const body = await c.req.json();
   
@@ -58,12 +91,14 @@ user.patch('/me', requireAuth, async (c) => {
       data: { name },
     });
   }
-  
-  return c.json({ success: true });
-});
+);
 
-// Delete user account
-user.delete('/me', requireAuth, async (c) => {
+/**
+ * DELETE /me
+ * @description Permanently delete user account and all data.
+ * @returns {object} Success message.
+ */
+user.delete('/me', requireAuth, apiLimiter, async (c) => {
   const authUser = c.get('user');
   
   // This will cascade delete repos, configs, releases, etc.

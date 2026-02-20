@@ -1,10 +1,18 @@
 import { Hono } from 'hono';
+import { setCookie, getCookie, deleteCookie } from 'hono/cookie';
+import { zValidator } from '@hono/zod-validator';
 import { prisma } from '../lib/db.js';
+import { logger } from '../lib/logger.js';
 import { signToken } from '../lib/jwt.js';
-import { encrypt } from '../lib/auth.js';
+import { encrypt, requireAuth } from '../lib/auth.js';
+import { githubCallbackSchema } from '../lib/schemas.js';
 import { listReleases, fetchReleaseData } from '../services/github.js';
 import { generateReleaseNotes } from '../services/generator.js';
 
+/**
+ * @module auth
+ * @description Authentication routes using GitHub OAuth.
+ */
 export const auth = new Hono();
 
 const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID;
@@ -12,28 +20,26 @@ const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET;
 const APP_URL = process.env.APP_URL || 'https://shiplog.io';
 const API_URL = process.env.API_URL || 'https://api.shiplog.io';
 
-// In-memory state storage (valid for 10 minutes)
-const pendingStates = new Map<string, number>();
-const STATE_TTL_MS = 10 * 60 * 1000;
-
-// Clean up expired states periodically
-setInterval(() => {
-  const now = Date.now();
-  for (const [state, createdAt] of pendingStates) {
-    if (now - createdAt > STATE_TTL_MS) {
-      pendingStates.delete(state);
-    }
-  }
-}, 60 * 1000);
-
-// Initiate GitHub OAuth
+/**
+ * GET /github
+ * @description Initiates the GitHub OAuth flow.
+ * @returns {Response} Redirects the user to GitHub's authorization page.
+ */
 auth.get('/github', (c) => {
   if (!GITHUB_CLIENT_ID) {
     return c.json({ error: 'GitHub OAuth not configured' }, 500);
   }
 
   const state = crypto.randomUUID();
-  pendingStates.set(state, Date.now());
+
+  // Set secure cookie for state
+  setCookie(c, 'oauth_state', state, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'Lax',
+    maxAge: 60 * 10, // 10 minutes
+    path: '/',
+  });
 
   const params = new URLSearchParams({
     client_id: GITHUB_CLIENT_ID,
@@ -42,89 +48,126 @@ auth.get('/github', (c) => {
     state,
   });
 
-  console.log(`🔑 OAuth initiated with state: ${state.slice(0, 8)}...`);
+  logger.info(`🔑 OAuth initiated`, { state: state.slice(0, 8) + '...' });
 
   return c.redirect(`https://github.com/login/oauth/authorize?${params}`);
 });
 
-// GitHub OAuth callback
-auth.get('/github/callback', async (c) => {
-  const code = c.req.query('code');
-  const state = c.req.query('state');
+/**
+ * GET /github/callback
+ * @description Handles the GitHub OAuth callback. Exchange code for token, fetch user profile, create/update user in DB, and issue session token.
+ * @param {string} code - Authorization code from GitHub.
+ * @param {string} state - CSRF state token.
+ * @returns {Response} Redirects to the dashboard with a session token.
+ */
+auth.get(
+  '/github/callback',
+  zValidator('query', githubCallbackSchema),
+  async (c) => {
+    const { code, state } = c.req.valid('query');
+    const storedState = getCookie(c, 'oauth_state');
 
-  console.log(`🔑 OAuth callback with state: ${state?.slice(0, 8)}...`);
+    logger.info(`🔑 OAuth callback`, { state: state?.slice(0, 8) + '...' });
 
-  if (!code) {
-    return c.json({ error: 'No code provided' }, 400);
-  }
+    if (!state || !storedState || state !== storedState) {
+      logger.warn(`❌ Invalid state`, { received: state, stored: storedState });
+      return c.json({ error: 'Invalid OAuth state' }, 400);
+    }
 
-  if (!state || !pendingStates.has(state)) {
-    console.log(`❌ Invalid state. Known states: ${pendingStates.size}`);
-    return c.json({ error: 'Invalid OAuth state' }, 400);
-  }
+    // Remove used state cookie
+    deleteCookie(c, 'oauth_state');
 
-  // Remove used state
-  pendingStates.delete(state);
+    if (!GITHUB_CLIENT_ID || !GITHUB_CLIENT_SECRET) {
+      return c.json({ error: 'GitHub OAuth not configured' }, 500);
+    }
 
-  if (!GITHUB_CLIENT_ID || !GITHUB_CLIENT_SECRET) {
-    return c.json({ error: 'GitHub OAuth not configured' }, 500);
-  }
+    // Exchange code for access token
+    const tokenResponse = await fetch('https://github.com/login/oauth/access_token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify({
+        client_id: GITHUB_CLIENT_ID,
+        client_secret: GITHUB_CLIENT_SECRET,
+        code,
+      }),
+    });
 
-  // Exchange code for access token
-  const tokenResponse = await fetch('https://github.com/login/oauth/access_token', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-    },
-    body: JSON.stringify({
-      client_id: GITHUB_CLIENT_ID,
-      client_secret: GITHUB_CLIENT_SECRET,
-      code,
-    }),
-  });
+    const tokenData = await tokenResponse.json() as { access_token?: string; error?: string; error_description?: string };
 
-  const tokenData = await tokenResponse.json() as { access_token?: string; error?: string; error_description?: string };
+    if (tokenData.error || !tokenData.access_token) {
+      return c.json({ error: 'Failed to get access token', details: tokenData.error_description }, 400);
+    }
 
-  if (tokenData.error || !tokenData.access_token) {
-    return c.json({ error: 'Failed to get access token', details: tokenData.error_description }, 400);
-  }
-
-  // Get user info
-  const userResponse = await fetch('https://api.github.com/user', {
-    headers: {
-      'Authorization': `Bearer ${tokenData.access_token}`,
-      'Accept': 'application/vnd.github.v3+json',
-    },
-  });
-
-  if (!userResponse.ok) {
-    return c.json({ error: 'Failed to fetch GitHub user' }, 400);
-  }
-
-  const ghUser = await userResponse.json() as {
-    id: number;
-    login: string;
-    name?: string | null;
-    email?: string | null;
-    avatar_url?: string | null;
-  };
-
-  // GitHub often returns null email unless it's public. Fetch verified primary email if needed.
-  let email: string | null | undefined = ghUser.email;
-  if (!email) {
-    const emailsResponse = await fetch('https://api.github.com/user/emails', {
+    // Get user info
+    const userResponse = await fetch('https://api.github.com/user', {
       headers: {
         'Authorization': `Bearer ${tokenData.access_token}`,
         'Accept': 'application/vnd.github.v3+json',
       },
     });
 
-    if (emailsResponse.ok) {
-      const emails = await emailsResponse.json() as Array<{ email: string; primary: boolean; verified: boolean }>;
-      email = emails.find((e) => e.primary && e.verified)?.email ?? emails.find((e) => e.verified)?.email;
+    if (!userResponse.ok) {
+      return c.json({ error: 'Failed to fetch GitHub user' }, 400);
     }
+
+    const ghUser = await userResponse.json() as {
+      id: number;
+      login: string;
+      name?: string | null;
+      email?: string | null;
+      avatar_url?: string | null;
+    };
+
+    // GitHub often returns null email unless it's public. Fetch verified primary email if needed.
+    let email: string | null | undefined = ghUser.email;
+    if (!email) {
+      const emailsResponse = await fetch('https://api.github.com/user/emails', {
+        headers: {
+          'Authorization': `Bearer ${tokenData.access_token}`,
+          'Accept': 'application/vnd.github.v3+json',
+        },
+      });
+
+      if (emailsResponse.ok) {
+        const emails = await emailsResponse.json() as Array<{ email: string; primary: boolean; verified: boolean }>;
+        email = emails.find((e) => e.primary && e.verified)?.email ?? emails.find((e) => e.verified)?.email;
+      }
+    }
+
+    const encryptedAccessToken = await encrypt(tokenData.access_token);
+
+    const dbUser = await prisma.user.upsert({
+      where: { githubId: ghUser.id },
+      create: {
+        githubId: ghUser.id,
+        login: ghUser.login,
+        name: ghUser.name ?? null,
+        email: email ?? null,
+        avatarUrl: ghUser.avatar_url ?? null,
+        accessToken: encryptedAccessToken,
+      },
+      update: {
+        login: ghUser.login,
+        name: ghUser.name ?? null,
+        email: email ?? null,
+        avatarUrl: ghUser.avatar_url ?? null,
+        accessToken: encryptedAccessToken,
+      },
+    });
+
+    const sessionToken = await signToken(dbUser.id);
+
+    const redirectUrl = new URL(`${APP_URL}/dashboard`);
+    redirectUrl.searchParams.set('token', sessionToken);
+
+    logger.info(`✅ OAuth complete for ${ghUser.login}`, { login: ghUser.login });
+
+    return c.redirect(redirectUrl.toString());
   }
+);
 
   const encryptedAccessToken = await encrypt(tokenData.access_token);
 
@@ -152,12 +195,17 @@ auth.get('/github/callback', async (c) => {
   const redirectUrl = new URL(`${APP_URL}/dashboard`);
   redirectUrl.searchParams.set('token', sessionToken);
 
-  console.log(`✅ OAuth complete for ${ghUser.login}`);
+  logger.info(`✅ OAuth complete for ${ghUser.login}`, { login: ghUser.login });
 
   return c.redirect(redirectUrl.toString());
 });
 
-// Demo Login & Sales Tool (Internal Only)
+/**
+ * POST /demo
+ * @description Creates a session for a demo user (only enabled if ENABLE_DEMO_LOGIN=true).
+ * @returns {object} Session token and user info.
+ * @throws 403 if demo login is disabled.
+ */
 auth.post('/demo', async (c) => {
   // 1. Stealth Check
   const demoToken = c.req.header('X-Demo-Token');
@@ -285,7 +333,16 @@ auth.post('/demo', async (c) => {
   return c.json({ token: sessionToken, user: { id: dbUser.id, login: dbUser.login } });
 });
 
-// Logout
-auth.post('/logout', (c) => {
+/**
+ * POST /logout
+ * @description Logs out the user.
+ * @returns {object} Logout status.
+ */
+auth.post('/logout', requireAuth, async (c) => {
+  const user = c.get('user');
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { lastLogoutAt: new Date() },
+  });
   return c.json({ status: 'logged_out' });
 });

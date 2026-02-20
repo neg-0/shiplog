@@ -1,22 +1,84 @@
 import { Hono } from 'hono';
+import { z } from 'zod';
+import { zValidator } from '@hono/zod-validator';
 import { prisma } from '../lib/db.js';
+import { logger } from '../lib/logger.js';
 import { requireAuth, decrypt } from '../lib/auth.js';
+import { apiLimiter } from '../lib/rate-limit.js';
 import { listUserRepos, createWebhook, deleteWebhook } from '../services/github.js';
 import { importRepoHistory } from '../services/importer.js';
+import { validate } from '../lib/validation.js';
+import {
+  connectRepoSchema,
+  updateRepoConfigSchema,
+  updateRepoSettingsSchema,
+  createChannelSchema,
+  updateChannelSchema,
+} from '../lib/schemas.js';
 
+/**
+ * @module repos
+ * @description Routes for managing connected repositories.
+ */
 export const repos = new Hono();
 
 const API_URL = process.env.API_URL || 'https://api.shiplog.io';
 
 // All routes require auth
 repos.use('*', requireAuth);
+repos.use('*', apiLimiter);
+
+// Helper for repo access (Owner or Org Member)
+const repoAccess = (userId: string) => ({
+  OR: [
+    { userId },
+    { organization: { members: { some: { userId } } } }
+  ]
+});
+
+// Helper for admin/owner access check (for deletion/critical updates)
+const checkRepoAdmin = async (repoId: string, userId: string) => {
+  const repo = await prisma.repo.findUnique({
+    where: { id: repoId },
+    include: {
+      organization: {
+        include: {
+          members: {
+            where: { userId }
+          }
+        }
+      }
+    }
+  });
+
+  if (!repo) return null;
+
+  // If personal repo, userId must match
+  if (repo.userId === userId && !repo.organizationId) return repo;
+
+  // If org repo, user must be owner/admin
+  if (repo.organizationId && repo.organization?.members.length) {
+    const role = repo.organization.members[0].role;
+    if (role === 'OWNER' || role === 'ADMIN') return repo;
+  }
+
+  // If user is the direct owner (even if in org, usually userId is the creator/owner)
+  if (repo.userId === userId) return repo;
+
+  return null;
+};
 
 // List user's connected repos
+/**
+ * GET /
+ * @description List all repositories connected by the authenticated user.
+ * @returns {object} Array of connected repositories.
+ */
 repos.get('/', async (c) => {
   const user = c.get('user');
   
   const connectedRepos = await prisma.repo.findMany({
-    where: { userId: user.id },
+    where: repoAccess(user.id),
     include: {
       releases: {
         orderBy: { publishedAt: 'desc' },
@@ -31,7 +93,7 @@ repos.get('/', async (c) => {
   });
 
   return c.json({
-    repos: connectedRepos.map(repo => ({
+    repos: connectedRepos.map((repo: any) => ({
       id: repo.id,
       githubId: repo.githubId,
       name: repo.name,
@@ -44,7 +106,13 @@ repos.get('/', async (c) => {
   });
 });
 
-// Get single repo detail
+/**
+ * GET /:id
+ * @description Get details for a specific repository including configuration and recent releases.
+ * @param {string} id - Repository UUID.
+ * @returns {object} Repository details.
+ * @throws 404 if not found.
+ */
 repos.get('/:id', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
@@ -52,7 +120,7 @@ repos.get('/:id', async (c) => {
   const repo = await prisma.repo.findFirst({
     where: { 
       id,
-      userId: user.id,
+      ...repoAccess(user.id),
     },
     include: {
       config: {
@@ -97,7 +165,7 @@ repos.get('/:id', async (c) => {
     hidePoweredBy: repo.hidePoweredBy,
     excludeFromFeatured: repo.excludeFromFeatured,
     config: repo.config,
-    releases: repo.releases.map(r => ({
+    releases: repo.releases.map((r: any) => ({
       id: r.id,
       tagName: r.tagName,
       name: r.name,
@@ -107,7 +175,12 @@ repos.get('/:id', async (c) => {
   });
 });
 
-// List available GitHub repos (not yet connected)
+/**
+ * GET /github/available
+ * @description List GitHub repositories that can be connected (not yet imported).
+ * @returns {object} Array of available GitHub repositories.
+ * @throws 401 if GitHub token is missing.
+ */
 repos.get('/github/available', async (c) => {
   const user = c.get('user');
 
@@ -126,10 +199,10 @@ repos.get('/github/available', async (c) => {
 
   // Get already connected repo IDs
   const connectedRepos = await prisma.repo.findMany({
-    where: { userId: user.id },
+    where: { userId: user.id }, // Currently assumes personal repos only for available list
     select: { githubId: true },
   });
-  const connectedIds = new Set(connectedRepos.map(r => r.githubId));
+  const connectedIds = new Set(connectedRepos.map((r: any) => r.githubId));
 
   // Filter out already connected repos
   const availableRepos = githubRepos.filter(r => !connectedIds.has(r.id));
@@ -145,18 +218,39 @@ repos.get('/github/available', async (c) => {
   });
 });
 
+const connectSchema = z.object({
+  githubId: z.number(),
+  owner: z.string(),
+  repo: z.string(),
+  fullName: z.string(),
+  description: z.string().optional(),
+});
+
 // Connect a new repo (create webhook)
+repos.post('/connect', validate(connectSchema), async (c) => {
+repos.post(
+  '/connect',
+  zValidator('json', connectRepoSchema),
+  async (c) => {
+    const user = c.get('user');
+    const body = c.req.valid('json');
+/**
+ * POST /connect
+ * @description Connect a GitHub repository. Creates a webhook on GitHub and starts initial import.
+ * @body {number} githubId - GitHub Repository ID.
+ * @body {string} owner - Repository owner (user/org).
+ * @body {string} repo - Repository name.
+ * @body {string} fullName - Full name (owner/repo).
+ * @body {string} [description] - Repository description.
+ * @returns {object} Connected repository details.
+ * @throws 403 if repository limit reached.
+ * @throws 400 if already connected.
+ */
 repos.post('/connect', async (c) => {
   const user = c.get('user');
-  const body = await c.req.json() as { 
-    githubId: number;
-    owner: string; 
-    repo: string;
-    fullName: string;
-    description?: string;
-  };
+  const body = c.req.valid('json');
 
-  // Get user's access token
+    // Get user's access token
   const dbUser = await prisma.user.findUnique({
     where: { id: user.id },
     select: { accessToken: true, subscriptionTier: true },
@@ -168,7 +262,7 @@ repos.post('/connect', async (c) => {
 
   const accessToken = await decrypt(dbUser.accessToken);
 
-  // Check if already connected
+  // Check if already connected (globally for this user)
   const existing = await prisma.repo.findFirst({
     where: { 
       githubId: body.githubId,
@@ -243,11 +337,19 @@ repos.post('/connect', async (c) => {
       },
     });
 
-    console.log(`🔗 Connected repo: ${body.fullName} (webhook ID: ${webhookId})`);
+    logger.info(`🔗 Connected repo: ${body.fullName} (webhook ID: ${webhookId})`, {
+      repoId: repo.id,
+      fullName: body.fullName,
+      webhookId
+    });
 
     // Trigger background import of recent history
     importRepoHistory(repo.id, accessToken).catch(err => 
-      console.error(`Background import failed for ${body.fullName}:`, err)
+      logger.error(`Background import failed for ${body.fullName}`, {
+        repoId: repo.id,
+        fullName: body.fullName,
+        error: err
+      })
     );
 
     return c.json({
@@ -258,7 +360,7 @@ repos.post('/connect', async (c) => {
     });
 
   } catch (error) {
-    console.error('Failed to connect repo:', error);
+    logger.error('Failed to connect repo', { error, githubId: body.githubId, fullName: body.fullName });
     
     // Still create the repo but mark webhook as failed
     const repo = await prisma.repo.create({
@@ -284,11 +386,42 @@ repos.post('/connect', async (c) => {
   }
 });
 
+const configSchema = z.object({
+  autoGenerate: z.boolean().optional(),
+  autoPublish: z.boolean().optional(),
+  generateCustomer: z.boolean().optional(),
+  generateDeveloper: z.boolean().optional(),
+  generateStakeholder: z.boolean().optional(),
+  customerTone: z.string().optional(),
+  companyName: z.string().optional(),
+  productName: z.string().optional(),
+});
+
 // Update repo config
-repos.patch('/:id/config', async (c) => {
+repos.patch('/:id/config', validate(configSchema), async (c) => {
   try {
     const user = c.get('user');
     const id = c.req.param('id');
+    const body = c.req.valid('json');
+repos.patch(
+  '/:id/config',
+  zValidator('json', updateRepoConfigSchema),
+  async (c) => {
+    try {
+      const user = c.get('user');
+      const id = c.req.param('id');
+      const body = c.req.valid('json');
+/**
+ * PATCH /:id/config
+ * @description Update repository configuration (AI generation settings).
+ * @param {string} id - Repository UUID.
+ * @body {boolean} [autoGenerate] - Enable auto-generation of notes.
+ * @body {boolean} [autoPublish] - Enable auto-publishing.
+ * @body {string} [customerTone] - Tone for customer notes.
+ * @returns {object} Updated configuration.
+ */
+repos.patch('/:id/config', async (c) => {
+  const id = c.req.param('id');
     const body = await c.req.json() as {
       autoGenerate?: boolean;
       autoPublish?: boolean;
@@ -300,54 +433,120 @@ repos.patch('/:id/config', async (c) => {
       productName?: string;
     };
 
-    // Verify ownership
+    // Verify ownership/access
     const repo = await prisma.repo.findFirst({
-      where: { id, userId: user.id },
+      where: {
+        id,
+        ...repoAccess(user.id),
+      },
       select: { id: true },
     });
 
     if (!repo) {
       return c.json({ error: 'Repository not found' }, 404);
     }
-
-    // Explicitly select allowed fields to prevent Prisma errors
-    const { 
-      autoGenerate, autoPublish, generateCustomer, generateDeveloper, 
-      generateStakeholder, customerTone, companyName, productName 
-    } = body;
     
-    const data = {
-      autoGenerate, autoPublish, generateCustomer, generateDeveloper,
-      generateStakeholder, customerTone, companyName, productName
-    };
-
-    // Remove undefined keys
-    Object.keys(data).forEach(key => data[key as keyof typeof data] === undefined && delete data[key as keyof typeof data]);
+    // Check for admin rights if modifying critical settings?
+    // For config, member access is probably fine.
 
     const config = await prisma.repoConfig.upsert({
       where: { repoId: id },
       create: {
         repoId: id,
-        ...data,
+        ...body,
       },
-      update: data,
+      update: body,
     });
+      // Verify ownership
+      const repo = await prisma.repo.findFirst({
+        where: { id, userId: user.id },
+        select: { id: true },
+      });
+      if (!repo) {
+        return c.json({ error: 'Repository not found' }, 404);
+      }
+      // Explicitly select allowed fields to prevent Prisma errors
+      const {
+        autoGenerate,
+        autoPublish,
+        generateCustomer,
+        generateDeveloper,
+        generateStakeholder,
+        customerTone,
+        companyName,
+        productName,
+      } = body;
+      const data = {
+        autoGenerate,
+        autoPublish,
+        generateCustomer,
+        generateDeveloper,
+        generateStakeholder,
+        customerTone,
+        companyName,
+        productName,
+      };
+      // Remove undefined keys
+      Object.keys(data).forEach(
+        (key) =>
+          data[key as keyof typeof data] === undefined &&
+          delete data[key as keyof typeof data]
+      );
+      const config = await prisma.repoConfig.upsert({
+        where: { repoId: id },
+        create: {
+          repoId: id,
+          ...data,
+        },
+        update: data,
+      });
 
-    console.log(`📝 Updated config for repo ${id}`);
+    logger.info(`📝 Updated config for repo ${id}`, { repoId: id });
 
     return c.json(config);
   } catch (error) {
-    console.error('Failed to update repo config:', error);
+    logger.error('Failed to update repo config', { repoId: id, error });
     const message = error instanceof Error ? error.message : 'Unknown error';
     return c.json({ error: `Failed to update configuration: ${message}` }, 500);
   }
 });
 
+const settingsSchema = z.object({
+  isPublic: z.boolean().optional(),
+  slug: z.string().optional(),
+  publicTitle: z.string().optional(),
+  publicDescription: z.string().optional(),
+  publicLogoUrl: z.string().url().optional(),
+  publicAccentColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  hidePoweredBy: z.boolean().optional(),
+  excludeFromFeatured: z.boolean().optional(),
+});
+
 // Update repo settings (public changelog options)
-repos.patch('/:id/settings', async (c) => {
+repos.patch('/:id/settings', validate(settingsSchema), async (c) => {
   try {
     const user = c.get('user');
     const id = c.req.param('id');
+    const body = c.req.valid('json');
+repos.patch(
+  '/:id/settings',
+  zValidator('json', updateRepoSettingsSchema),
+  async (c) => {
+    try {
+      const user = c.get('user');
+      const id = c.req.param('id');
+      const body = c.req.valid('json');
+/**
+ * PATCH /:id/settings
+ * @description Update repository public changelog settings.
+ * @param {string} id - Repository UUID.
+ * @body {boolean} [isPublic] - Make changelog public.
+ * @body {string} [slug] - Custom slug.
+ * @body {string} [publicTitle] - Public title.
+ * @returns {object} Updated repository settings.
+ */
+repos.patch('/:id/settings', async (c) => {
+  const id = c.req.param('id');
     const body = await c.req.json() as {
       isPublic?: boolean;
       slug?: string;
@@ -361,31 +560,58 @@ repos.patch('/:id/settings', async (c) => {
 
     // Verify ownership
     const repo = await prisma.repo.findFirst({
-      where: { id, userId: user.id },
+      where: {
+        id,
+        ...repoAccess(user.id),
+      },
       select: { id: true },
     });
+      // Verify ownership
+      const repo = await prisma.repo.findFirst({
+        where: { id, userId: user.id },
+        select: { id: true },
+      });
 
-    if (!repo) {
-      return c.json({ error: 'Repository not found' }, 404);
-    }
-
-    // Explicitly select allowed fields
-    const { 
-      isPublic, slug, publicTitle, publicDescription, 
-      publicLogoUrl, publicAccentColor, hidePoweredBy, excludeFromFeatured 
-    } = body;
-
-    const data = {
-      isPublic, slug, publicTitle, publicDescription,
-      publicLogoUrl, publicAccentColor, hidePoweredBy, excludeFromFeatured
-    };
-
-    // Remove undefined keys
-    Object.keys(data).forEach(key => data[key as keyof typeof data] === undefined && delete data[key as keyof typeof data]);
+      if (!repo) {
+        return c.json({ error: 'Repository not found' }, 404);
+      }
 
     const updated = await prisma.repo.update({
       where: { id },
-      data: data,
+      data: body,
+      // Explicitly select allowed fields
+      const {
+        isPublic,
+        slug,
+        publicTitle,
+        publicDescription,
+        publicLogoUrl,
+        publicAccentColor,
+        hidePoweredBy,
+        excludeFromFeatured,
+      } = body;
+
+      const data = {
+        isPublic,
+        slug,
+        publicTitle,
+        publicDescription,
+        publicLogoUrl,
+        publicAccentColor,
+        hidePoweredBy,
+        excludeFromFeatured,
+      };
+
+      // Remove undefined keys
+      Object.keys(data).forEach(
+        (key) =>
+          data[key as keyof typeof data] === undefined &&
+          delete data[key as keyof typeof data]
+      );
+
+      const updated = await prisma.repo.update({
+        where: { id },
+        data: data,
       select: {
         id: true,
         isPublic: true,
@@ -399,29 +625,53 @@ repos.patch('/:id/settings', async (c) => {
       },
     });
 
-    console.log(`📝 Updated settings for repo ${id}`);
+    logger.info(`📝 Updated settings for repo ${id}`, { repoId: id });
 
     return c.json(updated);
   } catch (error) {
-    console.error('Failed to update repo settings:', error);
+    logger.error('Failed to update repo settings', { repoId: id, error });
     const message = error instanceof Error ? error.message : 'Unknown error';
     return c.json({ error: `Failed to update settings: ${message}` }, 500);
   }
 });
 
+const channelSchema = z.object({
+  type: z.enum(['SLACK', 'DISCORD', 'WEBHOOK']),
+  name: z.string(),
+  webhookUrl: z.string().url(),
+  audience: z.enum(['CUSTOMER', 'DEVELOPER', 'STAKEHOLDER']),
+  enabled: z.boolean().optional(),
+});
+
 // Create a distribution channel
+repos.post('/:id/channels', validate(channelSchema), async (c) => {
+repos.post(
+  '/:id/channels',
+  zValidator('json', createChannelSchema),
+  async (c) => {
+    const user = c.get('user');
+    const id = c.req.param('id');
+    const body = c.req.valid('json');
+/**
+ * POST /:id/channels
+ * @description Add a distribution channel (Slack, Discord) to the repository.
+ * @param {string} id - Repository UUID.
+ * @body {string} type - Channel type (SLACK, DISCORD).
+ * @body {string} webhookUrl - Webhook URL.
+ * @body {string} audience - Target audience.
+ * @returns {object} Created channel.
+ */
 repos.post('/:id/channels', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
-  const body = await c.req.json() as {
-    type: 'SLACK' | 'DISCORD' | 'WEBHOOK';
-    name: string;
-    webhookUrl: string;
-    audience: 'CUSTOMER' | 'DEVELOPER' | 'STAKEHOLDER';
-    enabled?: boolean;
-  };
+  const body = c.req.valid('json');
 
   const repo = await prisma.repo.findFirst({
+    where: {
+      id,
+      ...repoAccess(user.id),
+    },
+    const repo = await prisma.repo.findFirst({
     where: { id, userId: user.id },
     include: { config: true },
   });
@@ -448,22 +698,50 @@ repos.post('/:id/channels', async (c) => {
   return c.json(channel, 201);
 });
 
+const updateChannelSchema = z.object({
+  name: z.string().optional(),
+  webhookUrl: z.string().url().optional(),
+  audience: z.enum(['CUSTOMER', 'DEVELOPER', 'STAKEHOLDER']).optional(),
+  enabled: z.boolean().optional(),
+});
+
 // Update a distribution channel
+repos.patch('/:id/channels/:channelId', validate(updateChannelSchema), async (c) => {
+repos.patch(
+  '/:id/channels/:channelId',
+  zValidator('json', updateChannelSchema),
+  async (c) => {
+    const user = c.get('user');
+    const id = c.req.param('id');
+    const channelId = c.req.param('channelId');
+    const body = c.req.valid('json');
+/**
+ * PATCH /:id/channels/:channelId
+ * @description Update a distribution channel.
+ * @param {string} id - Repository UUID.
+ * @param {string} channelId - Channel UUID.
+ * @body {boolean} [enabled] - Enable/disable channel.
+ * @returns {object} Updated channel.
+ */
 repos.patch('/:id/channels/:channelId', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
   const channelId = c.req.param('channelId');
-  const body = await c.req.json() as {
-    name?: string;
-    webhookUrl?: string;
-    audience?: 'CUSTOMER' | 'DEVELOPER' | 'STAKEHOLDER';
-    enabled?: boolean;
-  };
+  const body = c.req.valid('json');
 
-  const channel = await prisma.channel.findFirst({
+  // Check repo access first
+  const repo = await prisma.repo.findFirst({
+    where: { id, ...repoAccess(user.id) },
+  });
+
+  if (!repo) {
+    return c.json({ error: 'Repository not found' }, 404);
+  }
+
+    const channel = await prisma.channel.findFirst({
     where: {
       id: channelId,
-      config: { repoId: id, repo: { userId: user.id } },
+      config: { repoId: id }, // We already verified repo access
     },
   });
 
@@ -479,16 +757,30 @@ repos.patch('/:id/channels/:channelId', async (c) => {
   return c.json(updated);
 });
 
-// Delete a distribution channel
+/**
+ * DELETE /:id/channels/:channelId
+ * @description Delete a distribution channel.
+ * @param {string} id - Repository UUID.
+ * @param {string} channelId - Channel UUID.
+ * @returns {object} Success message.
+ */
 repos.delete('/:id/channels/:channelId', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
   const channelId = c.req.param('channelId');
 
+  const repo = await prisma.repo.findFirst({
+    where: { id, ...repoAccess(user.id) },
+  });
+
+  if (!repo) {
+    return c.json({ error: 'Repository not found' }, 404);
+  }
+
   const channel = await prisma.channel.findFirst({
     where: {
       id: channelId,
-      config: { repoId: id, repo: { userId: user.id } },
+      config: { repoId: id },
     },
   });
 
@@ -503,33 +795,38 @@ repos.delete('/:id/channels/:channelId', async (c) => {
   return c.json({ deleted: true });
 });
 
-// Disconnect a repo (remove webhook)
+/**
+ * DELETE /:id
+ * @description Disconnect a repository and remove the webhook from GitHub.
+ * @param {string} id - Repository UUID.
+ * @returns {object} Disconnect status.
+ */
 repos.delete('/:id', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
 
-  const repo = await prisma.repo.findFirst({
-    where: { id, userId: user.id },
-  });
+  // Strict check for deletion: Only Owner or Org Admin
+  const repo = await checkRepoAdmin(id, user.id);
 
   if (!repo) {
-    return c.json({ error: 'Repository not found' }, 404);
+    return c.json({ error: 'Repository not found or unauthorized' }, 404);
   }
 
   // Try to delete webhook from GitHub
   if (repo.webhookId) {
     try {
-      const dbUser = await prisma.user.findUnique({
-        where: { id: user.id },
+      // Need access token of the repo owner (user who connected it)
+      const ownerUser = await prisma.user.findUnique({
+        where: { id: repo.userId },
         select: { accessToken: true },
       });
 
-      if (dbUser?.accessToken) {
-        const accessToken = await decrypt(dbUser.accessToken);
+      if (ownerUser?.accessToken) {
+        const accessToken = await decrypt(ownerUser.accessToken);
         await deleteWebhook(repo.owner, repo.name, repo.webhookId, accessToken);
       }
     } catch (error) {
-      console.warn('Failed to delete GitHub webhook:', error);
+      logger.warn('Failed to delete GitHub webhook', { repoId: id, error });
       // Continue with deletion anyway
     }
   }
@@ -539,7 +836,7 @@ repos.delete('/:id', async (c) => {
     where: { id },
   });
 
-  console.log(`🔌 Disconnected repo: ${repo.fullName}`);
+  logger.info(`🔌 Disconnected repo: ${repo.fullName}`, { repoId: id, fullName: repo.fullName });
 
   return c.json({
     status: 'disconnected',
