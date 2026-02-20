@@ -1,6 +1,8 @@
 import { Hono } from 'hono';
+import { zValidator } from '@hono/zod-validator';
 import { prisma } from '../lib/db.js';
 import { requireAuth } from '../lib/auth.js';
+import { updateUserSchema } from '../lib/schemas.js';
 
 export const user = new Hono();
 
@@ -45,22 +47,24 @@ user.get('/me', requireAuth, async (c) => {
 });
 
 // Update user profile
-user.patch('/me', requireAuth, async (c) => {
-  const authUser = c.get('user');
-  const body = await c.req.json();
-  
-  // Only allow updating name for now
-  const { name } = body;
-  
-  if (name !== undefined) {
-    await prisma.user.update({
-      where: { id: authUser.id },
-      data: { name },
-    });
+user.patch(
+  '/me',
+  requireAuth,
+  zValidator('json', updateUserSchema),
+  async (c) => {
+    const authUser = c.get('user');
+    const { name } = c.req.valid('json');
+
+    if (name !== undefined) {
+      await prisma.user.update({
+        where: { id: authUser.id },
+        data: { name },
+      });
+    }
+
+    return c.json({ success: true });
   }
-  
-  return c.json({ success: true });
-});
+);
 
 // Delete user account
 user.delete('/me', requireAuth, async (c) => {

@@ -1,7 +1,9 @@
 import { Hono } from 'hono';
+import { zValidator } from '@hono/zod-validator';
 import Stripe from 'stripe';
 import { prisma } from '../lib/db.js';
 import { requireAuth } from '../lib/auth.js';
+import { checkoutSchema } from '../lib/schemas.js';
 
 export const billing = new Hono();
 
@@ -54,20 +56,24 @@ const shouldDowngrade = (status?: Stripe.Subscription.Status) => {
   return status === 'canceled' || status === 'unpaid' || status === 'incomplete_expired';
 };
 
-billing.post('/checkout', requireAuth, async (c) => {
-  if (!stripeSecret) {
-    return c.json({ error: 'Stripe not configured' }, 500);
-  }
+billing.post(
+  '/checkout',
+  requireAuth,
+  zValidator('json', checkoutSchema),
+  async (c) => {
+    if (!stripeSecret) {
+      return c.json({ error: 'Stripe not configured' }, 500);
+    }
 
-  const user = c.get('user');
-  const plan = c.req.query('plan') ?? (await c.req.json().catch(() => ({})) as { plan?: string }).plan;
-  const priceId = getPriceId(plan);
+    const user = c.get('user');
+    const { plan } = c.req.valid('json');
+    const priceId = getPriceId(plan);
 
-  if (!plan || !priceId) {
-    return c.json({ error: 'Invalid plan' }, 400);
-  }
+    if (!priceId) {
+      return c.json({ error: 'Invalid plan' }, 400);
+    }
 
-  const dbUser = await prisma.user.findUnique({
+    const dbUser = await prisma.user.findUnique({
     where: { id: user.id },
     select: {
       id: true,

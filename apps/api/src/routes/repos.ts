@@ -1,8 +1,16 @@
 import { Hono } from 'hono';
+import { zValidator } from '@hono/zod-validator';
 import { prisma } from '../lib/db.js';
 import { requireAuth, decrypt } from '../lib/auth.js';
 import { listUserRepos, createWebhook, deleteWebhook } from '../services/github.js';
 import { importRepoHistory } from '../services/importer.js';
+import {
+  connectRepoSchema,
+  updateRepoConfigSchema,
+  updateRepoSettingsSchema,
+  createChannelSchema,
+  updateChannelSchema,
+} from '../lib/schemas.js';
 
 export const repos = new Hono();
 
@@ -146,17 +154,14 @@ repos.get('/github/available', async (c) => {
 });
 
 // Connect a new repo (create webhook)
-repos.post('/connect', async (c) => {
-  const user = c.get('user');
-  const body = await c.req.json() as { 
-    githubId: number;
-    owner: string; 
-    repo: string;
-    fullName: string;
-    description?: string;
-  };
+repos.post(
+  '/connect',
+  zValidator('json', connectRepoSchema),
+  async (c) => {
+    const user = c.get('user');
+    const body = c.req.valid('json');
 
-  // Get user's access token
+    // Get user's access token
   const dbUser = await prisma.user.findUnique({
     where: { id: user.id },
     select: { accessToken: true, subscriptionTier: true },
@@ -285,53 +290,63 @@ repos.post('/connect', async (c) => {
 });
 
 // Update repo config
-repos.patch('/:id/config', async (c) => {
-  try {
-    const user = c.get('user');
-    const id = c.req.param('id');
-    const body = await c.req.json() as {
-      autoGenerate?: boolean;
-      autoPublish?: boolean;
-      generateCustomer?: boolean;
-      generateDeveloper?: boolean;
-      generateStakeholder?: boolean;
-      customerTone?: string;
-      companyName?: string;
-      productName?: string;
-    };
+repos.patch(
+  '/:id/config',
+  zValidator('json', updateRepoConfigSchema),
+  async (c) => {
+    try {
+      const user = c.get('user');
+      const id = c.req.param('id');
+      const body = c.req.valid('json');
 
-    // Verify ownership
-    const repo = await prisma.repo.findFirst({
-      where: { id, userId: user.id },
-      select: { id: true },
-    });
+      // Verify ownership
+      const repo = await prisma.repo.findFirst({
+        where: { id, userId: user.id },
+        select: { id: true },
+      });
 
-    if (!repo) {
-      return c.json({ error: 'Repository not found' }, 404);
-    }
+      if (!repo) {
+        return c.json({ error: 'Repository not found' }, 404);
+      }
 
-    // Explicitly select allowed fields to prevent Prisma errors
-    const { 
-      autoGenerate, autoPublish, generateCustomer, generateDeveloper, 
-      generateStakeholder, customerTone, companyName, productName 
-    } = body;
-    
-    const data = {
-      autoGenerate, autoPublish, generateCustomer, generateDeveloper,
-      generateStakeholder, customerTone, companyName, productName
-    };
+      // Explicitly select allowed fields to prevent Prisma errors
+      const {
+        autoGenerate,
+        autoPublish,
+        generateCustomer,
+        generateDeveloper,
+        generateStakeholder,
+        customerTone,
+        companyName,
+        productName,
+      } = body;
 
-    // Remove undefined keys
-    Object.keys(data).forEach(key => data[key as keyof typeof data] === undefined && delete data[key as keyof typeof data]);
+      const data = {
+        autoGenerate,
+        autoPublish,
+        generateCustomer,
+        generateDeveloper,
+        generateStakeholder,
+        customerTone,
+        companyName,
+        productName,
+      };
 
-    const config = await prisma.repoConfig.upsert({
-      where: { repoId: id },
-      create: {
-        repoId: id,
-        ...data,
-      },
-      update: data,
-    });
+      // Remove undefined keys
+      Object.keys(data).forEach(
+        (key) =>
+          data[key as keyof typeof data] === undefined &&
+          delete data[key as keyof typeof data]
+      );
+
+      const config = await prisma.repoConfig.upsert({
+        where: { repoId: id },
+        create: {
+          repoId: id,
+          ...data,
+        },
+        update: data,
+      });
 
     console.log(`📝 Updated config for repo ${id}`);
 
@@ -344,48 +359,58 @@ repos.patch('/:id/config', async (c) => {
 });
 
 // Update repo settings (public changelog options)
-repos.patch('/:id/settings', async (c) => {
-  try {
-    const user = c.get('user');
-    const id = c.req.param('id');
-    const body = await c.req.json() as {
-      isPublic?: boolean;
-      slug?: string;
-      publicTitle?: string;
-      publicDescription?: string;
-      publicLogoUrl?: string;
-      publicAccentColor?: string;
-      hidePoweredBy?: boolean;
-      excludeFromFeatured?: boolean;
-    };
+repos.patch(
+  '/:id/settings',
+  zValidator('json', updateRepoSettingsSchema),
+  async (c) => {
+    try {
+      const user = c.get('user');
+      const id = c.req.param('id');
+      const body = c.req.valid('json');
 
-    // Verify ownership
-    const repo = await prisma.repo.findFirst({
-      where: { id, userId: user.id },
-      select: { id: true },
-    });
+      // Verify ownership
+      const repo = await prisma.repo.findFirst({
+        where: { id, userId: user.id },
+        select: { id: true },
+      });
 
-    if (!repo) {
-      return c.json({ error: 'Repository not found' }, 404);
-    }
+      if (!repo) {
+        return c.json({ error: 'Repository not found' }, 404);
+      }
 
-    // Explicitly select allowed fields
-    const { 
-      isPublic, slug, publicTitle, publicDescription, 
-      publicLogoUrl, publicAccentColor, hidePoweredBy, excludeFromFeatured 
-    } = body;
+      // Explicitly select allowed fields
+      const {
+        isPublic,
+        slug,
+        publicTitle,
+        publicDescription,
+        publicLogoUrl,
+        publicAccentColor,
+        hidePoweredBy,
+        excludeFromFeatured,
+      } = body;
 
-    const data = {
-      isPublic, slug, publicTitle, publicDescription,
-      publicLogoUrl, publicAccentColor, hidePoweredBy, excludeFromFeatured
-    };
+      const data = {
+        isPublic,
+        slug,
+        publicTitle,
+        publicDescription,
+        publicLogoUrl,
+        publicAccentColor,
+        hidePoweredBy,
+        excludeFromFeatured,
+      };
 
-    // Remove undefined keys
-    Object.keys(data).forEach(key => data[key as keyof typeof data] === undefined && delete data[key as keyof typeof data]);
+      // Remove undefined keys
+      Object.keys(data).forEach(
+        (key) =>
+          data[key as keyof typeof data] === undefined &&
+          delete data[key as keyof typeof data]
+      );
 
-    const updated = await prisma.repo.update({
-      where: { id },
-      data: data,
+      const updated = await prisma.repo.update({
+        where: { id },
+        data: data,
       select: {
         id: true,
         isPublic: true,
@@ -410,18 +435,15 @@ repos.patch('/:id/settings', async (c) => {
 });
 
 // Create a distribution channel
-repos.post('/:id/channels', async (c) => {
-  const user = c.get('user');
-  const id = c.req.param('id');
-  const body = await c.req.json() as {
-    type: 'SLACK' | 'DISCORD' | 'WEBHOOK';
-    name: string;
-    webhookUrl: string;
-    audience: 'CUSTOMER' | 'DEVELOPER' | 'STAKEHOLDER';
-    enabled?: boolean;
-  };
+repos.post(
+  '/:id/channels',
+  zValidator('json', createChannelSchema),
+  async (c) => {
+    const user = c.get('user');
+    const id = c.req.param('id');
+    const body = c.req.valid('json');
 
-  const repo = await prisma.repo.findFirst({
+    const repo = await prisma.repo.findFirst({
     where: { id, userId: user.id },
     include: { config: true },
   });
@@ -449,18 +471,16 @@ repos.post('/:id/channels', async (c) => {
 });
 
 // Update a distribution channel
-repos.patch('/:id/channels/:channelId', async (c) => {
-  const user = c.get('user');
-  const id = c.req.param('id');
-  const channelId = c.req.param('channelId');
-  const body = await c.req.json() as {
-    name?: string;
-    webhookUrl?: string;
-    audience?: 'CUSTOMER' | 'DEVELOPER' | 'STAKEHOLDER';
-    enabled?: boolean;
-  };
+repos.patch(
+  '/:id/channels/:channelId',
+  zValidator('json', updateChannelSchema),
+  async (c) => {
+    const user = c.get('user');
+    const id = c.req.param('id');
+    const channelId = c.req.param('channelId');
+    const body = c.req.valid('json');
 
-  const channel = await prisma.channel.findFirst({
+    const channel = await prisma.channel.findFirst({
     where: {
       id: channelId,
       config: { repoId: id, repo: { userId: user.id } },

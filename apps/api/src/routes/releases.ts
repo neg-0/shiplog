@@ -1,8 +1,14 @@
 import { Hono } from 'hono';
+import { zValidator } from '@hono/zod-validator';
 import { prisma } from '../lib/db.js';
 import { requireAuth, decrypt } from '../lib/auth.js';
 import { fetchReleaseData } from '../services/github.js';
 import { generateReleaseNotes } from '../services/generator.js';
+import {
+  regenerateNotesSchema,
+  publishReleaseSchema,
+  updateNotesSchema,
+} from '../lib/schemas.js';
 
 export const releases = new Hono();
 
@@ -64,12 +70,15 @@ releases.get('/:id', async (c) => {
 });
 
 // Regenerate notes for a release
-releases.post('/:id/regenerate', async (c) => {
-  const user = c.get('user');
-  const id = c.req.param('id');
-  const body = await c.req.json() as { tone?: string };
-  
-  const release = await prisma.release.findFirst({
+releases.post(
+  '/:id/regenerate',
+  zValidator('json', regenerateNotesSchema),
+  async (c) => {
+    const user = c.get('user');
+    const id = c.req.param('id');
+    const body = c.req.valid('json');
+
+    const release = await prisma.release.findFirst({
     where: { id },
     include: {
       repo: {
@@ -179,12 +188,15 @@ releases.post('/:id/regenerate', async (c) => {
 });
 
 // Manually publish/distribute a release
-releases.post('/:id/publish', async (c) => {
-  const user = c.get('user');
-  const id = c.req.param('id');
-  const body = await c.req.json() as { channels?: string[] };
-  
-  const release = await prisma.release.findFirst({
+releases.post(
+  '/:id/publish',
+  zValidator('json', publishReleaseSchema),
+  async (c) => {
+    const user = c.get('user');
+    const id = c.req.param('id');
+    const body = c.req.valid('json');
+
+    const release = await prisma.release.findFirst({
     where: { id },
     include: {
       notes: true,
@@ -232,16 +244,15 @@ releases.post('/:id/publish', async (c) => {
 });
 
 // Update generated notes (manual edit)
-releases.patch('/:id/notes', async (c) => {
-  const user = c.get('user');
-  const id = c.req.param('id');
-  const body = await c.req.json() as { 
-    customer?: string; 
-    developer?: string; 
-    stakeholder?: string;
-  };
-  
-  const release = await prisma.release.findFirst({
+releases.patch(
+  '/:id/notes',
+  zValidator('json', updateNotesSchema),
+  async (c) => {
+    const user = c.get('user');
+    const id = c.req.param('id');
+    const body = c.req.valid('json');
+
+    const release = await prisma.release.findFirst({
     where: { id },
     include: {
       notes: true,

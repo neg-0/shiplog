@@ -1,7 +1,9 @@
 import { Hono } from 'hono';
+import { zValidator } from '@hono/zod-validator';
 import { prisma } from '../lib/db.js';
 import { signToken } from '../lib/jwt.js';
 import { encrypt } from '../lib/auth.js';
+import { githubCallbackSchema } from '../lib/schemas.js';
 
 export const auth = new Hono();
 
@@ -15,14 +17,16 @@ const pendingStates = new Map<string, number>();
 const STATE_TTL_MS = 10 * 60 * 1000;
 
 // Clean up expired states periodically
-setInterval(() => {
-  const now = Date.now();
-  for (const [state, createdAt] of pendingStates) {
-    if (now - createdAt > STATE_TTL_MS) {
-      pendingStates.delete(state);
+if (process.env.NODE_ENV !== 'test') {
+  setInterval(() => {
+    const now = Date.now();
+    for (const [state, createdAt] of pendingStates) {
+      if (now - createdAt > STATE_TTL_MS) {
+        pendingStates.delete(state);
+      }
     }
-  }
-}, 60 * 1000);
+  }, 60 * 1000);
+}
 
 // Initiate GitHub OAuth
 auth.get('/github', (c) => {
@@ -46,23 +50,21 @@ auth.get('/github', (c) => {
 });
 
 // GitHub OAuth callback
-auth.get('/github/callback', async (c) => {
-  const code = c.req.query('code');
-  const state = c.req.query('state');
+auth.get(
+  '/github/callback',
+  zValidator('query', githubCallbackSchema),
+  async (c) => {
+    const { code, state } = c.req.valid('query');
 
-  console.log(`🔑 OAuth callback with state: ${state?.slice(0, 8)}...`);
+    console.log(`🔑 OAuth callback with state: ${state?.slice(0, 8)}...`);
 
-  if (!code) {
-    return c.json({ error: 'No code provided' }, 400);
-  }
+    if (!pendingStates.has(state)) {
+      console.log(`❌ Invalid state. Known states: ${pendingStates.size}`);
+      return c.json({ error: 'Invalid OAuth state' }, 400);
+    }
 
-  if (!state || !pendingStates.has(state)) {
-    console.log(`❌ Invalid state. Known states: ${pendingStates.size}`);
-    return c.json({ error: 'Invalid OAuth state' }, 400);
-  }
-
-  // Remove used state
-  pendingStates.delete(state);
+    // Remove used state
+    pendingStates.delete(state);
 
   if (!GITHUB_CLIENT_ID || !GITHUB_CLIENT_SECRET) {
     return c.json({ error: 'GitHub OAuth not configured' }, 500);
