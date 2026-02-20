@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { prisma } from '../lib/db.js';
+import { logger } from '../lib/logger.js';
 import { requireAuth, decrypt } from '../lib/auth.js';
 import { listUserRepos, createWebhook, deleteWebhook } from '../services/github.js';
 import { importRepoHistory } from '../services/importer.js';
@@ -243,11 +244,19 @@ repos.post('/connect', async (c) => {
       },
     });
 
-    console.log(`🔗 Connected repo: ${body.fullName} (webhook ID: ${webhookId})`);
+    logger.info(`🔗 Connected repo: ${body.fullName} (webhook ID: ${webhookId})`, {
+      repoId: repo.id,
+      fullName: body.fullName,
+      webhookId
+    });
 
     // Trigger background import of recent history
     importRepoHistory(repo.id, accessToken).catch(err => 
-      console.error(`Background import failed for ${body.fullName}:`, err)
+      logger.error(`Background import failed for ${body.fullName}`, {
+        repoId: repo.id,
+        fullName: body.fullName,
+        error: err
+      })
     );
 
     return c.json({
@@ -258,7 +267,7 @@ repos.post('/connect', async (c) => {
     });
 
   } catch (error) {
-    console.error('Failed to connect repo:', error);
+    logger.error('Failed to connect repo', { error, githubId: body.githubId, fullName: body.fullName });
     
     // Still create the repo but mark webhook as failed
     const repo = await prisma.repo.create({
@@ -286,9 +295,9 @@ repos.post('/connect', async (c) => {
 
 // Update repo config
 repos.patch('/:id/config', async (c) => {
+  const id = c.req.param('id');
   try {
     const user = c.get('user');
-    const id = c.req.param('id');
     const body = await c.req.json() as {
       autoGenerate?: boolean;
       autoPublish?: boolean;
@@ -333,11 +342,11 @@ repos.patch('/:id/config', async (c) => {
       update: data,
     });
 
-    console.log(`📝 Updated config for repo ${id}`);
+    logger.info(`📝 Updated config for repo ${id}`, { repoId: id });
 
     return c.json(config);
   } catch (error) {
-    console.error('Failed to update repo config:', error);
+    logger.error('Failed to update repo config', { repoId: id, error });
     const message = error instanceof Error ? error.message : 'Unknown error';
     return c.json({ error: `Failed to update configuration: ${message}` }, 500);
   }
@@ -345,9 +354,9 @@ repos.patch('/:id/config', async (c) => {
 
 // Update repo settings (public changelog options)
 repos.patch('/:id/settings', async (c) => {
+  const id = c.req.param('id');
   try {
     const user = c.get('user');
-    const id = c.req.param('id');
     const body = await c.req.json() as {
       isPublic?: boolean;
       slug?: string;
@@ -399,11 +408,11 @@ repos.patch('/:id/settings', async (c) => {
       },
     });
 
-    console.log(`📝 Updated settings for repo ${id}`);
+    logger.info(`📝 Updated settings for repo ${id}`, { repoId: id });
 
     return c.json(updated);
   } catch (error) {
-    console.error('Failed to update repo settings:', error);
+    logger.error('Failed to update repo settings', { repoId: id, error });
     const message = error instanceof Error ? error.message : 'Unknown error';
     return c.json({ error: `Failed to update settings: ${message}` }, 500);
   }
@@ -529,7 +538,7 @@ repos.delete('/:id', async (c) => {
         await deleteWebhook(repo.owner, repo.name, repo.webhookId, accessToken);
       }
     } catch (error) {
-      console.warn('Failed to delete GitHub webhook:', error);
+      logger.warn('Failed to delete GitHub webhook', { repoId: id, error });
       // Continue with deletion anyway
     }
   }
@@ -539,7 +548,7 @@ repos.delete('/:id', async (c) => {
     where: { id },
   });
 
-  console.log(`🔌 Disconnected repo: ${repo.fullName}`);
+  logger.info(`🔌 Disconnected repo: ${repo.fullName}`, { repoId: id, fullName: repo.fullName });
 
   return c.json({
     status: 'disconnected',

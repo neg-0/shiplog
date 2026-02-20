@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { prisma } from '../lib/db.js';
+import { logger } from '../lib/logger.js';
 
 export const publicChangelog = new Hono();
 
@@ -12,7 +13,7 @@ publicChangelog.post('/feedback', async (c) => {
   }
 
   // Log feedback
-  console.log(`[Feedback] Repo: ${repoId}, Content: ${feedback}, Email: ${email}`);
+  logger.info(`Feedback received`, { repoId, feedback, email });
 
   // Send to Discord if configured
   if (process.env.DISCORD_FEEDBACK_WEBHOOK_URL) {
@@ -25,7 +26,7 @@ publicChangelog.post('/feedback', async (c) => {
         }),
       });
     } catch (err) {
-      console.error('Failed to send feedback to Discord', err);
+      logger.error('Failed to send feedback to Discord', { error: err });
     }
   }
 

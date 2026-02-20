@@ -5,6 +5,7 @@
 import type { Context, Next } from 'hono';
 import { verifyToken } from './jwt.js';
 import { prisma } from './db.js';
+import { setLoggerContext } from './logger.js';
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
@@ -126,6 +127,7 @@ export async function requireAuth(c: Context, next: Next) {
 
   // Attach user to context
   c.set('user', user);
+  setLoggerContext({ userId: user.id });
 
   await next();
 }
@@ -153,6 +155,7 @@ export async function optionalAuth(c: Context, next: Next) {
 
       if (user) {
         c.set('user', user);
+        setLoggerContext({ userId: user.id });
       }
     }
   }

@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { zValidator } from '@hono/zod-validator';
+import { logger } from '../lib/logger.js';
 
 export const feedback = new Hono();
 
@@ -16,10 +17,10 @@ feedback.post('/', zValidator('json', feedbackSchema), async (c) => {
   const data = c.req.valid('json');
   const webhookUrl = process.env.DISCORD_FEEDBACK_WEBHOOK_URL;
 
-  console.log('📝 Received feedback:', data);
+  logger.info('Received feedback', { data });
 
   if (!webhookUrl) {
-    console.warn('⚠️ DISCORD_FEEDBACK_WEBHOOK_URL is not set. Feedback will not be sent to Discord.');
+    logger.warn('DISCORD_FEEDBACK_WEBHOOK_URL is not set. Feedback will not be sent to Discord.');
     // We still return success to the client so the UI doesn't break
     return c.json({ success: true, message: 'Feedback received (simulation)' });
   }
@@ -45,13 +46,14 @@ feedback.post('/', zValidator('json', feedbackSchema), async (c) => {
     });
 
     if (!response.ok) {
-      console.error('Failed to send feedback to Discord:', await response.text());
+      const errorText = await response.text();
+      logger.error('Failed to send feedback to Discord', { error: errorText });
       return c.json({ success: false, error: 'Failed to forward feedback' }, 500);
     }
 
     return c.json({ success: true });
   } catch (error) {
-    console.error('Error sending feedback:', error);
+    logger.error('Error sending feedback', { error });
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }
 });

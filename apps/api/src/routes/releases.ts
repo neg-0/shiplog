@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { prisma } from '../lib/db.js';
+import { logger } from '../lib/logger.js';
 import { requireAuth, decrypt } from '../lib/auth.js';
 import { fetchReleaseData } from '../services/github.js';
 import { generateReleaseNotes } from '../services/generator.js';
@@ -89,7 +90,7 @@ releases.post('/:id/regenerate', async (c) => {
     return c.json({ error: 'Unauthorized' }, 403);
   }
 
-  console.log(`🔄 Regenerating notes for release ${id}`);
+  logger.info(`🔄 Regenerating notes for release ${id}`, { releaseId: id });
 
   try {
     // Update status
@@ -152,7 +153,7 @@ releases.post('/:id/regenerate', async (c) => {
       data: { status: 'READY', processedAt: new Date() },
     });
 
-    console.log(`✅ Regenerated notes for ${release.tagName}`);
+    logger.info(`✅ Regenerated notes for ${release.tagName}`, { releaseId: id, tagName: release.tagName });
 
     return c.json({
       id,
@@ -161,7 +162,7 @@ releases.post('/:id/regenerate', async (c) => {
     });
 
   } catch (error) {
-    console.error('Failed to regenerate notes:', error);
+    logger.error('Failed to regenerate notes', { releaseId: id, error });
     
     await prisma.release.update({
       where: { id },
@@ -206,7 +207,7 @@ releases.post('/:id/publish', async (c) => {
     return c.json({ error: 'No generated notes to publish' }, 400);
   }
 
-  console.log(`📤 Publishing release ${id} to channels:`, body.channels);
+  logger.info(`📤 Publishing release ${id} to channels`, { releaseId: id, channels: body.channels });
 
   // Mark as published (actual distribution to channels is Phase 2)
   await prisma.release.update({
@@ -282,7 +283,7 @@ releases.patch('/:id/notes', async (c) => {
     data: updateData,
   });
 
-  console.log(`✏️ Updated notes for release ${id}`);
+  logger.info(`✏️ Updated notes for release ${id}`, { releaseId: id });
   
   return c.json({
     id,

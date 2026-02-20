@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { logger } from 'hono/logger';
 import { serve } from '@hono/node-server';
+import { logger, requestLogger } from './lib/logger.js';
 import { webhooks } from './routes/webhooks.js';
 import { feedback } from './routes/feedback.js';
 import { auth } from './routes/auth.js';
@@ -20,7 +20,7 @@ import { preview } from './routes/preview.js';
 const app = new Hono();
 
 // Middleware
-app.use('*', logger());
+app.use('*', requestLogger);
 app.use('*', cors({
   origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
   credentials: true,
@@ -55,7 +55,7 @@ app.get('/', (c) => {
 
 const port = parseInt(process.env.PORT || '3001');
 
-console.log(`🚢 ShipLog API running on port ${port}`);
+logger.info(`🚢 ShipLog API running on port ${port}`);
 
 serve({
   fetch: app.fetch,
