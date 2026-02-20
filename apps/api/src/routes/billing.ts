@@ -94,8 +94,9 @@ billing.post('/checkout', requireAuth, async (c) => {
         limit: 1,
       });
 
-      if (existingCustomers.data.length > 0) {
-        const existingId = existingCustomers.data[0].id;
+      const existingCustomer = existingCustomers.data[0];
+      if (existingCustomer) {
+        const existingId = existingCustomer.id;
         console.log(`♻️ Found existing Stripe customer ${existingId} for ${dbUser.email}`);
         
         await prisma.user.update({

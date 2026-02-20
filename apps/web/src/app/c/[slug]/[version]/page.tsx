@@ -116,7 +116,7 @@ export default async function ReleaseDetailPage({ params }: { params: { slug: st
         )}
 
         {/* Notes Content */}
-        {data.notes.length > 0 ? (
+        {data.notes.length > 0 && data.notes[0] ? (
           <div className="prose prose-gray max-w-none">
             <div 
               className="text-gray-700 whitespace-pre-wrap"

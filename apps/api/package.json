@@ -8,6 +8,7 @@
     "build": "prisma generate && npx tsc",
     "start": "node dist/index.js",
     "typecheck": "npx tsc --noEmit",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
@@ -24,8 +25,12 @@
     "zod": "^3.22.0"
   },
   "devDependencies": {
+    "@jest/globals": "^30.2.0",
+    "@types/jest": "^30.0.0",
     "@types/node": "^20.11.0",
+    "jest": "^30.2.0",
     "prisma": "^5.10.0",
+    "ts-jest": "^29.4.6",
     "tsx": "^4.7.0",
     "typescript": "^5.9.3"
   }

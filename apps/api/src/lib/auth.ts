@@ -77,12 +77,18 @@ export async function decrypt(encrypted: string): Promise<string> {
     throw new Error('Invalid encrypted format');
   }
 
-  const [, ivStr, ciphertextStr] = parts;
-  const iv = base64UrlDecode(ivStr) as Uint8Array<ArrayBuffer>;
-  const ciphertext = base64UrlDecode(ciphertextStr) as Uint8Array<ArrayBuffer>;
+  const ivStr = parts[1];
+  const ciphertextStr = parts[2];
+
+  if (!ivStr || !ciphertextStr) {
+    throw new Error('Invalid encrypted format');
+  }
+
+  const iv = base64UrlDecode(ivStr);
+  const ciphertext = base64UrlDecode(ciphertextStr);
 
   const key = await deriveAesKey();
-  const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext);
+  const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv as any }, key, ciphertext as any);
 
   return new TextDecoder().decode(decrypted);
 }
@@ -127,7 +133,7 @@ export async function requireAuth(c: Context, next: Next) {
   // Attach user to context
   c.set('user', user);
 
-  await next();
+  return next();
 }
 
 /**
