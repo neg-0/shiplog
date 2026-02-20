@@ -1,9 +1,22 @@
 import { Hono } from 'hono';
 import { prisma } from '../lib/db.js';
 
+/**
+ * @module changelog
+ * @description Public routes for viewing repository changelogs.
+ */
 export const changelog = new Hono();
 
-// Public changelog for a repo
+/**
+ * GET /:org/:repo
+ * @description Get the public changelog for a specific repository.
+ * @param {string} org - The organization/owner name.
+ * @param {string} repo - The repository name.
+ * @param {string} [audience=customer] - The target audience filter (customer, developer, stakeholder).
+ * @param {string} [limit=20] - Number of releases to fetch.
+ * @returns {object} Repository details and list of releases with notes.
+ * @throws 404 if repository is not found or not active.
+ */
 changelog.get('/:org/:repo', async (c) => {
   const org = c.req.param('org');
   const repo = c.req.param('repo');
@@ -70,7 +83,11 @@ changelog.get('/:org/:repo', async (c) => {
   });
 });
 
-// Get just the list of repos with public changelogs
+/**
+ * GET /
+ * @description List all repositories with active public changelogs.
+ * @returns {object} Array of repositories with changelogs.
+ */
 changelog.get('/', async (c) => {
   const repos = await prisma.repo.findMany({
     where: {

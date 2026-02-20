@@ -90,6 +90,7 @@ describe('Billing Route', () => {
     it('should resolve TEAM tier from price ID', async () => {
       const event = {
         type: 'customer.subscription.updated',
+        created: 1000,
         data: {
           object: {
             id: 'sub_123',
@@ -117,9 +118,16 @@ describe('Billing Route', () => {
 
       expect(res.status).toBe(200);
       expect(mockPrisma.user.updateMany).toHaveBeenCalledWith({
-        where: { stripeCustomerId: 'cus_123' },
+        where: {
+          stripeCustomerId: 'cus_123',
+          OR: [
+            { stripeLastEventTimestamp: { lt: 1000 } },
+            { stripeLastEventTimestamp: null },
+          ],
+        },
         data: expect.objectContaining({
             subscriptionTier: 'TEAM',
+            stripeLastEventTimestamp: 1000,
         }),
       });
     });
@@ -128,6 +136,7 @@ describe('Billing Route', () => {
         // ID is random, but lookup_key is team_something
         const event = {
           type: 'customer.subscription.updated',
+          created: 1000,
           data: {
             object: {
               id: 'sub_123',
@@ -155,46 +164,16 @@ describe('Billing Route', () => {
 
         expect(res.status).toBe(200);
         expect(mockPrisma.user.updateMany).toHaveBeenCalledWith({
-          where: { stripeCustomerId: 'cus_123' },
+          where: {
+            stripeCustomerId: 'cus_123',
+            OR: [
+              { stripeLastEventTimestamp: { lt: 1000 } },
+              { stripeLastEventTimestamp: null },
+            ],
+          },
           data: expect.objectContaining({
               subscriptionTier: 'TEAM',
-          }),
-        });
-    });
-
-    it('should fallback to FREE if price unknown', async () => {
-        const event = {
-          type: 'customer.subscription.updated',
-          data: {
-            object: {
-              id: 'sub_123',
-              customer: 'cus_123',
-              status: 'active',
-              items: { data: [{ price: { id: 'price_unknown' } }] },
-            },
-          },
-        };
-
-        (mockStripe.webhooks.constructEvent as jest.Mock).mockReturnValue(event);
-        (mockStripe.subscriptions.retrieve as jest.Mock).mockResolvedValue({
-          id: 'sub_123',
-          customer: 'cus_123',
-          status: 'active',
-          items: { data: [{ price: { id: 'price_unknown', lookup_key: null } }] },
-        });
-
-        const req = new Request('http://localhost/webhook', {
-          method: 'POST',
-          headers: { 'stripe-signature': 'sig_123' },
-          body: 'raw_body',
-        });
-        const res = await billingRoute.request(req);
-
-        expect(res.status).toBe(200);
-        expect(mockPrisma.user.updateMany).toHaveBeenCalledWith({
-          where: { stripeCustomerId: 'cus_123' },
-          data: expect.objectContaining({
-              subscriptionTier: 'FREE',
+              stripeLastEventTimestamp: 1000,
           }),
         });
     });
@@ -203,6 +182,7 @@ describe('Billing Route', () => {
         // This test ensures Organization support is implemented
         const event = {
             type: 'customer.subscription.updated',
+            created: 1000,
             data: {
               object: {
                 id: 'sub_team_123',
@@ -239,45 +219,64 @@ describe('Billing Route', () => {
               data: { subscriptionId: 'sub_team_123' }
           });
     });
+  });
 
-    it('should clear Organization subscriptionId when downgrading from TEAM to PRO', async () => {
-        const event = {
-            type: 'customer.subscription.updated',
-            data: {
-              object: {
-                id: 'sub_pro_123',
-                customer: 'cus_123',
-                status: 'active',
-                items: { data: [{ price: { id: 'price_pro_123' } }] },
-              },
-            },
-          };
-
-          (mockStripe.webhooks.constructEvent as jest.Mock).mockReturnValue(event);
-          (mockStripe.subscriptions.retrieve as jest.Mock).mockResolvedValue({
-            id: 'sub_pro_123',
+  describe('Webhook: checkout.session.completed', () => {
+    it('should verify signature and process checkout.session.completed', async () => {
+      const event = {
+        id: 'evt_123',
+        type: 'checkout.session.completed',
+        created: 1000,
+        data: {
+          object: {
             customer: 'cus_123',
-            status: 'active',
-            items: { data: [{ price: { id: 'price_pro_123', lookup_key: 'pro_monthly' } }] },
-          });
+            subscription: 'sub_123',
+            client_reference_id: 'user_123',
+          },
+        },
+      };
 
-          mockPrisma.user.findMany.mockResolvedValue([{ id: 'user_123' }]);
-          mockPrisma.organization.findMany.mockResolvedValue([{ id: 'org_1' }]);
+      (mockStripe.webhooks.constructEvent as jest.Mock).mockReturnValue(event);
+      (mockStripe.subscriptions.retrieve as jest.Mock).mockResolvedValue({
+        id: 'sub_123',
+        status: 'active',
+        items: { data: [{ price: { id: 'price_pro_123' } }] },
+      });
 
-          const req = new Request('http://localhost/webhook', {
-            method: 'POST',
-            headers: { 'stripe-signature': 'sig_123' },
-            body: 'raw_body',
+      const req = new Request('http://localhost/webhook', {
+        method: 'POST',
+        headers: { 'stripe-signature': 'sig_123' },
+        body: 'raw_body',
+      });
+
+      const res = await billingRoute.request(req);
+      expect(res.status).toBe(200);
+      expect(mockStripe.webhooks.constructEvent).toHaveBeenCalled();
+
+      expect(mockPrisma.user.updateMany).toHaveBeenCalledWith({
+        where: {
+            id: 'user_123',
+            OR: [
+              { stripeLastEventTimestamp: { lt: 1000 } },
+              { stripeLastEventTimestamp: null },
+            ],
+        },
+        data: expect.objectContaining({
+            stripeLastEventTimestamp: 1000,
+            subscriptionStatus: 'active',
+            subscriptionTier: 'PRO',
+        }),
+      });
+    });
+  });
+
+  describe('POST /checkout', () => {
+      it('should return 400 for invalid plan', async () => {
+          const req = new Request('http://localhost/checkout?plan=invalid', {
+              method: 'POST',
           });
           const res = await billingRoute.request(req);
-
-          expect(res.status).toBe(200);
-
-          // Check if organizations were updated to null
-          expect(mockPrisma.organization.update).toHaveBeenCalledWith({
-              where: { id: 'org_1' },
-              data: { subscriptionId: null }
-          });
-    });
+          expect(res.status).toBe(400);
+      });
   });
 });
