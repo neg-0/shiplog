@@ -394,7 +394,7 @@ async function sendEmail(
           subject: `[${payload.repoFullName}] ${payload.tagName} - ${audienceLabel}`,
         },
       ],
-      from: { email: 'noreply@negativezeroinc.com', name: 'ShipLog' },
+      from: { email: 'noreply@shiplog.io', name: 'ShipLog' },
       content: [
         {
           type: 'text/html',
