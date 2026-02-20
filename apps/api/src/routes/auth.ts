@@ -15,14 +15,16 @@ const pendingStates = new Map<string, number>();
 const STATE_TTL_MS = 10 * 60 * 1000;
 
 // Clean up expired states periodically
-setInterval(() => {
-  const now = Date.now();
-  for (const [state, createdAt] of pendingStates) {
-    if (now - createdAt > STATE_TTL_MS) {
-      pendingStates.delete(state);
+if (process.env.NODE_ENV !== 'test') {
+  setInterval(() => {
+    const now = Date.now();
+    for (const [state, createdAt] of pendingStates) {
+      if (now - createdAt > STATE_TTL_MS) {
+        pendingStates.delete(state);
+      }
     }
-  }
-}, 60 * 1000);
+  }, 60 * 1000);
+}
 
 // Initiate GitHub OAuth
 auth.get('/github', (c) => {
