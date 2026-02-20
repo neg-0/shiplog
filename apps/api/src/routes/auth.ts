@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { setCookie, getCookie, deleteCookie } from 'hono/cookie';
 import { prisma } from '../lib/db.js';
+import { logger } from '../lib/logger.js';
 import { signToken } from '../lib/jwt.js';
 import { encrypt, requireAuth } from '../lib/auth.js';
 
@@ -43,7 +44,7 @@ auth.get('/github', (c) => {
     state,
   });
 
-  console.log(`🔑 OAuth initiated with state: ${state.slice(0, 8)}...`);
+  logger.info(`🔑 OAuth initiated`, { state: state.slice(0, 8) + '...' });
 
   return c.redirect(`https://github.com/login/oauth/authorize?${params}`);
 });
@@ -60,7 +61,7 @@ auth.get('/github/callback', async (c) => {
   const state = c.req.query('state');
   const storedState = getCookie(c, 'oauth_state');
 
-  console.log(`🔑 OAuth callback with state: ${state?.slice(0, 8)}...`);
+  logger.info(`🔑 OAuth callback`, { state: state?.slice(0, 8) + '...' });
 
   if (!code) {
     return c.json({ error: 'No code provided' }, 400);
@@ -68,6 +69,8 @@ auth.get('/github/callback', async (c) => {
 
   if (!state || !storedState || state !== storedState) {
     console.log(`❌ Invalid state. Received: ${state}, Stored: ${storedState}`);
+  if (!state || !pendingStates.has(state)) {
+    logger.warn(`❌ Invalid state. Known states: ${pendingStates.size}`, { state });
     return c.json({ error: 'Invalid OAuth state' }, 400);
   }
 
@@ -160,7 +163,7 @@ auth.get('/github/callback', async (c) => {
   const redirectUrl = new URL(`${APP_URL}/dashboard`);
   redirectUrl.searchParams.set('token', sessionToken);
 
-  console.log(`✅ OAuth complete for ${ghUser.login}`);
+  logger.info(`✅ OAuth complete for ${ghUser.login}`, { login: ghUser.login });
 
   return c.redirect(redirectUrl.toString());
 });

@@ -8,6 +8,7 @@
 import type { Context, Next } from 'hono';
 import { verifyToken } from './jwt.js';
 import { prisma } from './db.js';
+import { setLoggerContext } from './logger.js';
 
 // Extend Hono context with user
 declare module 'hono' {
@@ -197,6 +198,7 @@ export async function requireAuth(c: Context, next: Next) {
 
   // Attach user to context
   c.set('user', user);
+  setLoggerContext({ userId: user.id });
 
   return next();
 }
@@ -243,6 +245,8 @@ export async function optionalAuth(c: Context, next: Next) {
         if (valid) {
           c.set('user', user);
         }
+        c.set('user', user);
+        setLoggerContext({ userId: user.id });
       }
     }
   }
