@@ -1,6 +1,8 @@
 import { Hono } from 'hono';
+import { z } from 'zod';
 import { prisma } from '../lib/db.js';
 import { requireAuth } from '../lib/auth.js';
+import { validate } from '../lib/validation.js';
 import { apiLimiter } from '../lib/rate-limit.js';
 
 /**
@@ -14,6 +16,12 @@ organizations.use('*', apiLimiter);
 
 const isAdminRole = (role?: string | null) => role === 'OWNER' || role === 'ADMIN';
 
+const createOrgSchema = z.object({
+  name: z.string().min(1),
+  slug: z.string().min(1).regex(/^[a-z0-9-]+$/),
+  githubOrgId: z.number().optional(),
+  githubOrgLogin: z.string().optional(),
+});
 /**
  * POST /
  * @description Create a new organization.
@@ -33,9 +41,10 @@ organizations.post('/', async (c) => {
     githubOrgLogin?: string;
   };
 
-  if (!body.name || !body.slug) {
-    return c.json({ error: 'Name and slug are required' }, 400);
-  }
+// Create organization
+organizations.post('/', validate(createOrgSchema), async (c) => {
+  const user = c.get('user');
+  const body = c.req.valid('json');
 
   const existing = await prisma.organization.findUnique({
     where: { slug: body.slug },
@@ -179,6 +188,16 @@ organizations.get('/:id', async (c) => {
   });
 });
 
+const updateOrgSchema = z.object({
+  name: z.string().optional(),
+  slug: z.string().regex(/^[a-z0-9-]+$/).optional(),
+  githubOrgId: z.number().nullable().optional(),
+  githubOrgLogin: z.string().nullable().optional(),
+  subscriptionId: z.string().nullable().optional(),
+});
+
+// Update organization
+organizations.patch('/:id', validate(updateOrgSchema), async (c) => {
 /**
  * PATCH /:id
  * @description Update an organization's details.
@@ -191,13 +210,7 @@ organizations.get('/:id', async (c) => {
 organizations.patch('/:id', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
-  const body = await c.req.json() as {
-    name?: string;
-    slug?: string;
-    githubOrgId?: number | null;
-    githubOrgLogin?: string | null;
-    subscriptionId?: string | null;
-  };
+  const body = c.req.valid('json');
 
   const org = await prisma.organization.findUnique({
     where: { id },
@@ -215,21 +228,33 @@ organizations.patch('/:id', async (c) => {
     return c.json({ error: 'Not authorized' }, 403);
   }
 
-  const data: Record<string, unknown> = {};
-  if (body.name !== undefined) data.name = body.name;
-  if (body.slug !== undefined) data.slug = body.slug;
-  if (body.githubOrgId !== undefined) data.githubOrgId = body.githubOrgId;
-  if (body.githubOrgLogin !== undefined) data.githubOrgLogin = body.githubOrgLogin;
-  if (body.subscriptionId !== undefined) data.subscriptionId = body.subscriptionId;
+  // Check slug uniqueness if updating
+  if (body.slug && body.slug !== org.slug) {
+    const existing = await prisma.organization.findUnique({
+      where: { slug: body.slug },
+      select: { id: true },
+    });
+    if (existing) {
+      return c.json({ error: 'Organization slug already exists' }, 400);
+    }
+  }
 
   const updated = await prisma.organization.update({
     where: { id },
-    data,
+    data: body,
   });
 
   return c.json(updated);
 });
 
+const inviteSchema = z.object({
+  email: z.string().email(),
+  role: z.enum(['OWNER', 'ADMIN', 'MEMBER']).optional(),
+  expiresAt: z.string().datetime().optional(),
+});
+
+// Invite member by email
+organizations.post('/:id/invite', validate(inviteSchema), async (c) => {
 /**
  * POST /:id/invite
  * @description Invite a user to the organization by email.
@@ -243,15 +268,7 @@ organizations.patch('/:id', async (c) => {
 organizations.post('/:id/invite', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
-  const body = await c.req.json() as {
-    email: string;
-    role?: 'OWNER' | 'ADMIN' | 'MEMBER';
-    expiresAt?: string;
-  };
-
-  if (!body.email) {
-    return c.json({ error: 'Email is required' }, 400);
-  }
+  const body = c.req.valid('json');
 
   const org = await prisma.organization.findUnique({
     where: { id },
