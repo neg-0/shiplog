@@ -44,8 +44,8 @@ const getTierFromPrice = (price?: Stripe.Price | null): SubscriptionTier => {
   console.log(`[Billing] Resolving tier. ID: ${priceId}, Lookup: ${lookupKey}. Expected PRO: ${pricePro}, TEAM: ${priceTeam}`);
 
   // Check by ID (Env Var)
-  if (priceId === pricePro) return 'PRO';
-  if (priceId === priceTeam) return 'TEAM';
+  if (pricePro && priceId === pricePro) return 'PRO';
+  if (priceTeam && priceId === priceTeam) return 'TEAM';
 
   // Check by Lookup Key (Fallback/Robustness)
   if (lookupKey?.startsWith('pro_')) return 'PRO';
@@ -274,7 +274,35 @@ billing.post('/webhook', async (c) => {
     return c.json({ error: 'Invalid signature' }, 400);
   }
 
-  const updateByCustomer = async (customerId: string, data: Record<string, unknown>) => {
+  const syncOrganizations = async (userId: string | undefined, tier: SubscriptionTier, subscriptionId: string) => {
+    if (!userId) return;
+    try {
+      const orgs = await prisma.organization.findMany({
+        where: { ownerId: userId },
+      });
+
+      console.log(`[Billing] Syncing organizations for user ${userId}. Found ${orgs.length} orgs. Tier: ${tier}`);
+
+      for (const org of orgs) {
+        await prisma.organization.update({
+          where: { id: org.id },
+          data: {
+            subscriptionId: tier === 'TEAM' ? subscriptionId : null,
+          },
+        });
+      }
+    } catch (error) {
+      console.error(`[Billing] Failed to sync organizations for user ${userId}:`, error);
+    }
+  };
+
+  const updateByCustomer = async (customerId: string, data: Record<string, unknown>, tier: SubscriptionTier, subscriptionId: string) => {
+    // Find users first to sync organizations
+    const users = await prisma.user.findMany({
+      where: { stripeCustomerId: customerId },
+      select: { id: true },
+    });
+
     await prisma.user.updateMany({
       where: {
         stripeCustomerId: customerId,
@@ -288,6 +316,10 @@ billing.post('/webhook', async (c) => {
         stripeLastEventTimestamp: event.created,
       },
     });
+
+    for (const user of users) {
+      await syncOrganizations(user.id, tier, subscriptionId);
+    }
   };
 
   switch (event.type) {
@@ -328,8 +360,9 @@ billing.post('/webhook', async (c) => {
                 stripeLastEventTimestamp: event.created,
               },
             });
+            await syncOrganizations(userId, tier, subscriptionId);
           } else {
-            await updateByCustomer(customerId, data);
+            await updateByCustomer(customerId, data, tier, subscriptionId);
           }
         } catch (error) {
           console.error('Error processing checkout.session.completed:', error);
@@ -358,7 +391,7 @@ billing.post('/webhook', async (c) => {
           subscriptionStatus: subscription.status,
           subscriptionTier: tier,
           trialEndsAt,
-        });
+        }, tier, subscription.id);
       } catch (error) {
         console.error('Error processing customer.subscription event:', error);
         return c.json({ error: 'Webhook processing failed' }, 500);
