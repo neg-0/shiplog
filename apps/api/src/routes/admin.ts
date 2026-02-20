@@ -1,6 +1,9 @@
 import { Hono } from 'hono';
+import { z } from 'zod';
+import { zValidator } from '@hono/zod-validator';
 import { prisma } from '../lib/db.js';
 import { requireAuth } from '../lib/auth.js';
+import { validate } from '../lib/validation.js';
 
 // Admin emails from environment variable
 const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean);
@@ -8,7 +11,7 @@ const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '').split(',').map(e => e.trim
 // Admin middleware
 const requireAdmin = async (c: any, next: any) => {
   const user = c.get('user');
-  if (!user || !ADMIN_EMAILS.includes(user.email)) {
+  if (!user || !user.email || !ADMIN_EMAILS.includes(user.email)) {
     return c.json({ error: 'Forbidden' }, 403);
   }
   await next();
@@ -53,12 +56,16 @@ admin.get('/metrics', async (c) => {
   });
 });
 
+const listUsersSchema = z.object({
+  page: z.string().optional().transform(v => Math.max(1, parseInt(v || '1'))),
+  limit: z.string().optional().transform(v => Math.min(100, Math.max(1, parseInt(v || '50')))),
+  search: z.string().optional(),
+  tier: z.enum(['FREE', 'PRO', 'TEAM']).optional(),
+});
+
 // List all users
-admin.get('/users', async (c) => {
-  const page = parseInt(c.req.query('page') || '1');
-  const limit = parseInt(c.req.query('limit') || '50');
-  const search = c.req.query('search') || '';
-  const tier = c.req.query('tier') || '';
+admin.get('/users', zValidator('query', listUsersSchema), async (c) => {
+  const { page, limit, search, tier } = c.req.valid('query');
 
   const where: any = {};
   
@@ -70,7 +77,7 @@ admin.get('/users', async (c) => {
     ];
   }
   
-  if (tier && ['FREE', 'PRO', 'TEAM'].includes(tier)) {
+  if (tier) {
     where.subscriptionTier = tier;
   }
 
@@ -96,7 +103,7 @@ admin.get('/users', async (c) => {
   ]);
 
   return c.json({
-    users: users.map(u => ({
+    users: users.map((u: any) => ({
       ...u,
       repoCount: u._count.repos,
       _count: undefined,
@@ -135,18 +142,18 @@ admin.get('/users/:id', async (c) => {
   return c.json(user);
 });
 
+const updateUserSchema = z.object({
+  subscriptionTier: z.enum(['FREE', 'PRO', 'TEAM']).optional(),
+});
+
 // Update user
-admin.patch('/users/:id', async (c) => {
+admin.patch('/users/:id', validate(updateUserSchema), async (c) => {
   const userId = c.req.param('id');
-  const body = await c.req.json();
-  
-  const { subscriptionTier } = body;
+  const body = c.req.valid('json');
   
   const updated = await prisma.user.update({
     where: { id: userId },
-    data: {
-      ...(subscriptionTier && { subscriptionTier }),
-    },
+    data: body,
   });
 
   return c.json(updated);
@@ -156,6 +163,12 @@ admin.patch('/users/:id', async (c) => {
 admin.delete('/users/:id', async (c) => {
   const userId = c.req.param('id');
   
+  // Protect self-deletion?
+  const currentUser = c.get('user');
+  if (userId === currentUser.id) {
+    return c.json({ error: 'Cannot delete your own admin account' }, 400);
+  }
+
   await prisma.user.delete({
     where: { id: userId },
   });
@@ -163,9 +176,13 @@ admin.delete('/users/:id', async (c) => {
   return c.json({ success: true });
 });
 
+const activitySchema = z.object({
+  limit: z.string().optional().transform(v => Math.min(100, Math.max(1, parseInt(v || '100')))),
+});
+
 // Get recent activity
-admin.get('/activity', async (c) => {
-  const limit = parseInt(c.req.query('limit') || '100');
+admin.get('/activity', zValidator('query', activitySchema), async (c) => {
+  const { limit } = c.req.valid('query');
   
   // Get recent users
   const recentUsers = await prisma.user.findMany({
@@ -200,13 +217,13 @@ admin.get('/activity', async (c) => {
 
   // Combine and sort
   const events = [
-    ...recentUsers.map(u => ({
+    ...recentUsers.map((u: any) => ({
       type: 'signup' as const,
       id: u.id,
       description: `${u.login} signed up (${u.subscriptionTier})`,
       createdAt: u.createdAt,
     })),
-    ...recentReleases.map(r => ({
+    ...recentReleases.map((r: any) => ({
       type: 'release' as const,
       id: r.id,
       description: `${r.repo.fullName} released ${r.tagName}`,

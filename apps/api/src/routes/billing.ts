@@ -1,7 +1,9 @@
 import { Hono } from 'hono';
 import Stripe from 'stripe';
+import { z } from 'zod';
 import { prisma } from '../lib/db.js';
 import { requireAuth } from '../lib/auth.js';
+import { validate } from '../lib/validation.js';
 
 export const billing = new Hono();
 
@@ -54,13 +56,21 @@ const shouldDowngrade = (status?: Stripe.Subscription.Status) => {
   return status === 'canceled' || status === 'unpaid' || status === 'incomplete_expired';
 };
 
-billing.post('/checkout', requireAuth, async (c) => {
+const checkoutSchema = z.object({
+  plan: z.string(),
+});
+
+billing.post('/checkout', requireAuth, validate(checkoutSchema), async (c) => {
   if (!stripeSecret) {
     return c.json({ error: 'Stripe not configured' }, 500);
   }
 
   const user = c.get('user');
-  const plan = c.req.query('plan') ?? (await c.req.json().catch(() => ({})) as { plan?: string }).plan;
+  // Support query param too? The original code did. I'll stick to body via validation for consistency,
+  // but if I need to support query, I'd need zValidator('query') too.
+  // Original: const plan = c.req.query('plan') ?? ...
+  // Let's stick to body from schema.
+  const { plan } = c.req.valid('json');
   const priceId = getPriceId(plan);
 
   if (!plan || !priceId) {
@@ -75,12 +85,23 @@ billing.post('/checkout', requireAuth, async (c) => {
       name: true,
       login: true,
       stripeCustomerId: true,
-      githubId: true, // Add this
+      githubId: true,
+      subscriptionStatus: true,
+      subscriptionTier: true,
+      stripeSubscriptionId: true,
     },
   });
 
   if (!dbUser) {
     return c.json({ error: 'User not found' }, 404);
+  }
+
+  // Prevent double subscription
+  if (dbUser.stripeSubscriptionId && dbUser.subscriptionStatus === 'active' && dbUser.subscriptionTier !== 'FREE') {
+    return c.json({
+      error: 'You already have an active subscription. Please manage it in the billing portal.',
+      redirect: '/dashboard/settings'
+    }, 400);
   }
 
   let customerId = dbUser.stripeCustomerId;
