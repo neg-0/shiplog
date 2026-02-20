@@ -1,10 +1,12 @@
 import { Hono } from 'hono';
+import { zValidator } from '@hono/zod-validator';
 import Stripe from 'stripe';
 import { z } from 'zod';
 import { prisma } from '../lib/db.js';
 import { logger } from '../lib/logger.js';
 import { requireAuth } from '../lib/auth.js';
 import { validate } from '../lib/validation.js';
+import { checkoutSchema } from '../lib/schemas.js';
 import { apiLimiter } from '../lib/rate-limit.js';
 
 /**
@@ -67,6 +69,14 @@ const checkoutSchema = z.object({
 });
 
 billing.post('/checkout', requireAuth, validate(checkoutSchema), async (c) => {
+billing.post(
+  '/checkout',
+  requireAuth,
+  zValidator('json', checkoutSchema),
+  async (c) => {
+    if (!stripeSecret) {
+      return c.json({ error: 'Stripe not configured' }, 500);
+    }
 /**
  * POST /checkout
  * @description Create a Stripe Checkout Session for a subscription.
@@ -87,12 +97,15 @@ billing.post('/checkout', requireAuth, apiLimiter, async (c) => {
   // Let's stick to body from schema.
   const { plan } = c.req.valid('json');
   const priceId = getPriceId(plan);
+    const user = c.get('user');
+    const { plan } = c.req.valid('json');
+    const priceId = getPriceId(plan);
 
-  if (!plan || !priceId) {
-    return c.json({ error: 'Invalid plan' }, 400);
-  }
+    if (!priceId) {
+      return c.json({ error: 'Invalid plan' }, 400);
+    }
 
-  const dbUser = await prisma.user.findUnique({
+    const dbUser = await prisma.user.findUnique({
     where: { id: user.id },
     select: {
       id: true,

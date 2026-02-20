@@ -4,6 +4,7 @@ import { zValidator } from '@hono/zod-validator';
 import { prisma } from '../lib/db.js';
 import { requireAuth } from '../lib/auth.js';
 import { validate } from '../lib/validation.js';
+import { updateUserAdminSchema } from '../lib/schemas.js';
 
 // Admin emails from environment variable
 const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean);
@@ -189,6 +190,12 @@ const updateUserSchema = z.object({
 
 // Update user
 admin.patch('/users/:id', validate(updateUserSchema), async (c) => {
+admin.patch(
+  '/users/:id',
+  zValidator('json', updateUserAdminSchema),
+  async (c) => {
+    const userId = c.req.param('id');
+    const { subscriptionTier } = c.req.valid('json');
 /**
  * PATCH /users/:id
  * @description Update a user's information.
@@ -205,8 +212,16 @@ admin.patch('/users/:id', async (c) => {
     data: body,
   });
 
-  return c.json(updated);
-});
+    const updated = await prisma.user.update({
+      where: { id: userId },
+      data: {
+        ...(subscriptionTier && { subscriptionTier }),
+      },
+    });
+
+    return c.json(updated);
+  }
+);
 
 /**
  * DELETE /users/:id

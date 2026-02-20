@@ -1,13 +1,20 @@
-import type { JestConfigWithTsJest } from 'ts-jest';
+import type { Config } from 'jest';
 
-const config: JestConfigWithTsJest = {
-  preset: 'ts-jest/presets/default-esm',
+const config: Config = {
+  preset: 'ts-jest',
   testEnvironment: 'node',
-  extensionsToTreatAsEsm: ['.ts'],
+  transform: {
+    '^.+\\.tsx?$': ['ts-jest', {
+      useESM: true,
+    }],
+  },
   moduleNameMapper: {
     '^(\\.{1,2}/.*)\\.js$': '$1',
   },
-  transform: {
+  extensionsToTreatAsEsm: ['.ts'],
+import type { JestConfigWithTsJest } from 'ts-jest';
+const config: JestConfigWithTsJest = {
+  preset: 'ts-jest/presets/default-esm',
     '^.+\\.tsx?$': [
       'ts-jest',
       {
@@ -15,7 +22,6 @@ const config: JestConfigWithTsJest = {
         isolatedModules: true,
       },
     ],
-  },
   setupFilesAfterEnv: ['<rootDir>/src/test/setup.ts'],
   testMatch: ['**/__tests__/**/*.test.ts', '**/*.test.ts'],
 };

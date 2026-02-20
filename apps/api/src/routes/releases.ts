@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
+import { zValidator } from '@hono/zod-validator';
 import { prisma } from '../lib/db.js';
 import { logger } from '../lib/logger.js';
 import { requireAuth, decrypt } from '../lib/auth.js';
@@ -9,6 +10,11 @@ import { generateReleaseNotes } from '../services/generator.js';
 import { sanitizeHtml } from '../lib/sanitize.js';
 import { validate } from '../lib/validation.js';
 import { rateLimit } from '../middleware/rate-limit.js';
+import {
+  regenerateNotesSchema,
+  publishReleaseSchema,
+  updateNotesSchema,
+} from '../lib/schemas.js';
 
 /**
  * @module releases
@@ -104,6 +110,14 @@ const regenerateLimitMiddleware = rateLimit({
 
 // Regenerate notes for a release
 releases.post('/:id/regenerate', regenerateLimitMiddleware, validate(regenerateSchema), async (c) => {
+releases.post(
+  '/:id/regenerate',
+  zValidator('json', regenerateNotesSchema),
+  async (c) => {
+    const user = c.get('user');
+    const id = c.req.param('id');
+    const body = c.req.valid('json');
+    const release = await prisma.release.findFirst({
 /**
  * POST /:id/regenerate
  * @description Trigger regeneration of release notes using AI.
@@ -239,6 +253,14 @@ const publishSchema = z.object({
 
 // Manually publish/distribute a release
 releases.post('/:id/publish', validate(publishSchema), async (c) => {
+releases.post(
+  '/:id/publish',
+  zValidator('json', publishReleaseSchema),
+  async (c) => {
+    const user = c.get('user');
+    const id = c.req.param('id');
+    const body = c.req.valid('json');
+    const release = await prisma.release.findFirst({
 /**
  * POST /:id/publish
  * @description Mark release as published and trigger distribution to channels.
@@ -306,6 +328,14 @@ const notesSchema = z.object({
 
 // Update generated notes (manual edit)
 releases.patch('/:id/notes', validate(notesSchema), async (c) => {
+releases.patch(
+  '/:id/notes',
+  zValidator('json', updateNotesSchema),
+  async (c) => {
+    const user = c.get('user');
+    const id = c.req.param('id');
+    const body = c.req.valid('json');
+    const release = await prisma.release.findFirst({
 /**
  * PATCH /:id/notes
  * @description Manually edit the generated release notes.
