@@ -2,11 +2,11 @@ import { Hono } from 'hono';
 import { prisma } from '../lib/db.js';
 import { requireAuth } from '../lib/auth.js';
 
-// Admin emails from environment variable
-const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean);
-
 // Admin middleware
 const requireAdmin = async (c: any, next: any) => {
+  // Admin emails from environment variable
+  const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean);
+
   const user = c.get('user');
   if (!user || !ADMIN_EMAILS.includes(user.email)) {
     return c.json({ error: 'Forbidden' }, 403);
@@ -115,7 +115,7 @@ admin.get('/users', async (c) => {
   ]);
 
   return c.json({
-    users: users.map(u => ({
+    users: users.map((u: any) => ({
       ...u,
       repoCount: u._count.repos,
       _count: undefined,
@@ -241,13 +241,13 @@ admin.get('/activity', async (c) => {
 
   // Combine and sort
   const events = [
-    ...recentUsers.map(u => ({
+    ...recentUsers.map((u: any) => ({
       type: 'signup' as const,
       id: u.id,
       description: `${u.login} signed up (${u.subscriptionTier})`,
       createdAt: u.createdAt,
     })),
-    ...recentReleases.map(r => ({
+    ...recentReleases.map((r: any) => ({
       type: 'release' as const,
       id: r.id,
       description: `${r.repo.fullName} released ${r.tagName}`,

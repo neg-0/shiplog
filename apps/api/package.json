@@ -7,7 +7,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "prisma generate && npx tsc",
     "start": "node dist/index.js",
-    "test": "NODE_OPTIONS=\"$NODE_OPTIONS --experimental-vm-modules\" jest",
+    "test": "NODE_OPTIONS='--experimental-vm-modules' jest",
     "typecheck": "npx tsc --noEmit",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
@@ -32,6 +32,7 @@
     "jest-mock-extended": "^4.0.0",
     "prisma": "^5.10.0",
     "ts-jest": "^29.4.6",
+    "ts-node": "^10.9.2",
     "tsx": "^4.7.0",
     "typescript": "^5.9.3"
   }
