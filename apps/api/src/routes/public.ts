@@ -1,5 +1,9 @@
 import { Hono } from 'hono';
+import { z } from 'zod';
+import { zValidator } from '@hono/zod-validator';
 import { prisma } from '../lib/db.js';
+import { rateLimit } from '../middleware/rate-limit.js';
+import { sanitizeHtml } from '../lib/sanitize.js';
 import { logger } from '../lib/logger.js';
 
 /**
@@ -8,6 +12,10 @@ import { logger } from '../lib/logger.js';
  */
 export const publicChangelog = new Hono();
 
+const publicLimit = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  limit: 100,
+});
 /**
  * POST /feedback
  * @description Submit feedback for a specific repository.
@@ -20,11 +28,31 @@ export const publicChangelog = new Hono();
 publicChangelog.post('/feedback', async (c) => {
   const { repoId, feedback, email, source } = await c.req.json();
 
-  if (!repoId || !feedback) {
-    return c.json({ error: 'Missing required fields' }, 400);
-  }
+const feedbackLimit = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  limit: 5,
+  message: 'Too many feedback submissions'
+});
+
+// Apply general rate limit to all public routes
+publicChangelog.use('*', publicLimit);
+
+const feedbackSchema = z.object({
+  repoId: z.string().min(1),
+  feedback: z.string().min(1).max(2000), // Limit length
+  email: z.string().email().optional().or(z.literal('')),
+  source: z.string().optional(),
+});
+
+// Submit feedback
+publicChangelog.post('/feedback', feedbackLimit, zValidator('json', feedbackSchema), async (c) => {
+  const { repoId, feedback, email, source } = c.req.valid('json');
+
+  // Sanitize feedback content
+  const safeFeedback = sanitizeHtml(feedback);
 
   // Log feedback
+  console.log(`[Feedback] Repo: ${repoId}, Content: ${safeFeedback}, Email: ${email}`);
   logger.info(`Feedback received`, { repoId, feedback, email });
 
   // Send to Discord if configured
@@ -34,7 +62,7 @@ publicChangelog.post('/feedback', async (c) => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          content: `**New Feedback** 📝\n**Repo ID:** \`${repoId}\`\n**Message:** ${feedback}\n**Contact:** ${email || 'Anonymous'}\n**Source:** ${source || 'widget'}`,
+          content: `**New Feedback** 📝\n**Repo ID:** \`${repoId}\`\n**Message:** ${safeFeedback}\n**Contact:** ${email || 'Anonymous'}\n**Source:** ${source || 'widget'}`,
         }),
       });
     } catch (err) {
@@ -117,7 +145,7 @@ publicChangelog.get('/:slug', async (c) => {
     logoUrl: repo.publicLogoUrl,
     accentColor: repo.publicAccentColor,
     showPoweredBy: !canHideBranding || !repo.hidePoweredBy,
-    releases: repo.releases.map((r) => ({
+    releases: repo.releases.map((r: any) => ({
       id: r.id,
       version: r.tagName,
       name: r.name,
@@ -131,6 +159,13 @@ publicChangelog.get('/:slug', async (c) => {
   });
 });
 
+const listReleasesSchema = z.object({
+  page: z.string().optional().transform(v => Math.max(1, parseInt(v || '1'))),
+  limit: z.string().optional().transform(v => Math.min(50, Math.max(1, parseInt(v || '20')))),
+});
+
+// Get releases list (paginated)
+publicChangelog.get('/:slug/releases', zValidator('query', listReleasesSchema), async (c) => {
 /**
  * GET /:slug/releases
  * @description Get paginated releases for a repository.
@@ -141,8 +176,7 @@ publicChangelog.get('/:slug', async (c) => {
  */
 publicChangelog.get('/:slug/releases', async (c) => {
   const slug = c.req.param('slug');
-  const page = parseInt(c.req.query('page') || '1');
-  const limit = parseInt(c.req.query('limit') || '20');
+  const { page, limit } = c.req.valid('query');
 
   const repo = await prisma.repo.findFirst({
     where: {
@@ -173,7 +207,7 @@ publicChangelog.get('/:slug/releases', async (c) => {
   ]);
 
   return c.json({
-    releases: releases.map((r) => ({
+    releases: releases.map((r: any) => ({
       id: r.id,
       version: r.tagName,
       name: r.name,

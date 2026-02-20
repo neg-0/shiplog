@@ -18,16 +18,16 @@ import { DashboardLayout } from '@/components/DashboardLayout';
 ```
 
 Pages to update:
-- [ ] `dashboard/page.tsx`
-- [ ] `dashboard/activity/page.tsx`
-- [ ] `dashboard/settings/page.tsx`
-- [ ] `dashboard/organizations/page.tsx`
-- [ ] `dashboard/organizations/[id]/page.tsx`
-- [ ] `dashboard/repos/[id]/page.tsx`
-- [ ] `dashboard/repos/connect/page.tsx`
-- [ ] `dashboard/releases/[id]/page.tsx`
+- [x] `dashboard/page.tsx`
+- [x] `dashboard/activity/page.tsx`
+- [x] `dashboard/settings/page.tsx`
+- [x] `dashboard/organizations/page.tsx`
+- [x] `dashboard/organizations/[id]/page.tsx`
+- [x] `dashboard/repos/[id]/page.tsx`
+- [x] `dashboard/repos/connect/page.tsx`
+- [x] `dashboard/releases/[id]/page.tsx`
 
-### 2. Disable "Generate API Key" button (settings/page.tsx)
+### 2. Disable "Generate API Key" button (settings/page.tsx) [Done]
 ```tsx
 <button 
   disabled
@@ -38,7 +38,7 @@ Pages to update:
 <p className="text-sm text-navy-500 mt-2">Coming soon</p>
 ```
 
-### 3. Add changelog link on repo page (repos/[id]/page.tsx)
+### 3. Add changelog link on repo page (repos/[id]/page.tsx) [Done]
 Next to "View on GitHub" button, add:
 ```tsx
 <Link 
@@ -50,7 +50,7 @@ Next to "View on GitHub" button, add:
 </Link>
 ```
 
-### 4. Fix duplicate plus in "Add Custom Audience" (repos/[id]/page.tsx)
+### 4. Fix duplicate plus in "Add Custom Audience" (repos/[id]/page.tsx) [Done]
 Change from:
 ```tsx
 {isPro ? <Plus className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
@@ -62,7 +62,7 @@ To:
 Add Custom Audience
 ```
 
-### 5. Replace confirm() with ConfirmDialog (repos/[id]/page.tsx)
+### 5. Replace confirm() with ConfirmDialog (repos/[id]/page.tsx) [Done]
 ```tsx
 import { ConfirmDialog } from '@/components/Dialog';
 
@@ -81,7 +81,7 @@ const [showDisconnectDialog, setShowDisconnectDialog] = useState(false);
 />
 ```
 
-### 6. Replace alert() with AlertDialog (settings/page.tsx)
+### 6. Replace alert() with AlertDialog (settings/page.tsx) [Done]
 ```tsx
 import { AlertDialog } from '@/components/Dialog';
 
@@ -93,7 +93,7 @@ const [alertDialog, setAlertDialog] = useState<{open: boolean; title: string; me
 setAlertDialog({open: true, title: 'Success', message: 'Profile updated successfully', variant: 'success'});
 ```
 
-### 7. Show trial expiration date (settings/page.tsx)
+### 7. Show trial expiration date (settings/page.tsx) [Done]
 ```tsx
 {user.subscriptionStatus === 'trialing' && user.trialEndsAt && (
   <span>Trial until {new Date(user.trialEndsAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
