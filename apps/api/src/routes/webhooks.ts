@@ -6,8 +6,7 @@ import { fetchReleaseData } from '../services/github.js';
 import { generateReleaseNotes } from '../services/generator.js';
 import { decrypt } from '../lib/auth.js';
 import { distributeReleaseWithResults, type DistributionTarget } from '../services/distributor.js';
-import { logError, logInfo } from '../lib/logger.js';
-import { ReleaseStatus } from '@prisma/client';
+import { metrics } from '../lib/metrics.js';
 
 /**
  * @module webhooks
@@ -72,7 +71,6 @@ webhooks.post('/github', async (c) => {
     return c.json({ error: 'Invalid JSON' }, 400);
   }
 
-  logInfo(`📥 Received GitHub webhook: ${event}`);
   logger.info(`📥 Received GitHub webhook: ${event}`, { event });
 
   // Handle release events
@@ -81,7 +79,6 @@ webhooks.post('/github', async (c) => {
     const repo = payload.repository!;
     setLoggerContext({ repo: repo.full_name });
 
-    logInfo(`🚀 New release: ${repo.full_name} @ ${release.tag_name}`);
     logger.info(`🚀 New release: ${repo.full_name} @ ${release.tag_name}`, {
       repo: repo.full_name,
       tagName: release.tag_name
@@ -106,20 +103,17 @@ webhooks.post('/github', async (c) => {
       });
 
       if (!connectedRepo) {
-        logInfo(`⚠️ No connected repo found for ${repo.full_name}`);
         logger.warn(`⚠️ No connected repo found for ${repo.full_name}`, { repo: repo.full_name });
         return c.json({ status: 'ignored', reason: 'repo_not_connected' });
       }
 
       // Verify signature using the repo's webhook secret
       if (!connectedRepo.webhookSecret) {
-        logError(`⚠️ No webhook secret for repo ${repo.full_name}`);
         logger.error(`⚠️ No webhook secret for repo ${repo.full_name}`, { repo: repo.full_name });
         return c.json({ error: 'Webhook secret not configured' }, 500);
       }
 
       if (!verifyGitHubSignature(body, signature, connectedRepo.webhookSecret)) {
-        logError(`❌ Invalid signature for ${repo.full_name}`);
         logger.error(`❌ Invalid signature for ${repo.full_name}`, { repo: repo.full_name });
         return c.json({ error: 'Invalid signature' }, 401);
       }
@@ -138,7 +132,6 @@ webhooks.post('/github', async (c) => {
       const accessToken = await decrypt(connectedRepo.user.accessToken);
 
       // Fetch detailed release data
-      logInfo(`📊 Fetching release data for ${repo.full_name}...`);
       logger.info(`📊 Fetching release data for ${repo.full_name}...`, { repo: repo.full_name });
       const releaseData = await fetchReleaseData(
         connectedRepo.owner, 
@@ -147,8 +140,9 @@ webhooks.post('/github', async (c) => {
         accessToken
       );
 
-      // Create the release record early to track status
       // Generate AI release notes
+      console.log(`🤖 Generating release notes...`);
+      const start = Date.now();
       logger.info(`🤖 Generating release notes...`);
       const notes = await generateReleaseNotes({
         tagName: releaseData.release.tagName,
@@ -165,6 +159,9 @@ webhooks.post('/github', async (c) => {
           customerTone: connectedRepo.config?.customerTone ?? 'friendly',
         },
       });
+      const duration = Date.now() - start;
+      metrics.generationTimeTotal += duration;
+      metrics.generationCount++;
 
       logger.info(`✅ Generated notes (${notes.tokensUsed} tokens used)`, { tokensUsed: notes.tokensUsed });
 
@@ -180,48 +177,10 @@ webhooks.post('/github', async (c) => {
           isDraft: releaseData.release.isDraft,
           isPrerelease: releaseData.release.isPrerelease,
           publishedAt: releaseData.release.publishedAt,
-          status: 'PROCESSING',
+          status: 'READY',
           processedAt: new Date(),
         },
       });
-
-      logInfo(`💾 Created release record: ${savedRelease.id}`);
-
-      // Generate AI release notes
-      logInfo(`🤖 Generating release notes...`);
-
-      let notes;
-      try {
-        notes = await generateReleaseNotes({
-          tagName: releaseData.release.tagName,
-          previousTag: releaseData.previousTag ?? undefined,
-          releaseBody: releaseData.release.body ?? undefined,
-          commits: releaseData.commits,
-          pullRequests: releaseData.pullRequests.map(pr => ({
-            ...pr,
-            body: pr.body ?? undefined,
-          })),
-          repoConfig: {
-            productName: connectedRepo.config?.productName ?? connectedRepo.name,
-            companyName: connectedRepo.config?.companyName ?? connectedRepo.owner,
-            customerTone: connectedRepo.config?.customerTone ?? 'friendly',
-          },
-        });
-      } catch (genError) {
-        logError('Failed to generate release notes', { releaseId: savedRelease.id }, genError);
-
-        await prisma.release.update({
-          where: { id: savedRelease.id },
-          data: {
-            status: 'FAILED',
-            error: genError instanceof Error ? genError.message : 'Generation failed'
-          }
-        });
-
-        throw genError;
-      }
-
-      logInfo(`✅ Generated notes (${notes.tokensUsed} tokens used)`);
 
       // Create the generated notes
       await prisma.generatedNotes.create({
@@ -235,11 +194,6 @@ webhooks.post('/github', async (c) => {
         },
       });
 
-      // Update status to READY before distribution
-      await prisma.release.update({
-        where: { id: savedRelease.id },
-        data: { status: 'READY' }
-      });
       logger.info(`💾 Saved release: ${savedRelease.id}`, { releaseId: savedRelease.id });
 
       const distributionTargets: Array<DistributionTarget & {
@@ -286,7 +240,6 @@ webhooks.post('/github', async (c) => {
         });
       });
 
-      logInfo(`📤 Distributing release ${savedRelease.id} to ${distributionTargets.length} targets`);
       logger.info(`📤 Distributing release ${savedRelease.id} to ${distributionTargets.length} targets`, {
         releaseId: savedRelease.id,
         targetCount: distributionTargets.length
@@ -320,40 +273,26 @@ webhooks.post('/github', async (c) => {
         })),
       });
 
-      const failedCount = distributionResults.filter(r => !r.success).length;
-      const totalCount = distributionResults.length;
-
-      let finalStatus: ReleaseStatus = 'PUBLISHED';
-      let errorMsg = null;
-
-      if (failedCount === totalCount && totalCount > 0) {
-        finalStatus = 'FAILED';
-        errorMsg = 'All distributions failed';
-      } else if (failedCount > 0) {
-        finalStatus = 'PARTIAL_SUCCESS';
-        errorMsg = `${failedCount}/${totalCount} distributions failed`;
-      }
-
       await prisma.release.update({
         where: { id: savedRelease.id },
-        data: {
-          status: finalStatus,
-          error: errorMsg
-        },
+        data: { status: 'PUBLISHED' },
       });
 
+      metrics.releasesProcessed++;
+      metrics.distributionsSent += distributionResults.length;
+
       return c.json({
-        status: finalStatus === 'FAILED' ? 'error' : finalStatus,
+        status: 'processed',
         release: release.tag_name,
         repo: repo.full_name,
         releaseId: savedRelease.id,
         tokensUsed: notes.tokensUsed,
-        distributedTo: totalCount - failedCount,
-        failedDistributions: failedCount
+        distributedTo: distributionResults.length,
       });
 
     } catch (error) {
-      logError('❌ Error processing release:', {}, error);
+      console.error('❌ Error processing release:', error);
+      metrics.errorCounts++;
       logger.error('❌ Error processing release', { error });
       return c.json({ 
         status: 'error', 

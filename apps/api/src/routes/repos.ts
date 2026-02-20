@@ -1,10 +1,18 @@
 import { Hono } from 'hono';
+import { zValidator } from '@hono/zod-validator';
 import { prisma } from '../lib/db.js';
 import { logger } from '../lib/logger.js';
 import { requireAuth, decrypt } from '../lib/auth.js';
 import { apiLimiter } from '../lib/rate-limit.js';
 import { listUserRepos, createWebhook, deleteWebhook } from '../services/github.js';
 import { importRepoHistory } from '../services/importer.js';
+import {
+  connectRepoSchema,
+  updateRepoConfigSchema,
+  updateRepoSettingsSchema,
+  createChannelSchema,
+  updateChannelSchema,
+} from '../lib/schemas.js';
 
 /**
  * @module repos
@@ -167,6 +175,13 @@ repos.get('/github/available', async (c) => {
   });
 });
 
+// Connect a new repo (create webhook)
+repos.post(
+  '/connect',
+  zValidator('json', connectRepoSchema),
+  async (c) => {
+    const user = c.get('user');
+    const body = c.req.valid('json');
 /**
  * POST /connect
  * @description Connect a GitHub repository. Creates a webhook on GitHub and starts initial import.
@@ -189,7 +204,7 @@ repos.post('/connect', async (c) => {
     description?: string;
   };
 
-  // Get user's access token
+    // Get user's access token
   const dbUser = await prisma.user.findUnique({
     where: { id: user.id },
     select: { accessToken: true, subscriptionTier: true },
@@ -325,6 +340,15 @@ repos.post('/connect', async (c) => {
   }
 });
 
+// Update repo config
+repos.patch(
+  '/:id/config',
+  zValidator('json', updateRepoConfigSchema),
+  async (c) => {
+    try {
+      const user = c.get('user');
+      const id = c.req.param('id');
+      const body = c.req.valid('json');
 /**
  * PATCH /:id/config
  * @description Update repository configuration (AI generation settings).
@@ -349,38 +373,54 @@ repos.patch('/:id/config', async (c) => {
       productName?: string;
     };
 
-    // Verify ownership
-    const repo = await prisma.repo.findFirst({
-      where: { id, userId: user.id },
-      select: { id: true },
-    });
+      // Verify ownership
+      const repo = await prisma.repo.findFirst({
+        where: { id, userId: user.id },
+        select: { id: true },
+      });
 
-    if (!repo) {
-      return c.json({ error: 'Repository not found' }, 404);
-    }
+      if (!repo) {
+        return c.json({ error: 'Repository not found' }, 404);
+      }
 
-    // Explicitly select allowed fields to prevent Prisma errors
-    const { 
-      autoGenerate, autoPublish, generateCustomer, generateDeveloper, 
-      generateStakeholder, customerTone, companyName, productName 
-    } = body;
-    
-    const data = {
-      autoGenerate, autoPublish, generateCustomer, generateDeveloper,
-      generateStakeholder, customerTone, companyName, productName
-    };
+      // Explicitly select allowed fields to prevent Prisma errors
+      const {
+        autoGenerate,
+        autoPublish,
+        generateCustomer,
+        generateDeveloper,
+        generateStakeholder,
+        customerTone,
+        companyName,
+        productName,
+      } = body;
 
-    // Remove undefined keys
-    Object.keys(data).forEach(key => data[key as keyof typeof data] === undefined && delete data[key as keyof typeof data]);
+      const data = {
+        autoGenerate,
+        autoPublish,
+        generateCustomer,
+        generateDeveloper,
+        generateStakeholder,
+        customerTone,
+        companyName,
+        productName,
+      };
 
-    const config = await prisma.repoConfig.upsert({
-      where: { repoId: id },
-      create: {
-        repoId: id,
-        ...data,
-      },
-      update: data,
-    });
+      // Remove undefined keys
+      Object.keys(data).forEach(
+        (key) =>
+          data[key as keyof typeof data] === undefined &&
+          delete data[key as keyof typeof data]
+      );
+
+      const config = await prisma.repoConfig.upsert({
+        where: { repoId: id },
+        create: {
+          repoId: id,
+          ...data,
+        },
+        update: data,
+      });
 
     logger.info(`📝 Updated config for repo ${id}`, { repoId: id });
 
@@ -392,6 +432,15 @@ repos.patch('/:id/config', async (c) => {
   }
 });
 
+// Update repo settings (public changelog options)
+repos.patch(
+  '/:id/settings',
+  zValidator('json', updateRepoSettingsSchema),
+  async (c) => {
+    try {
+      const user = c.get('user');
+      const id = c.req.param('id');
+      const body = c.req.valid('json');
 /**
  * PATCH /:id/settings
  * @description Update repository public changelog settings.
@@ -416,33 +465,49 @@ repos.patch('/:id/settings', async (c) => {
       excludeFromFeatured?: boolean;
     };
 
-    // Verify ownership
-    const repo = await prisma.repo.findFirst({
-      where: { id, userId: user.id },
-      select: { id: true },
-    });
+      // Verify ownership
+      const repo = await prisma.repo.findFirst({
+        where: { id, userId: user.id },
+        select: { id: true },
+      });
 
-    if (!repo) {
-      return c.json({ error: 'Repository not found' }, 404);
-    }
+      if (!repo) {
+        return c.json({ error: 'Repository not found' }, 404);
+      }
 
-    // Explicitly select allowed fields
-    const { 
-      isPublic, slug, publicTitle, publicDescription, 
-      publicLogoUrl, publicAccentColor, hidePoweredBy, excludeFromFeatured 
-    } = body;
+      // Explicitly select allowed fields
+      const {
+        isPublic,
+        slug,
+        publicTitle,
+        publicDescription,
+        publicLogoUrl,
+        publicAccentColor,
+        hidePoweredBy,
+        excludeFromFeatured,
+      } = body;
 
-    const data = {
-      isPublic, slug, publicTitle, publicDescription,
-      publicLogoUrl, publicAccentColor, hidePoweredBy, excludeFromFeatured
-    };
+      const data = {
+        isPublic,
+        slug,
+        publicTitle,
+        publicDescription,
+        publicLogoUrl,
+        publicAccentColor,
+        hidePoweredBy,
+        excludeFromFeatured,
+      };
 
-    // Remove undefined keys
-    Object.keys(data).forEach(key => data[key as keyof typeof data] === undefined && delete data[key as keyof typeof data]);
+      // Remove undefined keys
+      Object.keys(data).forEach(
+        (key) =>
+          data[key as keyof typeof data] === undefined &&
+          delete data[key as keyof typeof data]
+      );
 
-    const updated = await prisma.repo.update({
-      where: { id },
-      data: data,
+      const updated = await prisma.repo.update({
+        where: { id },
+        data: data,
       select: {
         id: true,
         isPublic: true,
@@ -466,6 +531,14 @@ repos.patch('/:id/settings', async (c) => {
   }
 });
 
+// Create a distribution channel
+repos.post(
+  '/:id/channels',
+  zValidator('json', createChannelSchema),
+  async (c) => {
+    const user = c.get('user');
+    const id = c.req.param('id');
+    const body = c.req.valid('json');
 /**
  * POST /:id/channels
  * @description Add a distribution channel (Slack, Discord) to the repository.
@@ -486,7 +559,7 @@ repos.post('/:id/channels', async (c) => {
     enabled?: boolean;
   };
 
-  const repo = await prisma.repo.findFirst({
+    const repo = await prisma.repo.findFirst({
     where: { id, userId: user.id },
     include: { config: true },
   });
@@ -513,6 +586,15 @@ repos.post('/:id/channels', async (c) => {
   return c.json(channel, 201);
 });
 
+// Update a distribution channel
+repos.patch(
+  '/:id/channels/:channelId',
+  zValidator('json', updateChannelSchema),
+  async (c) => {
+    const user = c.get('user');
+    const id = c.req.param('id');
+    const channelId = c.req.param('channelId');
+    const body = c.req.valid('json');
 /**
  * PATCH /:id/channels/:channelId
  * @description Update a distribution channel.
@@ -532,7 +614,7 @@ repos.patch('/:id/channels/:channelId', async (c) => {
     enabled?: boolean;
   };
 
-  const channel = await prisma.channel.findFirst({
+    const channel = await prisma.channel.findFirst({
     where: {
       id: channelId,
       config: { repoId: id, repo: { userId: user.id } },
