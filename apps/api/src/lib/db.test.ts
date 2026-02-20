@@ -1,11 +1,24 @@
 import { jest, describe, it, expect } from '@jest/globals';
-import { prisma } from './db.js';
 
-describe('Prisma Mock', () => {
-  it('should mock prisma calls', async () => {
-    (prisma.user.findUnique as jest.Mock).mockImplementation(() => Promise.resolve({ id: '1' }));
+const mockPrisma = {
+  user: {
+    findUnique: jest.fn(),
+  },
+};
+
+jest.unstable_mockModule('./db', () => ({
+  prisma: mockPrisma,
+}));
+
+const { prisma } = await import('./db');
+
+describe('Database Mock', () => {
+  it('should mock prisma client', async () => {
+    const mockUser = { id: '1', login: 'test' };
+    (prisma.user.findUnique as jest.Mock<any>).mockResolvedValue(mockUser);
+
     const user = await prisma.user.findUnique({ where: { id: '1' } });
-    expect(user).toEqual({ id: '1' });
-    expect(prisma.user.findUnique).toHaveBeenCalled();
+    expect(user).toEqual(mockUser);
+    expect(prisma.user.findUnique).toHaveBeenCalledWith({ where: { id: '1' } });
   });
 });

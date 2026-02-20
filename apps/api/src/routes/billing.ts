@@ -3,6 +3,10 @@ import Stripe from 'stripe';
 import { prisma } from '../lib/db.js';
 import { requireAuth } from '../lib/auth.js';
 
+/**
+ * @module billing
+ * @description Routes for handling Stripe subscriptions, checkout, and webhooks.
+ */
 export const billing = new Hono();
 
 const stripeSecret = process.env.STRIPE_SECRET_KEY;
@@ -54,6 +58,14 @@ const shouldDowngrade = (status?: Stripe.Subscription.Status) => {
   return status === 'canceled' || status === 'unpaid' || status === 'incomplete_expired';
 };
 
+/**
+ * POST /checkout
+ * @description Create a Stripe Checkout Session for a subscription.
+ * @param {string} plan - The plan to subscribe to ('pro' or 'team').
+ * @returns {object} JSON with `url` to redirect the user to Stripe Checkout.
+ * @throws 400 if plan is invalid.
+ * @throws 404 if user not found.
+ */
 billing.post('/checkout', requireAuth, async (c) => {
   if (!stripeSecret) {
     return c.json({ error: 'Stripe not configured' }, 500);
@@ -179,6 +191,12 @@ billing.post('/checkout', requireAuth, async (c) => {
   }
 });
 
+/**
+ * POST /portal
+ * @description Create a Stripe Customer Portal session for managing subscriptions.
+ * @returns {object} JSON with `url` to redirect the user to Stripe Portal.
+ * @throws 400 if user has no Stripe customer ID.
+ */
 billing.post('/portal', requireAuth, async (c) => {
   if (!stripeSecret) {
     return c.json({ error: 'Stripe not configured' }, 500);
@@ -202,6 +220,11 @@ billing.post('/portal', requireAuth, async (c) => {
   return c.json({ url: session.url });
 });
 
+/**
+ * GET /status
+ * @description Get the current user's subscription status.
+ * @returns {object} Subscription details (tier, status, trial end, IDs).
+ */
 billing.get('/status', requireAuth, async (c) => {
   const user = c.get('user');
   const dbUser = await prisma.user.findUnique({
@@ -222,6 +245,13 @@ billing.get('/status', requireAuth, async (c) => {
   return c.json(dbUser);
 });
 
+/**
+ * POST /webhook
+ * @description Handle Stripe webhooks to update subscription status in DB.
+ * @header {string} stripe-signature - Stripe signature for verification.
+ * @returns {object} Success confirmation.
+ * @throws 400 if signature is invalid.
+ */
 billing.post('/webhook', async (c) => {
   if (!stripeSecret || !stripeWebhookSecret) {
     return c.json({ error: 'Stripe not configured' }, 500);
