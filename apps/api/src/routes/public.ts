@@ -2,9 +2,21 @@ import { Hono } from 'hono';
 import { prisma } from '../lib/db.js';
 import { logger } from '../lib/logger.js';
 
+/**
+ * @module public
+ * @description Public-facing routes for changelogs and feedback.
+ */
 export const publicChangelog = new Hono();
 
-// Submit feedback
+/**
+ * POST /feedback
+ * @description Submit feedback for a specific repository.
+ * @body {string} repoId - Repository UUID.
+ * @body {string} feedback - Feedback text.
+ * @body {string} [email] - User email.
+ * @body {string} [source] - Source of feedback (e.g., widget).
+ * @returns {object} Success confirmation.
+ */
 publicChangelog.post('/feedback', async (c) => {
   const { repoId, feedback, email, source } = await c.req.json();
 
@@ -34,7 +46,13 @@ publicChangelog.post('/feedback', async (c) => {
   return c.json({ success: true });
 });
 
-// Get public changelog for a repo by slug
+/**
+ * GET /:slug
+ * @description Get public repository details and recent releases.
+ * @param {string} slug - Repository slug or full name.
+ * @returns {object} Public repo details and releases.
+ * @throws 404 if not found.
+ */
 publicChangelog.get('/:slug', async (c) => {
   const slug = c.req.param('slug');
   
@@ -113,7 +131,14 @@ publicChangelog.get('/:slug', async (c) => {
   });
 });
 
-// Get releases list (paginated)
+/**
+ * GET /:slug/releases
+ * @description Get paginated releases for a repository.
+ * @param {string} slug - Repository slug.
+ * @param {string} [page=1] - Page number.
+ * @param {string} [limit=20] - Releases per page.
+ * @returns {object} Array of releases and pagination info.
+ */
 publicChangelog.get('/:slug/releases', async (c) => {
   const slug = c.req.param('slug');
   const page = parseInt(c.req.query('page') || '1');
@@ -158,7 +183,14 @@ publicChangelog.get('/:slug/releases', async (c) => {
   });
 });
 
-// Get single release
+/**
+ * GET /:slug/releases/:version
+ * @description Get a specific release by version tag.
+ * @param {string} slug - Repository slug.
+ * @param {string} version - Release tag name (e.g., v1.0.0).
+ * @returns {object} Release details.
+ * @throws 404 if release not found.
+ */
 publicChangelog.get('/:slug/releases/:version', async (c) => {
   const slug = c.req.param('slug');
   const version = c.req.param('version');

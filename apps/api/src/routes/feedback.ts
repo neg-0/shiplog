@@ -3,6 +3,10 @@ import { z } from 'zod';
 import { zValidator } from '@hono/zod-validator';
 import { logger } from '../lib/logger.js';
 
+/**
+ * @module feedback
+ * @description Routes for submitting user feedback.
+ */
 export const feedback = new Hono();
 
 const feedbackSchema = z.object({
@@ -13,6 +17,17 @@ const feedbackSchema = z.object({
   userId: z.string().optional(),
 });
 
+/**
+ * POST /
+ * @description Submit feedback to the system (forwarded to Discord webhook).
+ * @body {object} feedback - Feedback data.
+ * @body {string} feedback.type - Type of feedback (bug, feature, praise, other).
+ * @body {string} feedback.message - The feedback content.
+ * @body {string} [feedback.email] - User's email (optional).
+ * @body {string} [feedback.page] - Page where feedback was submitted (optional).
+ * @body {string} [feedback.userId] - User ID (optional).
+ * @returns {object} Success status.
+ */
 feedback.post('/', zValidator('json', feedbackSchema), async (c) => {
   const data = c.req.valid('json');
   const webhookUrl = process.env.DISCORD_FEEDBACK_WEBHOOK_URL;

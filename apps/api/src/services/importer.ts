@@ -3,6 +3,23 @@ import { logger } from '../lib/logger.js';
 import { listReleases, fetchReleaseData } from './github.js';
 import { generateReleaseNotes } from './generator.js';
 
+/**
+ * Import release history for a repository and generate notes if configured.
+ *
+ * @description
+ * This function performs the following operations:
+ * 1. Fetches the repository configuration from the database.
+ * 2. Fetches the 5 most recent releases from GitHub.
+ * 3. Iterates through the releases and:
+ *    - Checks if the release already exists in the database.
+ *    - Creates a new release record if it doesn't exist.
+ *    - If `autoGenerate` is enabled, triggers the release notes generation process.
+ *    - Updates the release status to `READY`, `FAILED`, or `SKIPPED`.
+ *
+ * @param repoId - The UUID of the repository in the database.
+ * @param accessToken - GitHub OAuth access token with repo scope.
+ * @returns A promise that resolves when the import process is complete.
+ */
 export async function importRepoHistory(repoId: string, accessToken: string) {
   try {
     const repo = await prisma.repo.findUnique({

@@ -2,15 +2,28 @@ import { Hono } from 'hono';
 import { prisma } from '../lib/db.js';
 import { logger } from '../lib/logger.js';
 import { requireAuth, decrypt } from '../lib/auth.js';
+import { apiLimiter } from '../lib/rate-limit.js';
 import { fetchReleaseData } from '../services/github.js';
 import { generateReleaseNotes } from '../services/generator.js';
 
+/**
+ * @module releases
+ * @description Routes for managing releases and their generated notes.
+ */
 export const releases = new Hono();
 
 // Auth required for all release endpoints
 releases.use('*', requireAuth);
+releases.use('*', apiLimiter);
 
-// Get release with generated notes
+/**
+ * GET /:id
+ * @description Get detailed information for a specific release, including generated notes.
+ * @param {string} id - Release UUID.
+ * @returns {object} Release details and generated notes.
+ * @throws 404 if not found.
+ * @throws 403 if user does not own the repo.
+ */
 releases.get('/:id', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
@@ -64,7 +77,15 @@ releases.get('/:id', async (c) => {
   });
 });
 
-// Regenerate notes for a release
+/**
+ * POST /:id/regenerate
+ * @description Trigger regeneration of release notes using AI.
+ * @param {string} id - Release UUID.
+ * @body {string} [tone] - Tone for customer notes (e.g., "friendly", "professional").
+ * @returns {object} Status and token usage.
+ * @throws 404 if not found.
+ * @throws 500 if generation fails.
+ */
 releases.post('/:id/regenerate', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
@@ -179,7 +200,14 @@ releases.post('/:id/regenerate', async (c) => {
   }
 });
 
-// Manually publish/distribute a release
+/**
+ * POST /:id/publish
+ * @description Mark release as published and trigger distribution to channels.
+ * @param {string} id - Release UUID.
+ * @body {string[]} [channels] - Optional list of specific channels to publish to.
+ * @returns {object} Publication status.
+ * @throws 400 if no notes exist.
+ */
 releases.post('/:id/publish', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
@@ -232,7 +260,15 @@ releases.post('/:id/publish', async (c) => {
   });
 });
 
-// Update generated notes (manual edit)
+/**
+ * PATCH /:id/notes
+ * @description Manually edit the generated release notes.
+ * @param {string} id - Release UUID.
+ * @body {string} [customer] - Customer notes content.
+ * @body {string} [developer] - Developer notes content.
+ * @body {string} [stakeholder] - Stakeholder notes content.
+ * @returns {object} Updated status.
+ */
 releases.patch('/:id/notes', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
