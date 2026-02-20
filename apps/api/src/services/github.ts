@@ -42,6 +42,24 @@ interface GitHubPR {
   merged_at: string | null;
 }
 
+interface GitHubCompareResponse {
+  commits: GitHubCommit[];
+}
+
+interface GitHubWebhookResponse {
+  id: number;
+}
+
+interface GitHubRepo {
+  id: number;
+  name: string;
+  full_name: string;
+  owner: {
+    login: string;
+  };
+  description: string | null;
+}
+
 export interface ReleaseData {
   release: {
     id: number;
@@ -69,7 +87,24 @@ export interface ReleaseData {
 }
 
 /**
- * Fetch release data with commits and PRs between tags
+ * Fetch detailed release data including commits and PRs between the given tag and the previous one.
+ *
+ * @description
+ * This function performs the following steps:
+ * 1. Fetches the specific release by tag name.
+ * 2. Identifies the previous release tag to establish a comparison range.
+ * 3. Fetches commits between the previous tag and the current tag.
+ * 4. Extracts Pull Request numbers from commit messages and fetches details for each PR.
+ *
+ * @param owner - The owner of the repository (e.g., "facebook").
+ * @param repo - The name of the repository (e.g., "react").
+ * @param tagName - The tag name of the release to fetch (e.g., "v1.0.0").
+ * @param accessToken - GitHub OAuth access token with repo scope.
+ * @returns A promise that resolves to `ReleaseData` containing release info, commits, and PRs.
+ * @throws Error if the release cannot be fetched or if the GitHub API returns an error.
+ *
+ * @example
+ * const data = await fetchReleaseData('facebook', 'react', 'v18.0.0', 'gho_token...');
  */
 export async function fetchReleaseData(
   owner: string,
@@ -104,7 +139,7 @@ export async function fetchReleaseData(
   const releases = (await releasesRes.json()) as GitHubRelease[];
   const currentIndex = releases.findIndex(r => r.tag_name === tagName);
   const previousTag = currentIndex < releases.length - 1 
-    ? releases[currentIndex + 1]?.tag_name 
+    ? releases[currentIndex + 1]?.tag_name ?? null
     : null;
 
   // 3. Get commits between tags
@@ -117,8 +152,8 @@ export async function fetchReleaseData(
     );
     
     if (compareRes.ok) {
-      const compareData = (await compareRes.json()) as any;
-      commits = ((compareData.commits as GitHubCommit[]) || []).map((c: GitHubCommit) => ({
+      const compareData = (await compareRes.json()) as GitHubCompareResponse;
+      commits = (compareData.commits || []).map((c) => ({
         sha: c.sha,
         message: c.commit.message,
         author: c.author?.login || c.commit.author.name,
@@ -172,8 +207,14 @@ export async function fetchReleaseData(
 }
 
 /**
- * Extract PR numbers from commit messages
- * Matches patterns like: "Merge pull request #123" or "(#456)"
+ * Extract PR numbers from a list of commit messages.
+ *
+ * @description
+ * Parses commit messages to find PR references. Supports standard GitHub merge commits
+ * ("Merge pull request #123") and squash merge formats ("(#456)").
+ *
+ * @param messages - An array of commit messages.
+ * @returns An array of unique PR numbers found in the messages.
  */
 function extractPRNumbers(messages: string[]): number[] {
   const prNumbers = new Set<number>();
@@ -181,13 +222,13 @@ function extractPRNumbers(messages: string[]): number[] {
   for (const message of messages) {
     // Match "Merge pull request #123"
     const mergeMatch = message.match(/Merge pull request #(\d+)/);
-    if (mergeMatch) {
+    if (mergeMatch && mergeMatch[1]) {
       prNumbers.add(parseInt(mergeMatch[1], 10));
     }
     
     // Match "(#456)" at end of message (squash merge format)
     const squashMatch = message.match(/\(#(\d+)\)$/);
-    if (squashMatch) {
+    if (squashMatch && squashMatch[1]) {
       prNumbers.add(parseInt(squashMatch[1], 10));
     }
   }
@@ -196,7 +237,15 @@ function extractPRNumbers(messages: string[]): number[] {
 }
 
 /**
- * Create a webhook on a repository
+ * Create a webhook on a GitHub repository to listen for release events.
+ *
+ * @param owner - The owner of the repository.
+ * @param repo - The name of the repository.
+ * @param webhookUrl - The URL where GitHub should send webhook events.
+ * @param secret - The shared secret for validating webhook payloads.
+ * @param accessToken - GitHub OAuth access token with repo scope.
+ * @returns A promise that resolves to an object containing the new webhook's ID.
+ * @throws Error if the webhook creation fails.
  */
 export async function createWebhook(
   owner: string,
@@ -233,12 +282,19 @@ export async function createWebhook(
     throw new Error(`Failed to create webhook: ${response.status} ${error}`);
   }
 
-  const data = (await response.json()) as any;
-  return { id: data.id as number };
+  const data = (await response.json()) as GitHubWebhookResponse;
+  return { id: data.id };
 }
 
 /**
- * Delete a webhook from a repository
+ * Delete a webhook from a GitHub repository.
+ *
+ * @param owner - The owner of the repository.
+ * @param repo - The name of the repository.
+ * @param webhookId - The ID of the webhook to delete.
+ * @param accessToken - GitHub OAuth access token with repo scope.
+ * @returns A promise that resolves when the webhook is deleted.
+ * @throws Error if the deletion fails (unless it's a 404 Not Found, which is ignored).
  */
 export async function deleteWebhook(
   owner: string,
@@ -263,7 +319,14 @@ export async function deleteWebhook(
 }
 
 /**
- * List user's repositories
+ * List repositories accessible to the authenticated user.
+ *
+ * @description
+ * Fetches up to 100 repositories sorted by updated date.
+ *
+ * @param accessToken - GitHub OAuth access token.
+ * @returns A promise that resolves to an array of repositories with basic details.
+ * @throws Error if the API request fails.
  */
 export async function listUserRepos(
   accessToken: string
@@ -282,9 +345,9 @@ export async function listUserRepos(
     throw new Error(`Failed to list repos: ${response.status}`);
   }
 
-  const repos = (await response.json()) as any[];
+  const repos = (await response.json()) as GitHubRepo[];
   
-  return repos.map((r: any) => ({
+  return repos.map((r) => ({
     id: r.id,
     name: r.name,
     full_name: r.full_name,
@@ -294,7 +357,14 @@ export async function listUserRepos(
 }
 
 /**
- * List recent releases for a repository
+ * List recent releases for a specific repository.
+ *
+ * @param owner - The owner of the repository.
+ * @param repo - The name of the repository.
+ * @param accessToken - GitHub OAuth access token.
+ * @param perPage - The number of releases to fetch (default: 5).
+ * @returns A promise that resolves to an array of `GitHubRelease` objects.
+ * @throws Error if the API request fails.
  */
 export async function listReleases(
   owner: string,

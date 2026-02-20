@@ -2,13 +2,26 @@ import { Hono } from 'hono';
 import { prisma } from '../lib/db.js';
 import { requireAuth } from '../lib/auth.js';
 
+/**
+ * @module organizations
+ * @description Routes for managing organizations and memberships.
+ */
 export const organizations = new Hono();
 
 organizations.use('*', requireAuth);
 
 const isAdminRole = (role?: string | null) => role === 'OWNER' || role === 'ADMIN';
 
-// Create organization
+/**
+ * POST /
+ * @description Create a new organization.
+ * @body {string} name - Organization name.
+ * @body {string} slug - Unique slug for the organization.
+ * @body {number} [githubOrgId] - Optional GitHub Organization ID.
+ * @body {string} [githubOrgLogin] - Optional GitHub Organization Login.
+ * @returns {object} The created organization.
+ * @throws 400 if name or slug is missing or slug already exists.
+ */
 organizations.post('/', async (c) => {
   const user = c.get('user');
   const body = await c.req.json() as {
@@ -31,7 +44,7 @@ organizations.post('/', async (c) => {
     return c.json({ error: 'Organization slug already exists' }, 400);
   }
 
-  const org = await prisma.$transaction(async (tx) => {
+  const org = await prisma.$transaction(async (tx: any) => {
     const created = await tx.organization.create({
       data: {
         name: body.name,
@@ -56,7 +69,11 @@ organizations.post('/', async (c) => {
   return c.json(org, 201);
 });
 
-// List user's organizations
+/**
+ * GET /
+ * @description List all organizations the user belongs to.
+ * @returns {object} Array of organizations with member and repo counts.
+ */
 organizations.get('/', async (c) => {
   const user = c.get('user');
 
@@ -76,7 +93,7 @@ organizations.get('/', async (c) => {
   });
 
   return c.json({
-    organizations: orgs.map((org) => ({
+    organizations: orgs.map((org: any) => ({
       id: org.id,
       name: org.name,
       slug: org.slug,
@@ -92,7 +109,13 @@ organizations.get('/', async (c) => {
   });
 });
 
-// Get organization details
+/**
+ * GET /:id
+ * @description Get details for a specific organization including members and repos.
+ * @param {string} id - Organization UUID.
+ * @returns {object} Organization details.
+ * @throws 404 if not found.
+ */
 organizations.get('/:id', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
@@ -144,7 +167,7 @@ organizations.get('/:id', async (c) => {
     subscriptionId: org.subscriptionId,
     createdAt: org.createdAt,
     updatedAt: org.updatedAt,
-    members: org.members.map((member) => ({
+    members: org.members.map((member: any) => ({
       id: member.id,
       role: member.role,
       joinedAt: member.joinedAt,
@@ -154,7 +177,15 @@ organizations.get('/:id', async (c) => {
   });
 });
 
-// Update organization
+/**
+ * PATCH /:id
+ * @description Update an organization's details.
+ * @param {string} id - Organization UUID.
+ * @body {string} [name] - New name.
+ * @body {string} [slug] - New slug.
+ * @returns {object} Updated organization.
+ * @throws 403 if user is not an owner/admin.
+ */
 organizations.patch('/:id', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
@@ -197,7 +228,16 @@ organizations.patch('/:id', async (c) => {
   return c.json(updated);
 });
 
-// Invite member by email
+/**
+ * POST /:id/invite
+ * @description Invite a user to the organization by email.
+ * @param {string} id - Organization UUID.
+ * @body {string} email - Email address to invite.
+ * @body {string} [role=MEMBER] - Role to assign (OWNER, ADMIN, MEMBER).
+ * @returns {object} Created invite.
+ * @throws 403 if user is not an owner/admin.
+ * @throws 400 if user is already a member.
+ */
 organizations.post('/:id/invite', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
@@ -260,7 +300,13 @@ organizations.post('/:id/invite', async (c) => {
   }
 });
 
-// List organization members
+/**
+ * GET /:id/members
+ * @description List members of an organization.
+ * @param {string} id - Organization UUID.
+ * @returns {object} Array of members.
+ * @throws 403 if user is not a member.
+ */
 organizations.get('/:id/members', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
@@ -284,7 +330,7 @@ organizations.get('/:id/members', async (c) => {
   });
 
   return c.json({
-    members: members.map((entry) => ({
+    members: members.map((entry: any) => ({
       id: entry.id,
       role: entry.role,
       joinedAt: entry.joinedAt,
@@ -293,7 +339,15 @@ organizations.get('/:id/members', async (c) => {
   });
 });
 
-// Remove member
+/**
+ * DELETE /:id/members/:userId
+ * @description Remove a member from the organization.
+ * @param {string} id - Organization UUID.
+ * @param {string} userId - User UUID to remove.
+ * @returns {object} Success message.
+ * @throws 403 if user is not an owner/admin.
+ * @throws 400 if trying to remove the owner.
+ */
 organizations.delete('/:id/members/:userId', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
@@ -332,7 +386,15 @@ organizations.delete('/:id/members/:userId', async (c) => {
   return c.json({ removed: true });
 });
 
-// Accept invite
+/**
+ * POST /invites/:id/accept
+ * @description Accept an organization invite.
+ * @param {string} id - Invite UUID.
+ * @returns {object} Success message and organization ID.
+ * @throws 404 if invite not found.
+ * @throws 400 if invite expired.
+ * @throws 403 if email doesn't match.
+ */
 organizations.post('/invites/:id/accept', async (c) => {
   const user = c.get('user');
   const inviteId = c.req.param('id');

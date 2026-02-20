@@ -2,9 +2,17 @@ import { Hono } from 'hono';
 import { prisma } from '../lib/db.js';
 import { requireAuth } from '../lib/auth.js';
 
+/**
+ * @module user
+ * @description Routes for managing user profile.
+ */
 export const user = new Hono();
 
-// Get current user info
+/**
+ * GET /me
+ * @description Get current authenticated user's profile and usage stats.
+ * @returns {object} User profile details.
+ */
 user.get('/me', requireAuth, async (c) => {
   const authUser = c.get('user');
   
@@ -44,7 +52,12 @@ user.get('/me', requireAuth, async (c) => {
   });
 });
 
-// Update user profile
+/**
+ * PATCH /me
+ * @description Update user profile information.
+ * @body {string} [name] - New display name.
+ * @returns {object} Success message.
+ */
 user.patch('/me', requireAuth, async (c) => {
   const authUser = c.get('user');
   const body = await c.req.json();
@@ -62,7 +75,11 @@ user.patch('/me', requireAuth, async (c) => {
   return c.json({ success: true });
 });
 
-// Delete user account
+/**
+ * DELETE /me
+ * @description Permanently delete user account and all data.
+ * @returns {object} Success message.
+ */
 user.delete('/me', requireAuth, async (c) => {
   const authUser = c.get('user');
   
