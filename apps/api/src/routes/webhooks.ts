@@ -6,9 +6,19 @@ import { generateReleaseNotes } from '../services/generator.js';
 import { decrypt } from '../lib/auth.js';
 import { distributeReleaseWithResults, type DistributionTarget } from '../services/distributor.js';
 
+/**
+ * @module webhooks
+ * @description Routes for handling external webhooks (GitHub).
+ */
 export const webhooks = new Hono();
 
-// Verify GitHub webhook signature
+/**
+ * Verify GitHub webhook signature HMAC.
+ * @param payload - Raw request body.
+ * @param signature - Signature from header.
+ * @param secret - Webhook secret.
+ * @returns boolean indicating validity.
+ */
 function verifyGitHubSignature(payload: string, signature: string | undefined, secret: string): boolean {
   if (!signature) return false;
   
@@ -22,6 +32,13 @@ function verifyGitHubSignature(payload: string, signature: string | undefined, s
   }
 }
 
+/**
+ * POST /github
+ * @description Handle GitHub webhooks (release events).
+ * @header {string} x-hub-signature-256 - HMAC signature.
+ * @header {string} x-github-event - Event type.
+ * @returns {object} Processing status.
+ */
 webhooks.post('/github', async (c) => {
   // Get raw body for signature verification
   const body = await c.req.text();
