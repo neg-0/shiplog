@@ -1,8 +1,19 @@
 import { Hono } from 'hono';
 import { prisma } from '../lib/db.js';
 
+/**
+ * @module preview
+ * @description Routes for previewing generated changelogs.
+ */
 export const preview = new Hono();
 
+/**
+ * GET /:slug
+ * @description Get a pre-generated changelog preview.
+ * @param {string} slug - Unique preview slug.
+ * @returns {object} Preview details including generated notes.
+ * @throws 404 if preview not found.
+ */
 preview.get('/:slug', async (c) => {
   const slug = c.req.param('slug');
   

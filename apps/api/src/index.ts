@@ -17,6 +17,7 @@ import { admin } from './routes/admin.js';
 import { publicChangelog } from './routes/public.js';
 import { preview } from './routes/preview.js';
 import { metrics } from './lib/metrics.js';
+import { authLimiter, webhookLimiter, publicLimiter } from './lib/rate-limit.js';
 
 const app = new Hono();
 
@@ -30,6 +31,13 @@ app.use('*', cors({
   origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
   credentials: true,
 }));
+
+// Rate Limiters
+app.use('/auth/*', authLimiter);
+app.use('/webhooks/*', webhookLimiter);
+app.use('/public/*', publicLimiter);
+app.use('/preview/*', publicLimiter);
+app.use('/changelog/*', publicLimiter);
 
 // Routes
 app.route('/health', health);

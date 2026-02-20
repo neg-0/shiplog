@@ -64,6 +64,18 @@ async function generateOne(args: {
 
 /**
  * Generate three audience-specific markdown release notes from GitHub release + diff data.
+ *
+ * @description
+ * This function orchestrates the generation of release notes for three distinct audiences:
+ * 1. Customer: Non-technical, value-focused.
+ * 2. Developer: Technical, implementation details.
+ * 3. Stakeholder: Business impact, metrics.
+ *
+ * It uses the OpenAI API to generate the content in parallel.
+ *
+ * @param input - The input data containing release info, commits, PRs, and repo configuration.
+ * @returns A promise that resolves to `GeneratedNotes` containing the generated text for each audience and usage stats.
+ * @throws Error if the OpenAI API key is missing or the request fails.
  */
 export async function generateReleaseNotes(input: ReleaseInput): Promise<GeneratedNotes> {
   const client = getClient();

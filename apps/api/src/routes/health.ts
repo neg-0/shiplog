@@ -3,6 +3,10 @@ import { prisma } from '../lib/db.js';
 import { metrics } from '../lib/metrics.js';
 import Stripe from 'stripe';
 
+/**
+ * @module health
+ * @description Health check routes.
+ */
 export const health = new Hono();
 
 const stripeSecret = process.env.STRIPE_SECRET_KEY;
@@ -19,6 +23,12 @@ health.get('/metrics', (c) => {
     ? metrics.generationTimeTotal / metrics.generationCount
     : 0;
 
+/**
+ * GET /
+ * @description Simple health check endpoint.
+ * @returns {object} Status, timestamp, and uptime.
+ */
+health.get('/', (c) => {
   return c.json({
     totalRequests: metrics.totalRequests,
     releasesProcessed: metrics.releasesProcessed,

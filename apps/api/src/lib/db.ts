@@ -1,3 +1,10 @@
+/**
+ * Database client initialization.
+ *
+ * @module db
+ * @description Exports a singleton instance of PrismaClient.
+ */
+
 import { PrismaClient } from '@prisma/client';
 
 declare global {
@@ -5,6 +12,10 @@ declare global {
   var prisma: PrismaClient | undefined;
 }
 
+/**
+ * Singleton PrismaClient instance.
+ * @description Prevents multiple connections during hot-reloading in development.
+ */
 export const prisma = globalThis.prisma ?? new PrismaClient();
 
 if (process.env.NODE_ENV !== 'production') {
