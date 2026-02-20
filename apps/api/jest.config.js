@@ -17,4 +17,7 @@ export default {
   },
   setupFilesAfterEnv: ['<rootDir>/src/__tests__/setup.ts'],
   testPathIgnorePatterns: ['/node_modules/', '/dist/', '/src/__tests__/setup.ts'],
+  moduleNameMapper: {
+    '^(\\.{1,2}/.*)\\.js$': '$1',
+  setupFilesAfterEnv: ['<rootDir>/jest.setup.ts'],
 };
