@@ -1,25 +1,46 @@
 import { Hono } from 'hono';
+import { zValidator } from '@hono/zod-validator';
 import { prisma } from '../lib/db.js';
 import { requireAuth } from '../lib/auth.js';
+import { updateUserAdminSchema } from '../lib/schemas.js';
 
 // Admin emails from environment variable
 const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean);
+import { Hono, type Context, type Next } from 'hono';
+import { Prisma } from '@prisma/client';
+import { apiLimiter } from '../lib/rate-limit.js';
 
 // Admin middleware
-const requireAdmin = async (c: any, next: any) => {
+import { SubscriptionTier } from '@prisma/client';
+
+const requireAdmin = async (c: Context, next: Next) => {
+  // Admin emails from environment variable
+  const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean);
+
   const user = c.get('user');
-  if (!user || !ADMIN_EMAILS.includes(user.email)) {
+  if (!user || !user.email || !ADMIN_EMAILS.includes(user.email)) {
     return c.json({ error: 'Forbidden' }, 403);
   }
-  await next();
+  return next();
 };
 
 export const admin = new Hono();
 
-// Apply auth + admin middleware to all routes
-admin.use('*', requireAuth, requireAdmin);
+/**
+ * @module admin
+ * @description Administrative routes for managing users and viewing metrics.
+ * @middleware requireAuth - Ensures user is authenticated.
+ * @middleware requireAdmin - Ensures user is an admin (based on email allowlist).
+ */
 
-// Get metrics dashboard data
+// Apply auth + admin middleware to all routes
+admin.use('*', requireAuth, apiLimiter, requireAdmin);
+
+/**
+ * GET /metrics
+ * @description Get high-level metrics for the admin dashboard.
+ * @returns {object} Statistics about users, subscriptions, repositories, releases, and estimated MRR.
+ */
 admin.get('/metrics', async (c) => {
   const [
     totalUsers,
@@ -53,14 +74,22 @@ admin.get('/metrics', async (c) => {
   });
 });
 
-// List all users
+/**
+ * GET /users
+ * @description List all users with pagination and filtering.
+ * @param {string} [page=1] - Current page number.
+ * @param {string} [limit=50] - Number of users per page.
+ * @param {string} [search] - Search query for name, email, or login.
+ * @param {string} [tier] - Filter by subscription tier (FREE, PRO, TEAM).
+ * @returns {object} Array of users and pagination metadata.
+ */
 admin.get('/users', async (c) => {
   const page = parseInt(c.req.query('page') || '1');
   const limit = parseInt(c.req.query('limit') || '50');
   const search = c.req.query('search') || '';
   const tier = c.req.query('tier') || '';
 
-  const where: any = {};
+  const where: Prisma.UserWhereInput = {};
   
   if (search) {
     where.OR = [
@@ -71,7 +100,7 @@ admin.get('/users', async (c) => {
   }
   
   if (tier && ['FREE', 'PRO', 'TEAM'].includes(tier)) {
-    where.subscriptionTier = tier;
+    where.subscriptionTier = tier as SubscriptionTier;
   }
 
   const [users, total] = await Promise.all([
@@ -96,7 +125,7 @@ admin.get('/users', async (c) => {
   ]);
 
   return c.json({
-    users: users.map(u => ({
+    users: users.map((u: any) => ({
       ...u,
       repoCount: u._count.repos,
       _count: undefined,
@@ -110,7 +139,13 @@ admin.get('/users', async (c) => {
   });
 });
 
-// Get single user
+/**
+ * GET /users/:id
+ * @description Get detailed information for a specific user.
+ * @param {string} id - The user's UUID.
+ * @returns {object} User details including repository counts.
+ * @throws 404 if user is not found.
+ */
 admin.get('/users/:id', async (c) => {
   const userId = c.req.param('id');
   
@@ -136,6 +171,19 @@ admin.get('/users/:id', async (c) => {
 });
 
 // Update user
+admin.patch(
+  '/users/:id',
+  zValidator('json', updateUserAdminSchema),
+  async (c) => {
+    const userId = c.req.param('id');
+    const { subscriptionTier } = c.req.valid('json');
+/**
+ * PATCH /users/:id
+ * @description Update a user's information.
+ * @param {string} id - The user's UUID.
+ * @body {string} [subscriptionTier] - New subscription tier.
+ * @returns {object} The updated user object.
+ */
 admin.patch('/users/:id', async (c) => {
   const userId = c.req.param('id');
   const body = await c.req.json();
@@ -149,10 +197,23 @@ admin.patch('/users/:id', async (c) => {
     },
   });
 
-  return c.json(updated);
-});
+    const updated = await prisma.user.update({
+      where: { id: userId },
+      data: {
+        ...(subscriptionTier && { subscriptionTier }),
+      },
+    });
 
-// Delete user
+    return c.json(updated);
+  }
+);
+
+/**
+ * DELETE /users/:id
+ * @description Delete a user and their associated data.
+ * @param {string} id - The user's UUID.
+ * @returns {object} Success message.
+ */
 admin.delete('/users/:id', async (c) => {
   const userId = c.req.param('id');
   
@@ -163,7 +224,12 @@ admin.delete('/users/:id', async (c) => {
   return c.json({ success: true });
 });
 
-// Get recent activity
+/**
+ * GET /activity
+ * @description Get a combined feed of recent system activity (signups, releases).
+ * @param {string} [limit=100] - Number of events to retrieve.
+ * @returns {object} Array of activity events sorted by date.
+ */
 admin.get('/activity', async (c) => {
   const limit = parseInt(c.req.query('limit') || '100');
   
@@ -200,13 +266,13 @@ admin.get('/activity', async (c) => {
 
   // Combine and sort
   const events = [
-    ...recentUsers.map(u => ({
+    ...recentUsers.map((u: any) => ({
       type: 'signup' as const,
       id: u.id,
       description: `${u.login} signed up (${u.subscriptionTier})`,
       createdAt: u.createdAt,
     })),
-    ...recentReleases.map(r => ({
+    ...recentReleases.map((r: any) => ({
       type: 'release' as const,
       id: r.id,
       description: `${r.repo.fullName} released ${r.tagName}`,

@@ -1,8 +1,15 @@
 import { Hono } from 'hono';
+import { zValidator } from '@hono/zod-validator';
 import { prisma } from '../lib/db.js';
+import { logger } from '../lib/logger.js';
 import { signToken } from '../lib/jwt.js';
 import { encrypt } from '../lib/auth.js';
+import { githubCallbackSchema } from '../lib/schemas.js';
 
+/**
+ * @module auth
+ * @description Authentication routes using GitHub OAuth.
+ */
 export const auth = new Hono();
 
 const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID;
@@ -15,16 +22,22 @@ const pendingStates = new Map<string, number>();
 const STATE_TTL_MS = 10 * 60 * 1000;
 
 // Clean up expired states periodically
-setInterval(() => {
-  const now = Date.now();
-  for (const [state, createdAt] of pendingStates) {
-    if (now - createdAt > STATE_TTL_MS) {
-      pendingStates.delete(state);
+if (process.env.NODE_ENV !== 'test') {
+  setInterval(() => {
+    const now = Date.now();
+    for (const [state, createdAt] of pendingStates) {
+      if (now - createdAt > STATE_TTL_MS) {
+        pendingStates.delete(state);
+      }
     }
-  }
-}, 60 * 1000);
+  }, 60 * 1000);
+}
 
-// Initiate GitHub OAuth
+/**
+ * GET /github
+ * @description Initiates the GitHub OAuth flow.
+ * @returns {Response} Redirects the user to GitHub's authorization page.
+ */
 auth.get('/github', (c) => {
   if (!GITHUB_CLIENT_ID) {
     return c.json({ error: 'GitHub OAuth not configured' }, 500);
@@ -40,24 +53,40 @@ auth.get('/github', (c) => {
     state,
   });
 
-  console.log(`🔑 OAuth initiated with state: ${state.slice(0, 8)}...`);
+  logger.info(`🔑 OAuth initiated`, { state: state.slice(0, 8) + '...' });
 
   return c.redirect(`https://github.com/login/oauth/authorize?${params}`);
 });
 
 // GitHub OAuth callback
+auth.get(
+  '/github/callback',
+  zValidator('query', githubCallbackSchema),
+  async (c) => {
+    const { code, state } = c.req.valid('query');
+/**
+ * GET /github/callback
+ * @description Handles the GitHub OAuth callback. Exchange code for token, fetch user profile, create/update user in DB, and issue session token.
+ * @param {string} code - Authorization code from GitHub.
+ * @param {string} state - CSRF state token.
+ * @returns {Response} Redirects to the dashboard with a session token.
+ */
 auth.get('/github/callback', async (c) => {
   const code = c.req.query('code');
   const state = c.req.query('state');
 
-  console.log(`🔑 OAuth callback with state: ${state?.slice(0, 8)}...`);
+    console.log(`🔑 OAuth callback with state: ${state?.slice(0, 8)}...`);
+  logger.info(`🔑 OAuth callback`, { state: state?.slice(0, 8) + '...' });
 
-  if (!code) {
-    return c.json({ error: 'No code provided' }, 400);
-  }
+    if (!pendingStates.has(state)) {
+      console.log(`❌ Invalid state. Known states: ${pendingStates.size}`);
+      return c.json({ error: 'Invalid OAuth state' }, 400);
+    }
 
+    // Remove used state
+    pendingStates.delete(state);
   if (!state || !pendingStates.has(state)) {
-    console.log(`❌ Invalid state. Known states: ${pendingStates.size}`);
+    logger.warn(`❌ Invalid state. Known states: ${pendingStates.size}`, { state });
     return c.json({ error: 'Invalid OAuth state' }, 400);
   }
 
@@ -150,12 +179,17 @@ auth.get('/github/callback', async (c) => {
   const redirectUrl = new URL(`${APP_URL}/dashboard`);
   redirectUrl.searchParams.set('token', sessionToken);
 
-  console.log(`✅ OAuth complete for ${ghUser.login}`);
+  logger.info(`✅ OAuth complete for ${ghUser.login}`, { login: ghUser.login });
 
   return c.redirect(redirectUrl.toString());
 });
 
-// Demo Login (Bypass for QA/Demos)
+/**
+ * POST /demo
+ * @description Creates a session for a demo user (only enabled if ENABLE_DEMO_LOGIN=true).
+ * @returns {object} Session token and user info.
+ * @throws 403 if demo login is disabled.
+ */
 auth.post('/demo', async (c) => {
   if (process.env.ENABLE_DEMO_LOGIN !== 'true') {
     return c.json({ error: 'Demo login disabled' }, 403);
@@ -190,7 +224,11 @@ auth.post('/demo', async (c) => {
   return c.json({ token: sessionToken, user: { id: dbUser.id, login: dbUser.login } });
 });
 
-// Logout
+/**
+ * POST /logout
+ * @description Logs out the user (currently client-side only token removal).
+ * @returns {object} Logout status.
+ */
 auth.post('/logout', (c) => {
   // TODO: Invalidate session
   return c.json({ status: 'logged_out' });
