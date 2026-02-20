@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { prisma } from '../lib/db.js';
 import { requireAuth, decrypt } from '../lib/auth.js';
+import { apiLimiter } from '../lib/rate-limit.js';
 import { fetchReleaseData } from '../services/github.js';
 import { generateReleaseNotes } from '../services/generator.js';
 
@@ -12,6 +13,7 @@ export const releases = new Hono();
 
 // Auth required for all release endpoints
 releases.use('*', requireAuth);
+releases.use('*', apiLimiter);
 
 /**
  * GET /:id

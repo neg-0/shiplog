@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { prisma } from '../lib/db.js';
 import { requireAuth } from '../lib/auth.js';
+import { apiLimiter } from '../lib/rate-limit.js';
 
 /**
  * @module user
@@ -13,7 +14,7 @@ export const user = new Hono();
  * @description Get current authenticated user's profile and usage stats.
  * @returns {object} User profile details.
  */
-user.get('/me', requireAuth, async (c) => {
+user.get('/me', requireAuth, apiLimiter, async (c) => {
   const authUser = c.get('user');
   
   const dbUser = await prisma.user.findUnique({
@@ -58,7 +59,7 @@ user.get('/me', requireAuth, async (c) => {
  * @body {string} [name] - New display name.
  * @returns {object} Success message.
  */
-user.patch('/me', requireAuth, async (c) => {
+user.patch('/me', requireAuth, apiLimiter, async (c) => {
   const authUser = c.get('user');
   const body = await c.req.json();
   
@@ -80,7 +81,7 @@ user.patch('/me', requireAuth, async (c) => {
  * @description Permanently delete user account and all data.
  * @returns {object} Success message.
  */
-user.delete('/me', requireAuth, async (c) => {
+user.delete('/me', requireAuth, apiLimiter, async (c) => {
   const authUser = c.get('user');
   
   // This will cascade delete repos, configs, releases, etc.

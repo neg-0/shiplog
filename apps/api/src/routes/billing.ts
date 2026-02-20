@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import Stripe from 'stripe';
 import { prisma } from '../lib/db.js';
 import { requireAuth } from '../lib/auth.js';
+import { apiLimiter } from '../lib/rate-limit.js';
 
 /**
  * @module billing
@@ -66,7 +67,7 @@ const shouldDowngrade = (status?: Stripe.Subscription.Status) => {
  * @throws 400 if plan is invalid.
  * @throws 404 if user not found.
  */
-billing.post('/checkout', requireAuth, async (c) => {
+billing.post('/checkout', requireAuth, apiLimiter, async (c) => {
   if (!stripeSecret) {
     return c.json({ error: 'Stripe not configured' }, 500);
   }
@@ -197,7 +198,7 @@ billing.post('/checkout', requireAuth, async (c) => {
  * @returns {object} JSON with `url` to redirect the user to Stripe Portal.
  * @throws 400 if user has no Stripe customer ID.
  */
-billing.post('/portal', requireAuth, async (c) => {
+billing.post('/portal', requireAuth, apiLimiter, async (c) => {
   if (!stripeSecret) {
     return c.json({ error: 'Stripe not configured' }, 500);
   }
@@ -225,7 +226,7 @@ billing.post('/portal', requireAuth, async (c) => {
  * @description Get the current user's subscription status.
  * @returns {object} Subscription details (tier, status, trial end, IDs).
  */
-billing.get('/status', requireAuth, async (c) => {
+billing.get('/status', requireAuth, apiLimiter, async (c) => {
   const user = c.get('user');
   const dbUser = await prisma.user.findUnique({
     where: { id: user.id },

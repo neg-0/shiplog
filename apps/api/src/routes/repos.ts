@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { prisma } from '../lib/db.js';
 import { requireAuth, decrypt } from '../lib/auth.js';
+import { apiLimiter } from '../lib/rate-limit.js';
 import { listUserRepos, createWebhook, deleteWebhook } from '../services/github.js';
 import { importRepoHistory } from '../services/importer.js';
 
@@ -14,6 +15,7 @@ const API_URL = process.env.API_URL || 'http://localhost:3001';
 
 // All routes require auth
 repos.use('*', requireAuth);
+repos.use('*', apiLimiter);
 
 /**
  * GET /

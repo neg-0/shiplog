@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { prisma } from '../lib/db.js';
 import { requireAuth } from '../lib/auth.js';
+import { apiLimiter } from '../lib/rate-limit.js';
 
 /**
  * @module organizations
@@ -9,6 +10,7 @@ import { requireAuth } from '../lib/auth.js';
 export const organizations = new Hono();
 
 organizations.use('*', requireAuth);
+organizations.use('*', apiLimiter);
 
 const isAdminRole = (role?: string | null) => role === 'OWNER' || role === 'ADMIN';
 
