@@ -42,6 +42,24 @@ interface GitHubPR {
   merged_at: string | null;
 }
 
+interface GitHubCompareResponse {
+  commits: GitHubCommit[];
+}
+
+interface GitHubWebhookResponse {
+  id: number;
+}
+
+interface GitHubRepo {
+  id: number;
+  name: string;
+  full_name: string;
+  owner: {
+    login: string;
+  };
+  description: string | null;
+}
+
 export interface ReleaseData {
   release: {
     id: number;
@@ -121,7 +139,7 @@ export async function fetchReleaseData(
   const releases = (await releasesRes.json()) as GitHubRelease[];
   const currentIndex = releases.findIndex(r => r.tag_name === tagName);
   const previousTag = currentIndex < releases.length - 1 
-    ? releases[currentIndex + 1]?.tag_name 
+    ? releases[currentIndex + 1]?.tag_name ?? null
     : null;
 
   // 3. Get commits between tags
@@ -134,8 +152,8 @@ export async function fetchReleaseData(
     );
     
     if (compareRes.ok) {
-      const compareData = (await compareRes.json()) as any;
-      commits = ((compareData.commits as GitHubCommit[]) || []).map((c: GitHubCommit) => ({
+      const compareData = (await compareRes.json()) as GitHubCompareResponse;
+      commits = (compareData.commits || []).map((c) => ({
         sha: c.sha,
         message: c.commit.message,
         author: c.author?.login || c.commit.author.name,
@@ -204,13 +222,13 @@ function extractPRNumbers(messages: string[]): number[] {
   for (const message of messages) {
     // Match "Merge pull request #123"
     const mergeMatch = message.match(/Merge pull request #(\d+)/);
-    if (mergeMatch) {
+    if (mergeMatch && mergeMatch[1]) {
       prNumbers.add(parseInt(mergeMatch[1], 10));
     }
     
     // Match "(#456)" at end of message (squash merge format)
     const squashMatch = message.match(/\(#(\d+)\)$/);
-    if (squashMatch) {
+    if (squashMatch && squashMatch[1]) {
       prNumbers.add(parseInt(squashMatch[1], 10));
     }
   }
@@ -264,8 +282,8 @@ export async function createWebhook(
     throw new Error(`Failed to create webhook: ${response.status} ${error}`);
   }
 
-  const data = (await response.json()) as any;
-  return { id: data.id as number };
+  const data = (await response.json()) as GitHubWebhookResponse;
+  return { id: data.id };
 }
 
 /**
@@ -327,9 +345,9 @@ export async function listUserRepos(
     throw new Error(`Failed to list repos: ${response.status}`);
   }
 
-  const repos = (await response.json()) as any[];
+  const repos = (await response.json()) as GitHubRepo[];
   
-  return repos.map((r: any) => ({
+  return repos.map((r) => ({
     id: r.id,
     name: r.name,
     full_name: r.full_name,

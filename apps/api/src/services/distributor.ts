@@ -86,8 +86,12 @@ export async function distributeReleaseWithResults(
     if (result.status === 'fulfilled') {
       return result.value;
     }
+    const target = targets[index];
+    if (!target) {
+      throw new Error('Target not found for result');
+    }
     return {
-      target: targets[index],
+      target,
       success: false,
       error: result.reason?.message || 'Promise rejected',
     };

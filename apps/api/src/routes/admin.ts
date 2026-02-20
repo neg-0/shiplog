@@ -1,17 +1,20 @@
-import { Hono } from 'hono';
+import { Hono, type Context, type Next } from 'hono';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/db.js';
 import { requireAuth } from '../lib/auth.js';
 
 // Admin middleware
-const requireAdmin = async (c: any, next: any) => {
+import { SubscriptionTier } from '@prisma/client';
+
+const requireAdmin = async (c: Context, next: Next) => {
   // Admin emails from environment variable
   const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean);
 
   const user = c.get('user');
-  if (!user || !ADMIN_EMAILS.includes(user.email)) {
+  if (!user || !user.email || !ADMIN_EMAILS.includes(user.email)) {
     return c.json({ error: 'Forbidden' }, 403);
   }
-  await next();
+  return next();
 };
 
 export const admin = new Hono();
@@ -79,7 +82,7 @@ admin.get('/users', async (c) => {
   const search = c.req.query('search') || '';
   const tier = c.req.query('tier') || '';
 
-  const where: any = {};
+  const where: Prisma.UserWhereInput = {};
   
   if (search) {
     where.OR = [
@@ -90,7 +93,7 @@ admin.get('/users', async (c) => {
   }
   
   if (tier && ['FREE', 'PRO', 'TEAM'].includes(tier)) {
-    where.subscriptionTier = tier;
+    where.subscriptionTier = tier as SubscriptionTier;
   }
 
   const [users, total] = await Promise.all([
