@@ -2,9 +2,15 @@ import { Hono } from 'hono';
 import Stripe from 'stripe';
 import { z } from 'zod';
 import { prisma } from '../lib/db.js';
+import { logger } from '../lib/logger.js';
 import { requireAuth } from '../lib/auth.js';
 import { validate } from '../lib/validation.js';
+import { apiLimiter } from '../lib/rate-limit.js';
 
+/**
+ * @module billing
+ * @description Routes for handling Stripe subscriptions, checkout, and webhooks.
+ */
 export const billing = new Hono();
 
 const stripeSecret = process.env.STRIPE_SECRET_KEY;
@@ -14,7 +20,7 @@ const priceTeam = process.env.STRIPE_PRICE_TEAM;
 const APP_URL = process.env.APP_URL || 'http://localhost:3000';
 
 if (!stripeSecret) {
-  console.warn('⚠️ STRIPE_SECRET_KEY is not set');
+  logger.warn('STRIPE_SECRET_KEY is not set');
 }
 
 const stripe = new Stripe(stripeSecret || '', {
@@ -31,24 +37,24 @@ import { SubscriptionTier } from '@prisma/client';
 
 const getTierFromPrice = (price?: Stripe.Price | null): SubscriptionTier => {
   if (!price) {
-    console.warn('[Billing] No price object provided to resolver. Defaulting to FREE.');
+    logger.warn('[Billing] No price object provided to resolver. Defaulting to FREE.');
     return 'FREE';
   }
   
   const priceId = price.id;
   const lookupKey = price.lookup_key;
 
-  console.log(`[Billing] Resolving tier. ID: ${priceId}, Lookup: ${lookupKey}. Expected PRO: ${pricePro}, TEAM: ${priceTeam}`);
+  logger.info(`[Billing] Resolving tier`, { priceId, lookupKey, pricePro, priceTeam });
 
   // Check by ID (Env Var)
-  if (priceId === pricePro) return 'PRO';
-  if (priceId === priceTeam) return 'TEAM';
+  if (pricePro && priceId === pricePro) return 'PRO';
+  if (priceTeam && priceId === priceTeam) return 'TEAM';
 
   // Check by Lookup Key (Fallback/Robustness)
   if (lookupKey?.startsWith('pro_')) return 'PRO';
   if (lookupKey?.startsWith('team_')) return 'TEAM';
 
-  console.warn(`[Billing] Price mismatch. ID: ${priceId}, Lookup: ${lookupKey}. Defaulting to FREE.`);
+  logger.warn(`[Billing] Price mismatch. Defaulting to FREE.`, { priceId, lookupKey });
   return 'FREE';
 };
 
@@ -61,6 +67,15 @@ const checkoutSchema = z.object({
 });
 
 billing.post('/checkout', requireAuth, validate(checkoutSchema), async (c) => {
+/**
+ * POST /checkout
+ * @description Create a Stripe Checkout Session for a subscription.
+ * @param {string} plan - The plan to subscribe to ('pro' or 'team').
+ * @returns {object} JSON with `url` to redirect the user to Stripe Checkout.
+ * @throws 400 if plan is invalid.
+ * @throws 404 if user not found.
+ */
+billing.post('/checkout', requireAuth, apiLimiter, async (c) => {
   if (!stripeSecret) {
     return c.json({ error: 'Stripe not configured' }, 500);
   }
@@ -117,6 +132,10 @@ billing.post('/checkout', requireAuth, validate(checkoutSchema), async (c) => {
 
       if (existingCustomers.data.length > 0) {
         const existingId = existingCustomers.data[0].id;
+        logger.info(`♻️ Found existing Stripe customer for user`, { customerId: existingId, email: dbUser.email });
+      const existingCustomer = existingCustomers.data[0];
+      if (existingCustomer) {
+        const existingId = existingCustomer.id;
         console.log(`♻️ Found existing Stripe customer ${existingId} for ${dbUser.email}`);
         
         await prisma.user.update({
@@ -173,7 +192,7 @@ billing.post('/checkout', requireAuth, validate(checkoutSchema), async (c) => {
   } catch (error: unknown) {
     // If customer doesn't exist (switched from live to test mode), create new one
     if (error instanceof Error && error.message.includes('No such customer')) {
-      console.log(`⚠️ Stale customer ID ${customerId}, creating new customer...`);
+      logger.warn(`⚠️ Stale customer ID ${customerId}, creating new customer...`, { customerId });
       customerId = await createNewCustomer();
       
       const session = await stripe.checkout.sessions.create({
@@ -199,7 +218,13 @@ billing.post('/checkout', requireAuth, validate(checkoutSchema), async (c) => {
   }
 });
 
-billing.post('/portal', requireAuth, async (c) => {
+/**
+ * POST /portal
+ * @description Create a Stripe Customer Portal session for managing subscriptions.
+ * @returns {object} JSON with `url` to redirect the user to Stripe Portal.
+ * @throws 400 if user has no Stripe customer ID.
+ */
+billing.post('/portal', requireAuth, apiLimiter, async (c) => {
   if (!stripeSecret) {
     return c.json({ error: 'Stripe not configured' }, 500);
   }
@@ -222,7 +247,12 @@ billing.post('/portal', requireAuth, async (c) => {
   return c.json({ url: session.url });
 });
 
-billing.get('/status', requireAuth, async (c) => {
+/**
+ * GET /status
+ * @description Get the current user's subscription status.
+ * @returns {object} Subscription details (tier, status, trial end, IDs).
+ */
+billing.get('/status', requireAuth, apiLimiter, async (c) => {
   const user = c.get('user');
   const dbUser = await prisma.user.findUnique({
     where: { id: user.id },
@@ -242,6 +272,13 @@ billing.get('/status', requireAuth, async (c) => {
   return c.json(dbUser);
 });
 
+/**
+ * POST /webhook
+ * @description Handle Stripe webhooks to update subscription status in DB.
+ * @header {string} stripe-signature - Stripe signature for verification.
+ * @returns {object} Success confirmation.
+ * @throws 400 if signature is invalid.
+ */
 billing.post('/webhook', async (c) => {
   if (!stripeSecret || !stripeWebhookSecret) {
     return c.json({ error: 'Stripe not configured' }, 500);
@@ -259,15 +296,56 @@ billing.post('/webhook', async (c) => {
   try {
     event = stripe.webhooks.constructEvent(rawBody, signature, stripeWebhookSecret);
   } catch (err) {
-    console.error('❌ Stripe webhook signature verification failed', err);
+    logger.error('❌ Stripe webhook signature verification failed', { error: err });
     return c.json({ error: 'Invalid signature' }, 400);
   }
 
-  const updateByCustomer = async (customerId: string, data: Record<string, unknown>) => {
-    await prisma.user.updateMany({
+  const syncOrganizations = async (userId: string | undefined, tier: SubscriptionTier, subscriptionId: string) => {
+    if (!userId) return;
+    try {
+      const orgs = await prisma.organization.findMany({
+        where: { ownerId: userId },
+      });
+
+      console.log(`[Billing] Syncing organizations for user ${userId}. Found ${orgs.length} orgs. Tier: ${tier}`);
+
+      for (const org of orgs) {
+        await prisma.organization.update({
+          where: { id: org.id },
+          data: {
+            subscriptionId: tier === 'TEAM' ? subscriptionId : null,
+          },
+        });
+      }
+    } catch (error) {
+      console.error(`[Billing] Failed to sync organizations for user ${userId}:`, error);
+    }
+  };
+
+  const updateByCustomer = async (customerId: string, data: Record<string, unknown>, tier: SubscriptionTier, subscriptionId: string) => {
+    // Find users first to sync organizations
+    const users = await prisma.user.findMany({
       where: { stripeCustomerId: customerId },
-      data,
+      select: { id: true },
     });
+
+    await prisma.user.updateMany({
+      where: {
+        stripeCustomerId: customerId,
+        OR: [
+          { stripeLastEventTimestamp: { lt: event.created } },
+          { stripeLastEventTimestamp: null },
+        ],
+      },
+      data: {
+        ...data,
+        stripeLastEventTimestamp: event.created,
+      },
+    });
+
+    for (const user of users) {
+      await syncOrganizations(user.id, tier, subscriptionId);
+    }
   };
 
   switch (event.type) {
@@ -278,28 +356,43 @@ billing.post('/webhook', async (c) => {
       const userId = session.client_reference_id ?? session.metadata?.userId;
 
       if (customerId && subscriptionId) {
-        const subscription = await stripe.subscriptions.retrieve(subscriptionId, {
-          expand: ['items.data.price'],
-        });
-        const price = subscription.items.data[0]?.price;
-        const tier = getTierFromPrice(price);
-        const trialEndsAt = subscription.trial_end ? new Date(subscription.trial_end * 1000) : null;
-
-        const data = {
-          stripeCustomerId: customerId,
-          stripeSubscriptionId: subscriptionId,
-          subscriptionStatus: subscription.status,
-          subscriptionTier: tier,
-          trialEndsAt,
-        };
-
-        if (userId) {
-          await prisma.user.update({
-            where: { id: userId },
-            data,
+        try {
+          const subscription = await stripe.subscriptions.retrieve(subscriptionId, {
+            expand: ['items.data.price'],
           });
-        } else {
-          await updateByCustomer(customerId, data);
+          const price = subscription.items.data[0]?.price;
+          const tier = getTierFromPrice(price);
+          const trialEndsAt = subscription.trial_end ? new Date(subscription.trial_end * 1000) : null;
+
+          const data = {
+            stripeCustomerId: customerId,
+            stripeSubscriptionId: subscriptionId,
+            subscriptionStatus: subscription.status,
+            subscriptionTier: tier,
+            trialEndsAt,
+          };
+
+          if (userId) {
+            await prisma.user.updateMany({
+              where: {
+                id: userId,
+                OR: [
+                  { stripeLastEventTimestamp: { lt: event.created } },
+                  { stripeLastEventTimestamp: null },
+                ],
+              },
+              data: {
+                ...data,
+                stripeLastEventTimestamp: event.created,
+              },
+            });
+            await syncOrganizations(userId, tier, subscriptionId);
+          } else {
+            await updateByCustomer(customerId, data, tier, subscriptionId);
+          }
+        } catch (error) {
+          console.error('Error processing checkout.session.completed:', error);
+          return c.json({ error: 'Webhook processing failed' }, 500);
         }
       }
       break;
@@ -307,23 +400,28 @@ billing.post('/webhook', async (c) => {
     case 'customer.subscription.created':
     case 'customer.subscription.updated':
     case 'customer.subscription.deleted': {
-      const eventSubscription = event.data.object as Stripe.Subscription;
-      // Fetch fresh subscription with expanded price to ensure lookup_key is available
-      const subscription = await stripe.subscriptions.retrieve(eventSubscription.id, {
-        expand: ['items.data.price'],
-      });
+      try {
+        const eventSubscription = event.data.object as Stripe.Subscription;
+        // Fetch fresh subscription with expanded price to ensure lookup_key is available
+        const subscription = await stripe.subscriptions.retrieve(eventSubscription.id, {
+          expand: ['items.data.price'],
+        });
 
-      const customerId = subscription.customer as string;
-      const price = subscription.items.data[0]?.price;
-      const tier: SubscriptionTier = shouldDowngrade(subscription.status) ? 'FREE' : getTierFromPrice(price);
-      const trialEndsAt = subscription.trial_end ? new Date(subscription.trial_end * 1000) : null;
+        const customerId = subscription.customer as string;
+        const price = subscription.items.data[0]?.price;
+        const tier: SubscriptionTier = shouldDowngrade(subscription.status) ? 'FREE' : getTierFromPrice(price);
+        const trialEndsAt = subscription.trial_end ? new Date(subscription.trial_end * 1000) : null;
 
-      await updateByCustomer(customerId, {
-        stripeSubscriptionId: subscription.id,
-        subscriptionStatus: subscription.status,
-        subscriptionTier: tier,
-        trialEndsAt,
-      });
+        await updateByCustomer(customerId, {
+          stripeSubscriptionId: subscription.id,
+          subscriptionStatus: subscription.status,
+          subscriptionTier: tier,
+          trialEndsAt,
+        }, tier, subscription.id);
+      } catch (error) {
+        console.error('Error processing customer.subscription event:', error);
+        return c.json({ error: 'Webhook processing failed' }, 500);
+      }
       break;
     }
     default:

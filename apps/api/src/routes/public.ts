@@ -4,13 +4,29 @@ import { zValidator } from '@hono/zod-validator';
 import { prisma } from '../lib/db.js';
 import { rateLimit } from '../middleware/rate-limit.js';
 import { sanitizeHtml } from '../lib/sanitize.js';
+import { logger } from '../lib/logger.js';
 
+/**
+ * @module public
+ * @description Public-facing routes for changelogs and feedback.
+ */
 export const publicChangelog = new Hono();
 
 const publicLimit = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   limit: 100,
 });
+/**
+ * POST /feedback
+ * @description Submit feedback for a specific repository.
+ * @body {string} repoId - Repository UUID.
+ * @body {string} feedback - Feedback text.
+ * @body {string} [email] - User email.
+ * @body {string} [source] - Source of feedback (e.g., widget).
+ * @returns {object} Success confirmation.
+ */
+publicChangelog.post('/feedback', async (c) => {
+  const { repoId, feedback, email, source } = await c.req.json();
 
 const feedbackLimit = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
@@ -37,6 +53,7 @@ publicChangelog.post('/feedback', feedbackLimit, zValidator('json', feedbackSche
 
   // Log feedback
   console.log(`[Feedback] Repo: ${repoId}, Content: ${safeFeedback}, Email: ${email}`);
+  logger.info(`Feedback received`, { repoId, feedback, email });
 
   // Send to Discord if configured
   if (process.env.DISCORD_FEEDBACK_WEBHOOK_URL) {
@@ -49,7 +66,7 @@ publicChangelog.post('/feedback', feedbackLimit, zValidator('json', feedbackSche
         }),
       });
     } catch (err) {
-      console.error('Failed to send feedback to Discord', err);
+      logger.error('Failed to send feedback to Discord', { error: err });
     }
   }
 
@@ -57,7 +74,13 @@ publicChangelog.post('/feedback', feedbackLimit, zValidator('json', feedbackSche
   return c.json({ success: true });
 });
 
-// Get public changelog for a repo by slug
+/**
+ * GET /:slug
+ * @description Get public repository details and recent releases.
+ * @param {string} slug - Repository slug or full name.
+ * @returns {object} Public repo details and releases.
+ * @throws 404 if not found.
+ */
 publicChangelog.get('/:slug', async (c) => {
   const slug = c.req.param('slug');
   
@@ -143,6 +166,15 @@ const listReleasesSchema = z.object({
 
 // Get releases list (paginated)
 publicChangelog.get('/:slug/releases', zValidator('query', listReleasesSchema), async (c) => {
+/**
+ * GET /:slug/releases
+ * @description Get paginated releases for a repository.
+ * @param {string} slug - Repository slug.
+ * @param {string} [page=1] - Page number.
+ * @param {string} [limit=20] - Releases per page.
+ * @returns {object} Array of releases and pagination info.
+ */
+publicChangelog.get('/:slug/releases', async (c) => {
   const slug = c.req.param('slug');
   const { page, limit } = c.req.valid('query');
 
@@ -185,7 +217,14 @@ publicChangelog.get('/:slug/releases', zValidator('query', listReleasesSchema), 
   });
 });
 
-// Get single release
+/**
+ * GET /:slug/releases/:version
+ * @description Get a specific release by version tag.
+ * @param {string} slug - Repository slug.
+ * @param {string} version - Release tag name (e.g., v1.0.0).
+ * @returns {object} Release details.
+ * @throws 404 if release not found.
+ */
 publicChangelog.get('/:slug/releases/:version', async (c) => {
   const slug = c.req.param('slug');
   const version = c.req.param('version');

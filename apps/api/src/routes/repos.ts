@@ -1,17 +1,24 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { prisma } from '../lib/db.js';
+import { logger } from '../lib/logger.js';
 import { requireAuth, decrypt } from '../lib/auth.js';
+import { apiLimiter } from '../lib/rate-limit.js';
 import { listUserRepos, createWebhook, deleteWebhook } from '../services/github.js';
 import { importRepoHistory } from '../services/importer.js';
 import { validate } from '../lib/validation.js';
 
+/**
+ * @module repos
+ * @description Routes for managing connected repositories.
+ */
 export const repos = new Hono();
 
 const API_URL = process.env.API_URL || 'http://localhost:3001';
 
 // All routes require auth
 repos.use('*', requireAuth);
+repos.use('*', apiLimiter);
 
 // Helper for repo access (Owner or Org Member)
 const repoAccess = (userId: string) => ({
@@ -54,6 +61,11 @@ const checkRepoAdmin = async (repoId: string, userId: string) => {
 };
 
 // List user's connected repos
+/**
+ * GET /
+ * @description List all repositories connected by the authenticated user.
+ * @returns {object} Array of connected repositories.
+ */
 repos.get('/', async (c) => {
   const user = c.get('user');
   
@@ -86,7 +98,13 @@ repos.get('/', async (c) => {
   });
 });
 
-// Get single repo detail
+/**
+ * GET /:id
+ * @description Get details for a specific repository including configuration and recent releases.
+ * @param {string} id - Repository UUID.
+ * @returns {object} Repository details.
+ * @throws 404 if not found.
+ */
 repos.get('/:id', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
@@ -149,7 +167,12 @@ repos.get('/:id', async (c) => {
   });
 });
 
-// List available GitHub repos (not yet connected)
+/**
+ * GET /github/available
+ * @description List GitHub repositories that can be connected (not yet imported).
+ * @returns {object} Array of available GitHub repositories.
+ * @throws 401 if GitHub token is missing.
+ */
 repos.get('/github/available', async (c) => {
   const user = c.get('user');
 
@@ -197,6 +220,19 @@ const connectSchema = z.object({
 
 // Connect a new repo (create webhook)
 repos.post('/connect', validate(connectSchema), async (c) => {
+/**
+ * POST /connect
+ * @description Connect a GitHub repository. Creates a webhook on GitHub and starts initial import.
+ * @body {number} githubId - GitHub Repository ID.
+ * @body {string} owner - Repository owner (user/org).
+ * @body {string} repo - Repository name.
+ * @body {string} fullName - Full name (owner/repo).
+ * @body {string} [description] - Repository description.
+ * @returns {object} Connected repository details.
+ * @throws 403 if repository limit reached.
+ * @throws 400 if already connected.
+ */
+repos.post('/connect', async (c) => {
   const user = c.get('user');
   const body = c.req.valid('json');
 
@@ -287,11 +323,19 @@ repos.post('/connect', validate(connectSchema), async (c) => {
       },
     });
 
-    console.log(`🔗 Connected repo: ${body.fullName} (webhook ID: ${webhookId})`);
+    logger.info(`🔗 Connected repo: ${body.fullName} (webhook ID: ${webhookId})`, {
+      repoId: repo.id,
+      fullName: body.fullName,
+      webhookId
+    });
 
     // Trigger background import of recent history
     importRepoHistory(repo.id, accessToken).catch(err => 
-      console.error(`Background import failed for ${body.fullName}:`, err)
+      logger.error(`Background import failed for ${body.fullName}`, {
+        repoId: repo.id,
+        fullName: body.fullName,
+        error: err
+      })
     );
 
     return c.json({
@@ -302,7 +346,7 @@ repos.post('/connect', validate(connectSchema), async (c) => {
     });
 
   } catch (error) {
-    console.error('Failed to connect repo:', error);
+    logger.error('Failed to connect repo', { error, githubId: body.githubId, fullName: body.fullName });
     
     // Still create the repo but mark webhook as failed
     const repo = await prisma.repo.create({
@@ -345,6 +389,27 @@ repos.patch('/:id/config', validate(configSchema), async (c) => {
     const user = c.get('user');
     const id = c.req.param('id');
     const body = c.req.valid('json');
+/**
+ * PATCH /:id/config
+ * @description Update repository configuration (AI generation settings).
+ * @param {string} id - Repository UUID.
+ * @body {boolean} [autoGenerate] - Enable auto-generation of notes.
+ * @body {boolean} [autoPublish] - Enable auto-publishing.
+ * @body {string} [customerTone] - Tone for customer notes.
+ * @returns {object} Updated configuration.
+ */
+repos.patch('/:id/config', async (c) => {
+  const id = c.req.param('id');
+    const body = await c.req.json() as {
+      autoGenerate?: boolean;
+      autoPublish?: boolean;
+      generateCustomer?: boolean;
+      generateDeveloper?: boolean;
+      generateStakeholder?: boolean;
+      customerTone?: string;
+      companyName?: string;
+      productName?: string;
+    };
 
     // Verify ownership/access
     const repo = await prisma.repo.findFirst({
@@ -371,11 +436,11 @@ repos.patch('/:id/config', validate(configSchema), async (c) => {
       update: body,
     });
 
-    console.log(`📝 Updated config for repo ${id}`);
+    logger.info(`📝 Updated config for repo ${id}`, { repoId: id });
 
     return c.json(config);
   } catch (error) {
-    console.error('Failed to update repo config:', error);
+    logger.error('Failed to update repo config', { repoId: id, error });
     const message = error instanceof Error ? error.message : 'Unknown error';
     return c.json({ error: `Failed to update configuration: ${message}` }, 500);
   }
@@ -398,6 +463,27 @@ repos.patch('/:id/settings', validate(settingsSchema), async (c) => {
     const user = c.get('user');
     const id = c.req.param('id');
     const body = c.req.valid('json');
+/**
+ * PATCH /:id/settings
+ * @description Update repository public changelog settings.
+ * @param {string} id - Repository UUID.
+ * @body {boolean} [isPublic] - Make changelog public.
+ * @body {string} [slug] - Custom slug.
+ * @body {string} [publicTitle] - Public title.
+ * @returns {object} Updated repository settings.
+ */
+repos.patch('/:id/settings', async (c) => {
+  const id = c.req.param('id');
+    const body = await c.req.json() as {
+      isPublic?: boolean;
+      slug?: string;
+      publicTitle?: string;
+      publicDescription?: string;
+      publicLogoUrl?: string;
+      publicAccentColor?: string;
+      hidePoweredBy?: boolean;
+      excludeFromFeatured?: boolean;
+    };
 
     // Verify ownership
     const repo = await prisma.repo.findFirst({
@@ -428,11 +514,11 @@ repos.patch('/:id/settings', validate(settingsSchema), async (c) => {
       },
     });
 
-    console.log(`📝 Updated settings for repo ${id}`);
+    logger.info(`📝 Updated settings for repo ${id}`, { repoId: id });
 
     return c.json(updated);
   } catch (error) {
-    console.error('Failed to update repo settings:', error);
+    logger.error('Failed to update repo settings', { repoId: id, error });
     const message = error instanceof Error ? error.message : 'Unknown error';
     return c.json({ error: `Failed to update settings: ${message}` }, 500);
   }
@@ -448,6 +534,16 @@ const channelSchema = z.object({
 
 // Create a distribution channel
 repos.post('/:id/channels', validate(channelSchema), async (c) => {
+/**
+ * POST /:id/channels
+ * @description Add a distribution channel (Slack, Discord) to the repository.
+ * @param {string} id - Repository UUID.
+ * @body {string} type - Channel type (SLACK, DISCORD).
+ * @body {string} webhookUrl - Webhook URL.
+ * @body {string} audience - Target audience.
+ * @returns {object} Created channel.
+ */
+repos.post('/:id/channels', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
   const body = c.req.valid('json');
@@ -491,6 +587,15 @@ const updateChannelSchema = z.object({
 
 // Update a distribution channel
 repos.patch('/:id/channels/:channelId', validate(updateChannelSchema), async (c) => {
+/**
+ * PATCH /:id/channels/:channelId
+ * @description Update a distribution channel.
+ * @param {string} id - Repository UUID.
+ * @param {string} channelId - Channel UUID.
+ * @body {boolean} [enabled] - Enable/disable channel.
+ * @returns {object} Updated channel.
+ */
+repos.patch('/:id/channels/:channelId', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
   const channelId = c.req.param('channelId');
@@ -524,7 +629,13 @@ repos.patch('/:id/channels/:channelId', validate(updateChannelSchema), async (c)
   return c.json(updated);
 });
 
-// Delete a distribution channel
+/**
+ * DELETE /:id/channels/:channelId
+ * @description Delete a distribution channel.
+ * @param {string} id - Repository UUID.
+ * @param {string} channelId - Channel UUID.
+ * @returns {object} Success message.
+ */
 repos.delete('/:id/channels/:channelId', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
@@ -556,7 +667,12 @@ repos.delete('/:id/channels/:channelId', async (c) => {
   return c.json({ deleted: true });
 });
 
-// Disconnect a repo (remove webhook)
+/**
+ * DELETE /:id
+ * @description Disconnect a repository and remove the webhook from GitHub.
+ * @param {string} id - Repository UUID.
+ * @returns {object} Disconnect status.
+ */
 repos.delete('/:id', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
@@ -582,7 +698,7 @@ repos.delete('/:id', async (c) => {
         await deleteWebhook(repo.owner, repo.name, repo.webhookId, accessToken);
       }
     } catch (error) {
-      console.warn('Failed to delete GitHub webhook:', error);
+      logger.warn('Failed to delete GitHub webhook', { repoId: id, error });
       // Continue with deletion anyway
     }
   }
@@ -592,7 +708,7 @@ repos.delete('/:id', async (c) => {
     where: { id },
   });
 
-  console.log(`🔌 Disconnected repo: ${repo.fullName}`);
+  logger.info(`🔌 Disconnected repo: ${repo.fullName}`, { repoId: id, fullName: repo.fullName });
 
   return c.json({
     status: 'disconnected',
