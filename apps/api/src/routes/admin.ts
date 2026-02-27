@@ -1,26 +1,36 @@
-import { Hono } from 'hono';
-import type { Context, Next } from 'hono';
+import { Hono, type Context, type Next } from 'hono';
+import { z } from 'zod';
+import { zValidator } from '@hono/zod-validator';
 import { prisma } from '../lib/db.js';
 import { requireAuth } from '../lib/auth.js';
-
-// Admin emails from environment variable
-const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean);
+import { apiLimiter } from '../lib/rate-limit.js';
+import { updateUserAdminSchema } from '../lib/schemas.js';
 
 // Admin middleware
-async function requireAdmin(c: Context, next: Next): Promise<Response | void> {
+const requireAdmin = async (c: Context, next: Next) => {
+  const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean);
   const user = c.get('user');
-  if (!user?.email || !ADMIN_EMAILS.includes(user.email)) {
+  if (!user || !user.email || !ADMIN_EMAILS.includes(user.email)) {
     return c.json({ error: 'Forbidden' }, 403);
   }
-  await next();
-}
+  return next();
+};
 
 export const admin = new Hono();
 
-// Apply auth + admin middleware to all routes
-admin.use('*', requireAuth, requireAdmin);
+/**
+ * @module admin
+ * @description Administrative routes for managing users and viewing metrics.
+ */
 
-// Get metrics dashboard data
+// Apply auth + admin middleware to all routes
+admin.use('*', requireAuth, apiLimiter, requireAdmin);
+
+/**
+ * GET /metrics
+ * @description Get high-level metrics for the admin dashboard.
+ * @returns {object} Statistics about users, subscriptions, repositories, releases, and estimated MRR.
+ */
 admin.get('/metrics', async (c) => {
   const [
     totalUsers,
@@ -54,12 +64,19 @@ admin.get('/metrics', async (c) => {
   });
 });
 
-// List all users
-admin.get('/users', async (c) => {
-  const page = Math.max(1, parseInt(c.req.query('page') || '1') || 1);
-  const limit = Math.min(100, Math.max(1, parseInt(c.req.query('limit') || '50') || 50));
-  const search = c.req.query('search') || '';
-  const tier = c.req.query('tier') || '';
+const listUsersSchema = z.object({
+  page: z.string().optional().transform(v => Math.max(1, parseInt(v || '1'))),
+  limit: z.string().optional().transform(v => Math.min(100, Math.max(1, parseInt(v || '50')))),
+  search: z.string().optional(),
+  tier: z.enum(['FREE', 'PRO', 'TEAM']).optional(),
+});
+
+/**
+ * GET /users
+ * @description List all users with pagination and filtering.
+ */
+admin.get('/users', zValidator('query', listUsersSchema), async (c) => {
+  const { page, limit, search, tier } = c.req.valid('query');
 
   const where: any = {};
   
@@ -71,8 +88,8 @@ admin.get('/users', async (c) => {
     ];
   }
   
-  if (tier && ['FREE', 'PRO', 'TEAM'].includes(tier)) {
-    where.subscriptionTier = tier;
+  if (tier) {
+    where.subscriptionTier = tier as string;
   }
 
   const [users, total] = await Promise.all([
@@ -97,7 +114,7 @@ admin.get('/users', async (c) => {
   ]);
 
   return c.json({
-    users: users.map(u => ({
+    users: users.map((u: any) => ({
       ...u,
       repoCount: u._count.repos,
       _count: undefined,
@@ -111,23 +128,16 @@ admin.get('/users', async (c) => {
   });
 });
 
-// Get single user
+/**
+ * GET /users/:id
+ * @description Get detailed information for a specific user.
+ */
 admin.get('/users/:id', async (c) => {
   const userId = c.req.param('id');
-
+  
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: {
-      id: true,
-      login: true,
-      name: true,
-      email: true,
-      avatarUrl: true,
-      subscriptionTier: true,
-      subscriptionStatus: true,
-      createdAt: true,
-      trialEndsAt: true,
-      stripeCustomerId: true,
+    include: {
       repos: {
         select: {
           id: true,
@@ -146,27 +156,40 @@ admin.get('/users/:id', async (c) => {
   return c.json(user);
 });
 
-// Update user
-admin.patch('/users/:id', async (c) => {
-  const userId = c.req.param('id');
-  const body = await c.req.json();
-  
-  const { subscriptionTier } = body;
-  
-  const updated = await prisma.user.update({
-    where: { id: userId },
-    data: {
-      ...(subscriptionTier && { subscriptionTier }),
-    },
-  });
+/**
+ * PATCH /users/:id
+ * @description Update a user's information.
+ */
+admin.patch(
+  '/users/:id',
+  zValidator('json', updateUserAdminSchema),
+  async (c) => {
+    const userId = c.req.param('id');
+    const { subscriptionTier } = c.req.valid('json');
 
-  return c.json(updated);
-});
+    const updated = await prisma.user.update({
+      where: { id: userId },
+      data: {
+        ...(subscriptionTier && { subscriptionTier: subscriptionTier as string }),
+      },
+    });
 
-// Delete user
+    return c.json(updated);
+  }
+);
+
+/**
+ * DELETE /users/:id
+ * @description Delete a user and their associated data.
+ */
 admin.delete('/users/:id', async (c) => {
   const userId = c.req.param('id');
   
+  const currentUser = c.get('user');
+  if (userId === currentUser.id) {
+    return c.json({ error: 'Cannot delete your own admin account' }, 400);
+  }
+
   await prisma.user.delete({
     where: { id: userId },
   });
@@ -174,11 +197,17 @@ admin.delete('/users/:id', async (c) => {
   return c.json({ success: true });
 });
 
-// Get recent activity
-admin.get('/activity', async (c) => {
-  const limit = Math.min(100, Math.max(1, parseInt(c.req.query('limit') || '100') || 100));
+const activitySchema = z.object({
+  limit: z.string().optional().transform(v => Math.min(100, Math.max(1, parseInt(v || '100')))),
+});
+
+/**
+ * GET /activity
+ * @description Get a combined feed of recent system activity (signups, releases).
+ */
+admin.get('/activity', zValidator('query', activitySchema), async (c) => {
+  const { limit } = c.req.valid('query');
   
-  // Get recent users
   const recentUsers = await prisma.user.findMany({
     take: limit,
     orderBy: { createdAt: 'desc' },
@@ -191,7 +220,6 @@ admin.get('/activity', async (c) => {
     },
   });
 
-  // Get recent releases
   const recentReleases = await prisma.release.findMany({
     take: limit,
     orderBy: { createdAt: 'desc' },
@@ -209,15 +237,14 @@ admin.get('/activity', async (c) => {
     },
   });
 
-  // Combine and sort
   const events = [
-    ...recentUsers.map(u => ({
+    ...recentUsers.map((u: any) => ({
       type: 'signup' as const,
       id: u.id,
       description: `${u.login} signed up (${u.subscriptionTier})`,
       createdAt: u.createdAt,
     })),
-    ...recentReleases.map(r => ({
+    ...recentReleases.map((r: any) => ({
       type: 'release' as const,
       id: r.id,
       description: `${r.repo.fullName} released ${r.tagName}`,

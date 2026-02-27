@@ -142,6 +142,14 @@ export interface Channel {
 export interface RepoDetail extends Repo {
   owner: string;
   webhookActive: boolean;
+  isPublic?: boolean;
+  slug?: string;
+  publicTitle?: string;
+  publicDescription?: string;
+  publicLogoUrl?: string;
+  publicAccentColor?: string;
+  hidePoweredBy?: boolean;
+  excludeFromFeatured?: boolean;
   config: {
     autoGenerate: boolean;
     autoPublish: boolean;
@@ -208,6 +216,22 @@ export async function updateRepoConfig(id: string, config: Partial<RepoDetail['c
   });
 }
 
+export async function updateRepoSettings(id: string, settings: {
+  isPublic?: boolean;
+  slug?: string;
+  publicTitle?: string;
+  publicDescription?: string;
+  publicLogoUrl?: string;
+  publicAccentColor?: string;
+  hidePoweredBy?: boolean;
+  excludeFromFeatured?: boolean;
+}): Promise<void> {
+  return fetchApi(`/repos/${id}/settings`, {
+    method: 'PATCH',
+    body: JSON.stringify(settings),
+  });
+}
+
 export async function addChannel(
   repoId: string,
   channel: Omit<Channel, 'id'>
@@ -262,6 +286,9 @@ export interface Release {
   repo: {
     id: string;
     fullName: string;
+    config?: {
+      channels?: Channel[];
+    };
   };
   notes: ReleaseNotes | null;
 }

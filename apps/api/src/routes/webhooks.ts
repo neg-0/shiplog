@@ -1,55 +1,91 @@
 import { Hono } from 'hono';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { prisma } from '../lib/db.js';
+import { logger, setLoggerContext } from '../lib/logger.js';
 import { fetchReleaseData } from '../services/github.js';
 import { generateReleaseNotes } from '../services/generator.js';
 import { decrypt } from '../lib/auth.js';
 import { distributeReleaseWithResults, type DistributionTarget } from '../services/distributor.js';
+import { metrics } from '../lib/metrics.js';
 
+/**
+ * @module webhooks
+ * @description Routes for handling external webhooks (GitHub).
+ */
 export const webhooks = new Hono();
 
-// Verify GitHub webhook signature
+/**
+ * Verify GitHub webhook signature HMAC.
+ * @param payload - Raw request body.
+ * @param signature - Signature from header.
+ * @param secret - Webhook secret.
+ * @returns boolean indicating validity.
+ */
 function verifyGitHubSignature(payload: string, signature: string | undefined, secret: string): boolean {
   if (!signature) return false;
   
   const hmac = createHmac('sha256', secret);
   const digest = 'sha256=' + hmac.update(payload).digest('hex');
   
+  const signatureBuffer = Buffer.from(signature);
+  const digestBuffer = Buffer.from(digest);
+
+  if (signatureBuffer.length !== digestBuffer.length) {
+    return false;
+  }
+
   try {
-    return timingSafeEqual(Buffer.from(signature), Buffer.from(digest));
+    return timingSafeEqual(signatureBuffer, digestBuffer);
   } catch {
     return false;
   }
 }
 
+/**
+ * POST /github
+ * @description Handle GitHub webhooks (release events).
+ * @header {string} x-hub-signature-256 - HMAC signature.
+ * @header {string} x-github-event - Event type.
+ * @returns {object} Processing status.
+ */
 webhooks.post('/github', async (c) => {
   // Get raw body for signature verification
   const body = await c.req.text();
   const signature = c.req.header('x-hub-signature-256');
   const event = c.req.header('x-github-event');
 
-  // Early return for non-release events to avoid unnecessary DB lookups and parsing
-  if (event !== 'release') {
-    return c.json({ status: 'ignored', event });
+  // Verify signature presence early to prevent unnecessary processing
+  if (!signature) {
+    return c.json({ error: 'No signature' }, 401);
   }
 
-  let payload: { action?: string; release?: { tag_name: string }; repository?: { full_name: string } };
+  let payload: {
+    action?: string;
+    release?: { id: number; tag_name: string };
+    repository?: { full_name: string }
+  };
+
   try {
     payload = JSON.parse(body);
   } catch {
     return c.json({ error: 'Invalid JSON' }, 400);
   }
 
+  logger.info(`📥 Received GitHub webhook: ${event}`, { event });
+
   // Handle release events
-  if (payload.action === 'published') {
+  if (event === 'release' && payload.action === 'published') {
     const release = payload.release!;
     const repo = payload.repository!;
+    setLoggerContext({ repo: repo.full_name });
 
+    logger.info(`🚀 New release: ${repo.full_name} @ ${release.tag_name}`, {
+      repo: repo.full_name,
+      tagName: release.tag_name
+    });
+    
     try {
       // Find the connected repository in our database
-      // NOTE: Signature verification happens after the DB lookup because each repo has
-      // its own webhook secret. This is a known trade-off — we must identify the repo
-      // first to retrieve the correct secret for verification.
       const connectedRepo = await prisma.repo.findFirst({
         where: {
           fullName: repo.full_name,
@@ -67,24 +103,36 @@ webhooks.post('/github', async (c) => {
       });
 
       if (!connectedRepo) {
+        logger.warn(`⚠️ No connected repo found for ${repo.full_name}`, { repo: repo.full_name });
         return c.json({ status: 'ignored', reason: 'repo_not_connected' });
       }
 
       // Verify signature using the repo's webhook secret
       if (!connectedRepo.webhookSecret) {
-        console.error(`No webhook secret for repo ${repo.full_name}`);
+        logger.error(`⚠️ No webhook secret for repo ${repo.full_name}`, { repo: repo.full_name });
         return c.json({ error: 'Webhook secret not configured' }, 500);
       }
 
       if (!verifyGitHubSignature(body, signature, connectedRepo.webhookSecret)) {
-        console.error(`Invalid signature for ${repo.full_name}`);
+        logger.error(`❌ Invalid signature for ${repo.full_name}`, { repo: repo.full_name });
         return c.json({ error: 'Invalid signature' }, 401);
+      }
+
+      // Check if release already exists to prevent replay attacks
+      const existingRelease = await prisma.release.findUnique({
+        where: { githubId: release.id },
+      });
+
+      if (existingRelease) {
+        logger.warn(`Release ${release.id} already processed`, { releaseId: release.id });
+        return c.json({ status: 'ignored', reason: 'already_processed' });
       }
 
       // Decrypt the user's GitHub token
       const accessToken = await decrypt(connectedRepo.user.accessToken);
 
       // Fetch detailed release data
+      logger.info(`📊 Fetching release data for ${repo.full_name}...`, { repo: repo.full_name });
       const releaseData = await fetchReleaseData(
         connectedRepo.owner, 
         connectedRepo.name, 
@@ -92,6 +140,10 @@ webhooks.post('/github', async (c) => {
         accessToken
       );
 
+      // Generate AI release notes
+      // Generation timing logged below
+      const start = Date.now();
+      logger.info(`🤖 Generating release notes...`);
       const notes = await generateReleaseNotes({
         tagName: releaseData.release.tagName,
         previousTag: releaseData.previousTag ?? undefined,
@@ -107,6 +159,11 @@ webhooks.post('/github', async (c) => {
           customerTone: connectedRepo.config?.customerTone ?? 'friendly',
         },
       });
+      const duration = Date.now() - start;
+      metrics.generationTimeTotal += duration;
+      metrics.generationCount++;
+
+      logger.info(`✅ Generated notes (${notes.tokensUsed} tokens used)`, { tokensUsed: notes.tokensUsed });
 
       // Create the release record
       const savedRelease = await prisma.release.create({
@@ -136,6 +193,8 @@ webhooks.post('/github', async (c) => {
           model: notes.model,
         },
       });
+
+      logger.info(`💾 Saved release: ${savedRelease.id}`, { releaseId: savedRelease.id });
 
       const distributionTargets: Array<DistributionTarget & {
         channelId?: string;
@@ -181,6 +240,11 @@ webhooks.post('/github', async (c) => {
         });
       });
 
+      logger.info(`📤 Distributing release ${savedRelease.id} to ${distributionTargets.length} targets`, {
+        releaseId: savedRelease.id,
+        targetCount: distributionTargets.length
+      });
+
       const releaseWithRepo = {
         ...savedRelease,
         repo: {
@@ -214,6 +278,9 @@ webhooks.post('/github', async (c) => {
         data: { status: 'PUBLISHED' },
       });
 
+      metrics.releasesProcessed++;
+      metrics.distributionsSent += distributionResults.length;
+
       return c.json({
         status: 'processed',
         release: release.tag_name,
@@ -224,11 +291,15 @@ webhooks.post('/github', async (c) => {
       });
 
     } catch (error) {
-      console.error('Error processing release:', error);
-      return c.json({ status: 'error', message: 'Failed to process release' }, 500);
+      metrics.errorCounts++;
+      logger.error('Error processing release', { error });
+      return c.json({ 
+        status: 'error', 
+        message: error instanceof Error ? error.message : 'Unknown error' 
+      }, 500);
     }
   }
 
-  // Acknowledge non-published release actions
-  return c.json({ status: 'ignored', event, action: payload.action });
+  // Acknowledge other events
+  return c.json({ status: 'ignored', event });
 });

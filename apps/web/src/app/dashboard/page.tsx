@@ -5,7 +5,7 @@ import { AlertCircle, GitBranch, Loader2, Plus, RefreshCw, Ship } from 'lucide-r
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
-import { exchangeAuthCode, getRepos, getUser, isAuthenticated, type Repo, type User } from '../../lib/api';
+import { getRepos, getUser, isAuthenticated, exchangeAuthCode, type Repo, type User } from '../../lib/api';
 
 function DashboardContent() {
 
@@ -17,15 +17,24 @@ function DashboardContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
+  // Handle auth code from OAuth callback
   useEffect(() => {
     const code = searchParams.get('code');
     if (code) {
       exchangeAuthCode(code).then(() => {
-        router.replace('/dashboard');
+        // Check if user has repos to decide redirection
+        getRepos().then(({ repos }) => {
+          if (repos.length === 0) {
+            router.replace('/dashboard/repos/connect');
+          } else {
+            router.replace('/dashboard');
+          }
+        }).catch(() => {
+          router.replace('/dashboard');
+        });
       }).catch(() => {
-        router.push('/login');
+        router.replace('/login');
       });
-      return;
     }
   }, [searchParams, router]);
 

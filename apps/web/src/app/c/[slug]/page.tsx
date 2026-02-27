@@ -2,15 +2,20 @@ import { Ship, Tag, Calendar, ExternalLink, ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import ReactMarkdown from 'react-markdown';
+import { FeedbackWidget } from '@/components/FeedbackWidget';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || '';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.shiplog.io';
 
 interface Release {
   id: string;
   version: string;
   name: string | null;
   date: string;
-  notes: { id: string; audience: string; content: string }[];
+  notes: {
+    customer: string | null;
+    developer: string | null;
+    stakeholder: string | null;
+  } | null;
 }
 
 interface ChangelogData {
@@ -118,9 +123,11 @@ export default async function PublicChangelogPage({ params }: { params: { slug: 
                 )}
 
                 {/* Show first audience notes (usually Customer) */}
-                {release.notes.length > 0 && (
+                {release.notes && (
                   <div className="prose prose-gray max-w-none">
-                    <ReactMarkdown>{release.notes[0].content}</ReactMarkdown>
+                    <ReactMarkdown>
+                      {release.notes.customer || release.notes.developer || release.notes.stakeholder || ''}
+                    </ReactMarkdown>
                   </div>
                 )}
 
@@ -152,6 +159,8 @@ export default async function PublicChangelogPage({ params }: { params: { slug: 
           </div>
         </footer>
       )}
+      
+      <FeedbackWidget repoId={data.id} repoName={data.name} />
     </div>
   );
 }

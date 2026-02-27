@@ -132,7 +132,7 @@ export default function ReleaseDetailPage() {
         )}
 
         {/* Notes Content */}
-        {data.notes.length > 0 ? (
+        {data.notes.length > 0 && data.notes[0] ? (
           <div className="prose prose-gray max-w-none">
             <ReactMarkdown>{data.notes[activeIndex].content}</ReactMarkdown>
           </div>

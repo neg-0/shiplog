@@ -1,10 +1,11 @@
+type Release = { id: string; repoId: string; githubReleaseId: number; tagName: string; name: string; body: string; status: string; htmlUrl?: string; };
 /**
  * ShipLog Distribution Service
  * Sends generated notes to configured channels (Slack, Discord, Email, Hosted)
  */
 
-import type { Release } from '@prisma/client';
 import type { GeneratedNotes } from './generator.js';
+import { logError, logInfo } from '../lib/logger.js';
 
 export interface DistributionTarget {
   type: 'slack' | 'discord' | 'email' | 'hosted';
@@ -12,6 +13,8 @@ export interface DistributionTarget {
   webhookUrl?: string; // For Slack/Discord
   email?: string; // For email
   name?: string;
+  channelId?: string; // Optional channel ID for tracking
+  emailRecipientId?: string; // Optional recipient ID for tracking
 }
 
 interface DistributionPayload {
@@ -33,7 +36,15 @@ export interface DistributionResult {
 }
 
 /**
- * Distribute release notes to all configured targets
+ * Distribute release notes to all configured targets (Slack, Discord, Email, etc.).
+ *
+ * @description
+ * Orchestrates the distribution process by calling `distributeReleaseWithResults` but ignoring the detailed results.
+ *
+ * @param release - The release entity from the database, including optional repo information.
+ * @param notes - The generated release notes (customer, developer, stakeholder versions).
+ * @param targets - An array of distribution targets configured for the repository.
+ * @returns A promise that resolves when all distribution attempts have completed.
  */
 export async function distributeRelease(
   release: Release & { repo?: { fullName: string } },
@@ -43,6 +54,17 @@ export async function distributeRelease(
   await distributeReleaseWithResults(release, notes, targets);
 }
 
+/**
+ * Distribute release notes and return detailed results for each target.
+ *
+ * @description
+ * Prepares the payload and iterates through all targets, attempting distribution in parallel (via `Promise.allSettled`).
+ *
+ * @param release - The release entity from the database.
+ * @param notes - The generated release notes.
+ * @param targets - An array of distribution targets.
+ * @returns A promise that resolves to an array of `DistributionResult` objects indicating success or failure for each target.
+ */
 export async function distributeReleaseWithResults(
   release: Release & { repo?: { fullName: string } },
   notes: GeneratedNotes,
@@ -51,7 +73,7 @@ export async function distributeReleaseWithResults(
   const payload: DistributionPayload = {
     repoFullName: release.repo?.fullName ?? 'unknown',
     tagName: release.tagName,
-    releaseUrl: release.htmlUrl,
+    releaseUrl: (release as any).htmlUrl ?? '',
     notes: {
       customer: notes.customer,
       developer: notes.developer,
@@ -67,8 +89,13 @@ export async function distributeReleaseWithResults(
     if (result.status === 'fulfilled') {
       return result.value;
     }
+    logError('Distribution target failed unexpectedly', { target: sanitizeTarget(targets[index]) }, result.reason);
+    const target = targets[index];
+    if (!target) {
+      throw new Error('Target not found for result');
+    }
     return {
-      target: targets[index],
+      target,
       success: false,
       error: result.reason?.message || 'Promise rejected',
     };
@@ -76,7 +103,15 @@ export async function distributeReleaseWithResults(
 }
 
 /**
- * Distribute release notes to a single target
+ * Distribute release notes to a single specific target.
+ *
+ * @description
+ * Routes the distribution to the appropriate handler (Slack, Discord, Email) based on the target type.
+ * Also selects the appropriate version of the notes based on the target audience.
+ *
+ * @param target - The distribution target configuration.
+ * @param payload - The data payload containing release info and notes.
+ * @returns A promise that resolves to the result of the distribution attempt.
  */
 async function distributeToTarget(
   target: DistributionTarget,
@@ -102,6 +137,7 @@ async function distributeToTarget(
         return { target, success: false, error: 'Unknown target type' };
     }
   } catch (error) {
+    logError('Error distributing to target', { target: sanitizeTarget(target), payload }, error);
     return {
       target,
       success: false,
@@ -113,6 +149,12 @@ async function distributeToTarget(
 // ============================================
 // HELPER FUNCTIONS
 // ============================================
+
+function sanitizeTarget(target: DistributionTarget): Omit<DistributionTarget, 'webhookUrl'> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { webhookUrl, ...rest } = target;
+  return rest;
+}
 
 function getNotesForAudience(
   notes: DistributionPayload['notes'],
@@ -130,10 +172,52 @@ function getNotesForAudience(
   }
 }
 
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit,
+  retries = 3,
+  backoff = 1000
+): Promise<Response> {
+  const safeUrl = url.includes('hooks.slack.com') || url.includes('discord.com')
+    ? url.split('/').slice(0, 3).join('/') + '/...'
+    : url;
+
+  try {
+    const response = await fetch(url, options);
+
+    if (response.ok) return response;
+
+    // Retry on 5xx or 429
+    if (retries > 0 && (response.status === 429 || response.status >= 500)) {
+      logInfo(`Retrying request to ${safeUrl} (status ${response.status})`, { retriesLeft: retries });
+      await new Promise((resolve) => setTimeout(resolve, backoff));
+      return fetchWithRetry(url, options, retries - 1, backoff * 2);
+    }
+
+    return response;
+  } catch (error) {
+     if (retries > 0) {
+       logInfo(`Retrying request to ${safeUrl} (network error)`, { retriesLeft: retries, error });
+       await new Promise((resolve) => setTimeout(resolve, backoff));
+       return fetchWithRetry(url, options, retries - 1, backoff * 2);
+     }
+     throw error;
+  }
+}
+
+
 // ============================================
 // SLACK
 // ============================================
 
+/**
+ * Send release notes to a Slack channel via webhook.
+ *
+ * @param target - The distribution target containing the webhook URL.
+ * @param payload - The release payload.
+ * @param notes - The release notes formatted for Slack (although passed as string, Slack uses `mrkdwn`).
+ * @returns A promise that resolves to the distribution result.
+ */
 async function sendToSlack(
   target: DistributionTarget,
   payload: DistributionPayload,
@@ -173,18 +257,26 @@ async function sendToSlack(
     ],
   };
 
-  const response = await fetch(target.webhookUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(slackPayload),
-  });
+  try {
+    const response = await fetchWithRetry(target.webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(slackPayload),
+    });
 
-  return {
-    target,
-    success: response.ok,
-    responseCode: response.status,
-    error: response.ok ? undefined : await response.text(),
-  };
+    return {
+      target,
+      success: response.ok,
+      responseCode: response.status,
+      error: response.ok ? undefined : await response.text(),
+    };
+  } catch (error) {
+    return {
+      target,
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown network error',
+    };
+  }
 }
 
 function truncateForSlack(text: string, maxLength = 2900): string {
@@ -196,6 +288,14 @@ function truncateForSlack(text: string, maxLength = 2900): string {
 // DISCORD
 // ============================================
 
+/**
+ * Send release notes to a Discord channel via webhook.
+ *
+ * @param target - The distribution target containing the webhook URL.
+ * @param payload - The release payload.
+ * @param notes - The release notes.
+ * @returns A promise that resolves to the distribution result.
+ */
 async function sendToDiscord(
   target: DistributionTarget,
   payload: DistributionPayload,
@@ -221,18 +321,26 @@ async function sendToDiscord(
     ],
   };
 
-  const response = await fetch(target.webhookUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(discordPayload),
-  });
+  try {
+    const response = await fetchWithRetry(target.webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(discordPayload),
+    });
 
-  return {
-    target,
-    success: response.ok,
-    responseCode: response.status,
-    error: response.ok ? undefined : await response.text(),
-  };
+    return {
+      target,
+      success: response.ok,
+      responseCode: response.status,
+      error: response.ok ? undefined : await response.text(),
+    };
+  } catch (error) {
+    return {
+      target,
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown network error',
+    };
+  }
 }
 
 function truncateForDiscord(text: string, maxLength = 4000): string {
@@ -241,9 +349,17 @@ function truncateForDiscord(text: string, maxLength = 4000): string {
 }
 
 // ============================================
-// EMAIL (via Resend)
+// EMAIL (via SendGrid)
 // ============================================
 
+/**
+ * Send release notes via email using SendGrid.
+ *
+ * @param target - The distribution target containing the recipient email.
+ * @param payload - The release payload.
+ * @param notes - The release notes (Markdown format).
+ * @returns A promise that resolves to the distribution result.
+ */
 async function sendEmail(
   target: DistributionTarget,
   payload: DistributionPayload,
@@ -253,13 +369,13 @@ async function sendEmail(
     return { target, success: false, error: 'Missing email' };
   }
 
-  const resendApiKey = process.env.RESEND_API_KEY;
+  const sendGridApiKey = process.env.SENDGRID_API_KEY;
 
-  if (!resendApiKey) {
+  if (!sendGridApiKey) {
     return {
       target,
       success: false,
-      error: 'RESEND_API_KEY not configured',
+      error: 'SENDGRID_API_KEY not configured',
     };
   }
 
@@ -270,30 +386,60 @@ async function sendEmail(
         ? 'Developer Notes'
         : 'Release Notes';
 
-  const response = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${resendApiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      from: 'ShipLog <releases@shiplog.io>',
-      to: target.email,
-      subject: `[${payload.repoFullName}] ${payload.tagName} - ${audienceLabel}`,
-      html: markdownToHtml(notes, payload),
-    }),
-  });
+  try {
+    const emailPayload = {
+      personalizations: [
+        {
+          to: [{ email: target.email }],
+          subject: `[${payload.repoFullName}] ${payload.tagName} - ${audienceLabel}`,
+        },
+      ],
+      from: { email: 'noreply@shiplog.io', name: 'ShipLog' },
+      content: [
+        {
+          type: 'text/html',
+          value: markdownToHtml(notes, payload),
+        },
+      ],
+    };
 
-  const responseData = await response.json();
+    const response = await fetchWithRetry('https://api.sendgrid.com/v3/mail/send', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${sendGridApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(emailPayload),
+    });
 
-  return {
-    target,
-    success: response.ok,
-    responseCode: response.status,
-    error: response.ok ? undefined : JSON.stringify(responseData),
-  };
+    // SendGrid returns 202 on success with empty body
+    const responseData = response.status === 202 ? null : await response.json().catch(() => null);
+
+    return {
+      target,
+      success: response.ok,
+      responseCode: response.status,
+      error: response.ok ? undefined : (responseData ? JSON.stringify(responseData) : 'SendGrid API error'),
+    };
+  } catch (error) {
+    return {
+      target,
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown network error',
+    };
+  }
 }
 
+/**
+ * Convert Markdown release notes to HTML for email distribution.
+ *
+ * @description
+ * Applies basic styling and structure to the Markdown content.
+ *
+ * @param markdown - The release notes in Markdown format.
+ * @param payload - The release payload for context.
+ * @returns An HTML string ready for email sending.
+ */
 function markdownToHtml(markdown: string, payload: DistributionPayload): string {
   let html = markdown
     .replace(/^### (.+)$/gm, '<h3 style="color: #102a43; margin-top: 16px;">$1</h3>')
