@@ -4,7 +4,7 @@ import { Ship, Settings, GitBranch, Bell, LogOut, Menu, X, Building2 } from 'luc
 import Link from 'next/link';
 import { useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { clearToken, type User } from '../lib/api';
+import { logout, type User } from '../lib/api';
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -16,8 +16,8 @@ export function DashboardLayout({ children, user }: DashboardLayoutProps) {
   const pathname = usePathname();
   const router = useRouter();
 
-  const handleLogout = () => {
-    clearToken();
+  const handleLogout = async () => {
+    await logout();
     router.push('/login');
   };
 

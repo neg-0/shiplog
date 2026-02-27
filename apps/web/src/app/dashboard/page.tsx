@@ -5,7 +5,7 @@ import { AlertCircle, GitBranch, Loader2, Plus, RefreshCw, Ship } from 'lucide-r
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
-import { getRepos, getUser, isAuthenticated, setToken, type Repo, type User } from '../../lib/api';
+import { exchangeAuthCode, getRepos, getUser, isAuthenticated, type Repo, type User } from '../../lib/api';
 
 function DashboardContent() {
 
@@ -17,13 +17,15 @@ function DashboardContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  // Handle token from OAuth callback
   useEffect(() => {
-    const token = searchParams.get('token');
-    if (token) {
-      setToken(token);
-      // Remove token from URL
-      router.replace('/dashboard');
+    const code = searchParams.get('code');
+    if (code) {
+      exchangeAuthCode(code).then(() => {
+        router.replace('/dashboard');
+      }).catch(() => {
+        router.push('/login');
+      });
+      return;
     }
   }, [searchParams, router]);
 

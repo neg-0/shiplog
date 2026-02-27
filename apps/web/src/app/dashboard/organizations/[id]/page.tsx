@@ -1,14 +1,22 @@
 'use client';
 
 import { DashboardLayout } from '@/components/DashboardLayout';
+import { AlertDialog } from '@/components/Dialog';
 import { AlertCircle, ArrowLeft, Building2, Crown, Loader2, Mail, Plus, Settings, Shield, Trash2, User, Users } from 'lucide-react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
-import { getUser, isAuthenticated, type User as UserType } from '../../../../lib/api';
+import { useCallback, useEffect, useState } from 'react';
+import {
+  getOrganization,
+  getUser,
+  inviteOrganizationMember,
+  isAuthenticated,
+  removeOrganizationMember,
+  updateOrganization,
+  type User as UserType,
+} from '../../../../lib/api';
 
-// Placeholder types
-interface OrganizationMember {
+interface OrgMember {
   id: string;
   userId: string;
   name: string;
@@ -18,13 +26,13 @@ interface OrganizationMember {
   joinedAt: string;
 }
 
-interface OrganizationDetail {
+interface OrgDetail {
   id: string;
   name: string;
   slug: string;
   githubOrgId: number | null;
   githubOrgLogin: string | null;
-  members: OrganizationMember[];
+  members: OrgMember[];
   repoCount: number;
   myRole: 'OWNER' | 'ADMIN' | 'MEMBER';
 }
@@ -32,14 +40,57 @@ interface OrganizationDetail {
 export default function OrganizationDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [org, setOrg] = useState<OrganizationDetail | null>(null);
+  const [org, setOrg] = useState<OrgDetail | null>(null);
   const [showInviteModal, setShowInviteModal] = useState(false);
+  const [showDeleteAlert, setShowDeleteAlert] = useState(false);
   const [activeTab, setActiveTab] = useState<'members' | 'settings'>('members');
   const [user, setUser] = useState<UserType | null>(null);
+  const [settingsName, setSettingsName] = useState('');
+  const [saving, setSaving] = useState(false);
 
   const params = useParams();
   const router = useRouter();
   const orgId = params.id as string;
+
+  const refreshOrg = useCallback(async () => {
+    const userData = await getUser();
+    setUser(userData);
+    const orgData = await getOrganization(orgId);
+
+    const members: OrgMember[] = orgData.members.map((m) => ({
+      id: m.id,
+      userId: m.user.id,
+      name: m.user.name || m.user.login,
+      email: m.user.email || '',
+      avatarUrl: m.user.avatarUrl,
+      role: m.role,
+      joinedAt: m.joinedAt,
+    }));
+
+    let myRole: 'OWNER' | 'ADMIN' | 'MEMBER' = 'MEMBER';
+    if (orgData.ownerId === userData.id) {
+      myRole = 'OWNER';
+    } else {
+      const myMember = orgData.members.find((m) => m.user.id === userData.id);
+      if (myMember) {
+        myRole = myMember.role;
+      }
+    }
+
+    const detail: OrgDetail = {
+      id: orgData.id,
+      name: orgData.name,
+      slug: orgData.slug,
+      githubOrgId: orgData.githubOrgId,
+      githubOrgLogin: orgData.githubOrgLogin,
+      members,
+      repoCount: orgData.repos.length,
+      myRole,
+    };
+
+    setOrg(detail);
+    setSettingsName(detail.name);
+  }, [orgId]);
 
   useEffect(() => {
     if (!isAuthenticated()) {
@@ -50,33 +101,7 @@ export default function OrganizationDetailPage() {
     const fetchOrg = async () => {
       try {
         setLoading(true);
-        const userData = await getUser();
-        setUser(userData);
-        // TODO: Fetch organization when API is ready
-        // const data = await getOrganization(orgId);
-        // setOrg(data);
-
-        // Mock data for now
-        setOrg({
-          id: orgId,
-          name: 'Acme Inc',
-          slug: 'acme-inc',
-          githubOrgId: 12345,
-          githubOrgLogin: 'acme-corp',
-          members: [
-            {
-              id: '1',
-              userId: 'u1',
-              name: 'John Doe',
-              email: 'john@acme.com',
-              avatarUrl: null,
-              role: 'OWNER',
-              joinedAt: new Date().toISOString(),
-            },
-          ],
-          repoCount: 5,
-          myRole: 'OWNER',
-        });
+        await refreshOrg();
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load organization');
       } finally {
@@ -85,7 +110,30 @@ export default function OrganizationDetailPage() {
     };
 
     fetchOrg();
-  }, [orgId, router]);
+  }, [orgId, router, refreshOrg]);
+
+  const handleRemoveMember = async (userId: string) => {
+    try {
+      await removeOrganizationMember(orgId, userId);
+      await refreshOrg();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to remove member');
+    }
+  };
+
+  const handleSaveSettings = async () => {
+    if (!settingsName.trim() || settingsName === org?.name) return;
+
+    setSaving(true);
+    try {
+      await updateOrganization(orgId, { name: settingsName.trim() });
+      await refreshOrg();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update organization');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const getRoleIcon = (role: string) => {
     switch (role) {
@@ -206,7 +254,10 @@ export default function OrganizationDetailPage() {
                           <span className="text-sm text-navy-600 capitalize">{member.role.toLowerCase()}</span>
                         </div>
                         {canManageMembers && member.role !== 'OWNER' && (
-                          <button className="p-1.5 text-navy-400 hover:text-red-600 hover:bg-red-50 rounded transition">
+                          <button
+                            onClick={() => handleRemoveMember(member.userId)}
+                            className="p-1.5 text-navy-400 hover:text-red-600 hover:bg-red-50 rounded transition"
+                          >
                             <Trash2 className="w-4 h-4" />
                           </button>
                         )}
@@ -229,11 +280,17 @@ export default function OrganizationDetailPage() {
                         Organization Name
                       </label>
                       <input
-                        defaultValue={org.name}
+                        value={settingsName}
+                        onChange={(e) => setSettingsName(e.target.value)}
                         className="w-full px-4 py-2 border border-navy-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500"
                       />
                     </div>
-                    <button className="px-4 py-2 bg-navy-900 text-white rounded-lg hover:bg-navy-800 transition">
+                    <button
+                      onClick={handleSaveSettings}
+                      disabled={saving || !settingsName.trim() || settingsName === org.name}
+                      className="px-4 py-2 bg-navy-900 text-white rounded-lg hover:bg-navy-800 transition disabled:opacity-50 flex items-center gap-2"
+                    >
+                      {saving && <Loader2 className="w-4 h-4 animate-spin" />}
                       Save Changes
                     </button>
                   </div>
@@ -245,7 +302,10 @@ export default function OrganizationDetailPage() {
                   <p className="text-navy-600 text-sm mb-4">
                     Deleting this organization will remove all members and unlink all repositories. This action cannot be undone.
                   </p>
-                  <button className="px-4 py-2 text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition flex items-center gap-2">
+                  <button
+                    onClick={() => setShowDeleteAlert(true)}
+                    className="px-4 py-2 text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition flex items-center gap-2"
+                  >
                     <Trash2 className="w-4 h-4" />
                     Delete Organization
                   </button>
@@ -258,31 +318,45 @@ export default function OrganizationDetailPage() {
 
 
       {/* Invite Modal */}
-      {
-        showInviteModal && (
-          <InviteMemberModal onClose={() => setShowInviteModal(false)} orgId={orgId} />
-        )
-      }
+      {showInviteModal && (
+        <InviteMemberModal
+          onClose={() => setShowInviteModal(false)}
+          onInvited={async () => {
+            setShowInviteModal(false);
+            await refreshOrg();
+          }}
+          orgId={orgId}
+        />
+      )}
+
+      {/* Delete Alert */}
+      <AlertDialog
+        isOpen={showDeleteAlert}
+        onClose={() => setShowDeleteAlert(false)}
+        title="Cannot Delete Organization"
+        message="Organization deletion is not yet supported. Please contact support if you need to delete this organization."
+        variant="error"
+      />
     </DashboardLayout >
   );
 }
 
-function InviteMemberModal({ onClose, orgId }: { onClose: () => void; orgId: string }) {
+function InviteMemberModal({ onClose, onInvited, orgId }: { onClose: () => void; onInvited: () => void; orgId: string }) {
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<'ADMIN' | 'MEMBER'>('MEMBER');
   const [inviting, setInviting] = useState(false);
+  const [inviteError, setInviteError] = useState<string | null>(null);
 
   const handleInvite = async () => {
     if (!email.trim()) return;
 
     setInviting(true);
+    setInviteError(null);
     try {
-      // TODO: Call API to invite member
-      // await inviteOrganizationMember(orgId, { email, role });
-      console.log('Inviting:', { email, role, orgId });
-      onClose();
+      await inviteOrganizationMember(orgId, { email, role });
+      onInvited();
     } catch (err) {
-      console.error('Failed to invite:', err);
+      setInviteError(err instanceof Error ? err.message : 'Failed to send invite');
     } finally {
       setInviting(false);
     }
@@ -328,6 +402,13 @@ function InviteMemberModal({ onClose, orgId }: { onClose: () => void; orgId: str
               <option value="ADMIN">Admin — Can also manage members</option>
             </select>
           </div>
+
+          {inviteError && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
+              <p className="text-sm text-red-600">{inviteError}</p>
+            </div>
+          )}
         </div>
 
         <div className="p-6 border-t border-navy-100 flex gap-3">

@@ -28,6 +28,11 @@ webhooks.post('/github', async (c) => {
   const signature = c.req.header('x-hub-signature-256');
   const event = c.req.header('x-github-event');
 
+  // Early return for non-release events to avoid unnecessary DB lookups and parsing
+  if (event !== 'release') {
+    return c.json({ status: 'ignored', event });
+  }
+
   let payload: { action?: string; release?: { tag_name: string }; repository?: { full_name: string } };
   try {
     payload = JSON.parse(body);
@@ -35,17 +40,16 @@ webhooks.post('/github', async (c) => {
     return c.json({ error: 'Invalid JSON' }, 400);
   }
 
-  console.log(`📥 Received GitHub webhook: ${event}`);
-
   // Handle release events
-  if (event === 'release' && payload.action === 'published') {
+  if (payload.action === 'published') {
     const release = payload.release!;
     const repo = payload.repository!;
 
-    console.log(`🚀 New release: ${repo.full_name} @ ${release.tag_name}`);
-    
     try {
       // Find the connected repository in our database
+      // NOTE: Signature verification happens after the DB lookup because each repo has
+      // its own webhook secret. This is a known trade-off — we must identify the repo
+      // first to retrieve the correct secret for verification.
       const connectedRepo = await prisma.repo.findFirst({
         where: {
           fullName: repo.full_name,
@@ -63,18 +67,17 @@ webhooks.post('/github', async (c) => {
       });
 
       if (!connectedRepo) {
-        console.log(`⚠️ No connected repo found for ${repo.full_name}`);
         return c.json({ status: 'ignored', reason: 'repo_not_connected' });
       }
 
       // Verify signature using the repo's webhook secret
       if (!connectedRepo.webhookSecret) {
-        console.error(`⚠️ No webhook secret for repo ${repo.full_name}`);
+        console.error(`No webhook secret for repo ${repo.full_name}`);
         return c.json({ error: 'Webhook secret not configured' }, 500);
       }
 
       if (!verifyGitHubSignature(body, signature, connectedRepo.webhookSecret)) {
-        console.error(`❌ Invalid signature for ${repo.full_name}`);
+        console.error(`Invalid signature for ${repo.full_name}`);
         return c.json({ error: 'Invalid signature' }, 401);
       }
 
@@ -82,7 +85,6 @@ webhooks.post('/github', async (c) => {
       const accessToken = await decrypt(connectedRepo.user.accessToken);
 
       // Fetch detailed release data
-      console.log(`📊 Fetching release data for ${repo.full_name}...`);
       const releaseData = await fetchReleaseData(
         connectedRepo.owner, 
         connectedRepo.name, 
@@ -90,8 +92,6 @@ webhooks.post('/github', async (c) => {
         accessToken
       );
 
-      // Generate AI release notes
-      console.log(`🤖 Generating release notes...`);
       const notes = await generateReleaseNotes({
         tagName: releaseData.release.tagName,
         previousTag: releaseData.previousTag ?? undefined,
@@ -107,8 +107,6 @@ webhooks.post('/github', async (c) => {
           customerTone: connectedRepo.config?.customerTone ?? 'friendly',
         },
       });
-
-      console.log(`✅ Generated notes (${notes.tokensUsed} tokens used)`);
 
       // Create the release record
       const savedRelease = await prisma.release.create({
@@ -138,8 +136,6 @@ webhooks.post('/github', async (c) => {
           model: notes.model,
         },
       });
-
-      console.log(`💾 Saved release: ${savedRelease.id}`);
 
       const distributionTargets: Array<DistributionTarget & {
         channelId?: string;
@@ -185,8 +181,6 @@ webhooks.post('/github', async (c) => {
         });
       });
 
-      console.log(`📤 Distributing release ${savedRelease.id} to ${distributionTargets.length} targets`);
-
       const releaseWithRepo = {
         ...savedRelease,
         repo: {
@@ -230,14 +224,11 @@ webhooks.post('/github', async (c) => {
       });
 
     } catch (error) {
-      console.error('❌ Error processing release:', error);
-      return c.json({ 
-        status: 'error', 
-        message: error instanceof Error ? error.message : 'Unknown error' 
-      }, 500);
+      console.error('Error processing release:', error);
+      return c.json({ status: 'error', message: 'Failed to process release' }, 500);
     }
   }
 
-  // Acknowledge other events
-  return c.json({ status: 'ignored', event });
+  // Acknowledge non-published release actions
+  return c.json({ status: 'ignored', event, action: payload.action });
 });

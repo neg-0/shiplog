@@ -1,8 +1,9 @@
 import { Ship, Tag, Calendar, ExternalLink, ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import ReactMarkdown from 'react-markdown';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.shiplog.io';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
 interface Release {
   id: string;
@@ -119,12 +120,7 @@ export default async function PublicChangelogPage({ params }: { params: { slug: 
                 {/* Show first audience notes (usually Customer) */}
                 {release.notes.length > 0 && (
                   <div className="prose prose-gray max-w-none">
-                    <div 
-                      className="text-gray-700"
-                      dangerouslySetInnerHTML={{ 
-                        __html: release.notes[0].content.replace(/\n/g, '<br>') 
-                      }}
-                    />
+                    <ReactMarkdown>{release.notes[0].content}</ReactMarkdown>
                   </div>
                 )}
 

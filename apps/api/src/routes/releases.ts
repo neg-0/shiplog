@@ -13,16 +13,15 @@ releases.use('*', requireAuth);
 releases.get('/:id', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
-  
+
   const release = await prisma.release.findFirst({
-    where: { id },
+    where: { id, repo: { userId: user.id } },
     include: {
       notes: true,
       repo: {
         select: {
           id: true,
           fullName: true,
-          userId: true,
         },
       },
     },
@@ -30,11 +29,6 @@ releases.get('/:id', async (c) => {
 
   if (!release) {
     return c.json({ error: 'Release not found' }, 404);
-  }
-
-  // Verify ownership
-  if (release.repo.userId !== user.id) {
-    return c.json({ error: 'Unauthorized' }, 403);
   }
 
   return c.json({
@@ -68,9 +62,9 @@ releases.post('/:id/regenerate', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
   const body = await c.req.json() as { tone?: string };
-  
+
   const release = await prisma.release.findFirst({
-    where: { id },
+    where: { id, repo: { userId: user.id } },
     include: {
       repo: {
         include: {
@@ -84,12 +78,6 @@ releases.post('/:id/regenerate', async (c) => {
   if (!release) {
     return c.json({ error: 'Release not found' }, 404);
   }
-
-  if (release.repo.userId !== user.id) {
-    return c.json({ error: 'Unauthorized' }, 403);
-  }
-
-  console.log(`🔄 Regenerating notes for release ${id}`);
 
   try {
     // Update status
@@ -152,8 +140,6 @@ releases.post('/:id/regenerate', async (c) => {
       data: { status: 'READY', processedAt: new Date() },
     });
 
-    console.log(`✅ Regenerated notes for ${release.tagName}`);
-
     return c.json({
       id,
       status: 'ready',
@@ -171,10 +157,7 @@ releases.post('/:id/regenerate', async (c) => {
       },
     });
 
-    return c.json({ 
-      error: 'Failed to regenerate notes',
-      details: error instanceof Error ? error.message : 'Unknown error',
-    }, 500);
+    return c.json({ error: 'Failed to regenerate notes' }, 500);
   }
 });
 
@@ -183,13 +166,13 @@ releases.post('/:id/publish', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
   const body = await c.req.json() as { channels?: string[] };
-  
+
   const release = await prisma.release.findFirst({
-    where: { id },
+    where: { id, repo: { userId: user.id } },
     include: {
       notes: true,
       repo: {
-        select: { userId: true, fullName: true },
+        select: { fullName: true },
       },
     },
   });
@@ -198,15 +181,9 @@ releases.post('/:id/publish', async (c) => {
     return c.json({ error: 'Release not found' }, 404);
   }
 
-  if (release.repo.userId !== user.id) {
-    return c.json({ error: 'Unauthorized' }, 403);
-  }
-
   if (!release.notes) {
     return c.json({ error: 'No generated notes to publish' }, 400);
   }
-
-  console.log(`📤 Publishing release ${id} to channels:`, body.channels);
 
   // Mark as published (actual distribution to channels is Phase 2)
   await prisma.release.update({
@@ -235,28 +212,21 @@ releases.post('/:id/publish', async (c) => {
 releases.patch('/:id/notes', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
-  const body = await c.req.json() as { 
-    customer?: string; 
-    developer?: string; 
+  const body = await c.req.json() as {
+    customer?: string;
+    developer?: string;
     stakeholder?: string;
   };
-  
+
   const release = await prisma.release.findFirst({
-    where: { id },
+    where: { id, repo: { userId: user.id } },
     include: {
       notes: true,
-      repo: {
-        select: { userId: true },
-      },
     },
   });
 
   if (!release) {
     return c.json({ error: 'Release not found' }, 404);
-  }
-
-  if (release.repo.userId !== user.id) {
-    return c.json({ error: 'Unauthorized' }, 403);
   }
 
   if (!release.notes) {
@@ -282,8 +252,6 @@ releases.patch('/:id/notes', async (c) => {
     data: updateData,
   });
 
-  console.log(`✏️ Updated notes for release ${id}`);
-  
   return c.json({
     id,
     updated: true,

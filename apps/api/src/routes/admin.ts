@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import type { Context, Next } from 'hono';
 import { prisma } from '../lib/db.js';
 import { requireAuth } from '../lib/auth.js';
 
@@ -6,13 +7,13 @@ import { requireAuth } from '../lib/auth.js';
 const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean);
 
 // Admin middleware
-const requireAdmin = async (c: any, next: any) => {
+async function requireAdmin(c: Context, next: Next): Promise<Response | void> {
   const user = c.get('user');
-  if (!user || !ADMIN_EMAILS.includes(user.email)) {
+  if (!user?.email || !ADMIN_EMAILS.includes(user.email)) {
     return c.json({ error: 'Forbidden' }, 403);
   }
   await next();
-};
+}
 
 export const admin = new Hono();
 
@@ -55,8 +56,8 @@ admin.get('/metrics', async (c) => {
 
 // List all users
 admin.get('/users', async (c) => {
-  const page = parseInt(c.req.query('page') || '1');
-  const limit = parseInt(c.req.query('limit') || '50');
+  const page = Math.max(1, parseInt(c.req.query('page') || '1') || 1);
+  const limit = Math.min(100, Math.max(1, parseInt(c.req.query('limit') || '50') || 50));
   const search = c.req.query('search') || '';
   const tier = c.req.query('tier') || '';
 
@@ -113,10 +114,20 @@ admin.get('/users', async (c) => {
 // Get single user
 admin.get('/users/:id', async (c) => {
   const userId = c.req.param('id');
-  
+
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    include: {
+    select: {
+      id: true,
+      login: true,
+      name: true,
+      email: true,
+      avatarUrl: true,
+      subscriptionTier: true,
+      subscriptionStatus: true,
+      createdAt: true,
+      trialEndsAt: true,
+      stripeCustomerId: true,
       repos: {
         select: {
           id: true,
@@ -165,7 +176,7 @@ admin.delete('/users/:id', async (c) => {
 
 // Get recent activity
 admin.get('/activity', async (c) => {
-  const limit = parseInt(c.req.query('limit') || '100');
+  const limit = Math.min(100, Math.max(1, parseInt(c.req.query('limit') || '100') || 100));
   
   // Get recent users
   const recentUsers = await prisma.user.findMany({

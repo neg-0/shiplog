@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import { serve } from '@hono/node-server';
+import { rateLimit } from './lib/rate-limit.js';
 import { webhooks } from './routes/webhooks.js';
 import { auth } from './routes/auth.js';
 import { repos } from './routes/repos.js';
@@ -23,6 +24,26 @@ app.use('*', cors({
   origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
   credentials: true,
 }));
+
+// CSRF protection: reject non-GET requests without proper Content-Type
+// Browsers prevent cross-origin requests with application/json Content-Type without CORS preflight
+app.use('*', async (c, next) => {
+  const method = c.req.method;
+  if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
+    const contentType = c.req.header('Content-Type') || '';
+    const isWebhook = c.req.path.startsWith('/webhooks') || c.req.path.startsWith('/billing/webhook');
+    // Skip for webhooks (they use their own signature verification)
+    if (!isWebhook && !contentType.includes('application/json')) {
+      return c.json({ error: 'Invalid Content-Type' }, 415);
+    }
+  }
+  await next();
+});
+
+// Rate limiting per route group
+app.use('/webhooks/*', rateLimit({ windowMs: 60_000, maxRequests: 30 }));
+app.use('/auth/*', rateLimit({ windowMs: 60_000, maxRequests: 10 }));
+app.use('/admin/*', rateLimit({ windowMs: 60_000, maxRequests: 60 }));
 
 // Routes
 app.route('/health', health);

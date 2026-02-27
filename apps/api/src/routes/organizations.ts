@@ -163,7 +163,6 @@ organizations.patch('/:id', async (c) => {
     slug?: string;
     githubOrgId?: number | null;
     githubOrgLogin?: string | null;
-    subscriptionId?: string | null;
   };
 
   const org = await prisma.organization.findUnique({
@@ -187,7 +186,6 @@ organizations.patch('/:id', async (c) => {
   if (body.slug !== undefined) data.slug = body.slug;
   if (body.githubOrgId !== undefined) data.githubOrgId = body.githubOrgId;
   if (body.githubOrgLogin !== undefined) data.githubOrgLogin = body.githubOrgLogin;
-  if (body.subscriptionId !== undefined) data.subscriptionId = body.subscriptionId;
 
   const updated = await prisma.organization.update({
     where: { id },

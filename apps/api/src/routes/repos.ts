@@ -6,6 +6,47 @@ import { listUserRepos, createWebhook, deleteWebhook } from '../services/github.
 export const repos = new Hono();
 
 const API_URL = process.env.API_URL || 'http://localhost:3001';
+const IS_DEVELOPMENT = process.env.NODE_ENV === 'development';
+
+const PRIVATE_IP_RANGES = [
+  /^127\./,
+  /^10\./,
+  /^172\.(1[6-9]|2\d|3[01])\./,
+  /^192\.168\./,
+  /^169\.254\./,
+  /^0\./,
+];
+
+function isValidWebhookUrl(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+
+  if (!IS_DEVELOPMENT && parsed.protocol !== 'https:') {
+    return false;
+  }
+
+  if (IS_DEVELOPMENT && parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    return false;
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+
+  if (hostname === 'localhost' || hostname === '[::1]') {
+    return false;
+  }
+
+  for (const range of PRIVATE_IP_RANGES) {
+    if (range.test(hostname)) {
+      return false;
+    }
+  }
+
+  return true;
+}
 
 // All routes require auth
 repos.use('*', requireAuth);
@@ -234,8 +275,6 @@ repos.post('/connect', async (c) => {
       },
     });
 
-    console.log(`🔗 Connected repo: ${body.fullName} (webhook ID: ${webhookId})`);
-
     return c.json({
       status: 'connected',
       id: repo.id,
@@ -285,6 +324,17 @@ repos.patch('/:id/config', async (c) => {
     productName?: string;
   };
 
+  // Validate string lengths
+  if (body.customerTone && body.customerTone.length > 100) {
+    return c.json({ error: 'customerTone must be 100 characters or fewer' }, 400);
+  }
+  if (body.companyName && body.companyName.length > 200) {
+    return c.json({ error: 'companyName must be 200 characters or fewer' }, 400);
+  }
+  if (body.productName && body.productName.length > 200) {
+    return c.json({ error: 'productName must be 200 characters or fewer' }, 400);
+  }
+
   // Verify ownership
   const repo = await prisma.repo.findFirst({
     where: { id, userId: user.id },
@@ -304,8 +354,6 @@ repos.patch('/:id/config', async (c) => {
     update: body,
   });
 
-  console.log(`📝 Updated config for repo ${id}`);
-
   return c.json(config);
 });
 
@@ -323,6 +371,25 @@ repos.patch('/:id/settings', async (c) => {
     hidePoweredBy?: boolean;
     excludeFromFeatured?: boolean;
   };
+
+  // Validate string lengths
+  if (body.slug !== undefined) {
+    if (body.slug.length > 100) {
+      return c.json({ error: 'slug must be 100 characters or fewer' }, 400);
+    }
+    if (body.slug.length > 0 && !/^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(body.slug)) {
+      return c.json({ error: 'slug must contain only lowercase alphanumeric characters and hyphens, and must start and end with an alphanumeric character' }, 400);
+    }
+  }
+  if (body.publicTitle && body.publicTitle.length > 200) {
+    return c.json({ error: 'publicTitle must be 200 characters or fewer' }, 400);
+  }
+  if (body.publicDescription && body.publicDescription.length > 1000) {
+    return c.json({ error: 'publicDescription must be 1000 characters or fewer' }, 400);
+  }
+  if (body.publicAccentColor && !/^#[0-9a-fA-F]{6}$/.test(body.publicAccentColor)) {
+    return c.json({ error: 'publicAccentColor must be a valid hex color (e.g. #ff0000)' }, 400);
+  }
 
   // Verify ownership
   const repo = await prisma.repo.findFirst({
@@ -350,8 +417,6 @@ repos.patch('/:id/settings', async (c) => {
     },
   });
 
-  console.log(`📝 Updated settings for repo ${id}`);
-
   return c.json(updated);
 });
 
@@ -366,6 +431,10 @@ repos.post('/:id/channels', async (c) => {
     audience: 'CUSTOMER' | 'DEVELOPER' | 'STAKEHOLDER';
     enabled?: boolean;
   };
+
+  if (body.webhookUrl && !isValidWebhookUrl(body.webhookUrl)) {
+    return c.json({ error: 'Invalid webhook URL. Must be a valid HTTPS URL that does not point to a private network.' }, 400);
+  }
 
   const repo = await prisma.repo.findFirst({
     where: { id, userId: user.id },
@@ -405,6 +474,10 @@ repos.patch('/:id/channels/:channelId', async (c) => {
     audience?: 'CUSTOMER' | 'DEVELOPER' | 'STAKEHOLDER';
     enabled?: boolean;
   };
+
+  if (body.webhookUrl && !isValidWebhookUrl(body.webhookUrl)) {
+    return c.json({ error: 'Invalid webhook URL. Must be a valid HTTPS URL that does not point to a private network.' }, 400);
+  }
 
   const channel = await prisma.channel.findFirst({
     where: {
@@ -484,8 +557,6 @@ repos.delete('/:id', async (c) => {
   await prisma.repo.delete({
     where: { id },
   });
-
-  console.log(`🔌 Disconnected repo: ${repo.fullName}`);
 
   return c.json({
     status: 'disconnected',

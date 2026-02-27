@@ -11,13 +11,12 @@ const pricePro = process.env.STRIPE_PRICE_PRO;
 const priceTeam = process.env.STRIPE_PRICE_TEAM;
 const APP_URL = process.env.APP_URL || 'http://localhost:3000';
 
-if (!stripeSecret) {
-  console.warn('⚠️ STRIPE_SECRET_KEY is not set');
+let stripe: Stripe | null = null;
+if (stripeSecret) {
+  stripe = new Stripe(stripeSecret, {
+    apiVersion: '2024-04-10',
+  });
 }
-
-const stripe = new Stripe(stripeSecret || '', {
-  apiVersion: '2024-04-10',
-});
 
 const getPriceId = (plan: string | null | undefined) => {
   if (plan === 'pro') return pricePro;
@@ -38,7 +37,7 @@ const shouldDowngrade = (status?: Stripe.Subscription.Status) => {
 };
 
 billing.post('/checkout', requireAuth, async (c) => {
-  if (!stripeSecret) {
+  if (!stripe) {
     return c.json({ error: 'Stripe not configured' }, 500);
   }
 
@@ -69,7 +68,7 @@ billing.post('/checkout', requireAuth, async (c) => {
 
   // Helper to create a new Stripe customer
   const createNewCustomer = async () => {
-    const customer = await stripe.customers.create({
+    const customer = await stripe!.customers.create({
       email: dbUser.email ?? undefined,
       name: dbUser.name ?? dbUser.login,
       metadata: {
@@ -112,7 +111,6 @@ billing.post('/checkout', requireAuth, async (c) => {
   } catch (error: unknown) {
     // If customer doesn't exist (switched from live to test mode), create new one
     if (error instanceof Error && error.message.includes('No such customer')) {
-      console.log(`⚠️ Stale customer ID ${customerId}, creating new customer...`);
       customerId = await createNewCustomer();
       
       const session = await stripe.checkout.sessions.create({
@@ -139,7 +137,7 @@ billing.post('/checkout', requireAuth, async (c) => {
 });
 
 billing.post('/portal', requireAuth, async (c) => {
-  if (!stripeSecret) {
+  if (!stripe) {
     return c.json({ error: 'Stripe not configured' }, 500);
   }
 
@@ -182,7 +180,7 @@ billing.get('/status', requireAuth, async (c) => {
 });
 
 billing.post('/webhook', async (c) => {
-  if (!stripeSecret || !stripeWebhookSecret) {
+  if (!stripe || !stripeWebhookSecret) {
     return c.json({ error: 'Stripe not configured' }, 500);
   }
 
@@ -198,7 +196,7 @@ billing.post('/webhook', async (c) => {
   try {
     event = stripe.webhooks.constructEvent(rawBody, signature, stripeWebhookSecret);
   } catch (err) {
-    console.error('❌ Stripe webhook signature verification failed', err);
+    console.error('Stripe webhook signature verification failed', err);
     return c.json({ error: 'Invalid signature' }, 400);
   }
 

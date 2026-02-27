@@ -1,3 +1,4 @@
+import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { prisma } from '../lib/db.js';
 import { signToken } from '../lib/jwt.js';
@@ -10,16 +11,35 @@ const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET;
 const APP_URL = process.env.APP_URL || 'http://localhost:3000';
 const API_URL = process.env.API_URL || 'http://localhost:3001';
 
-// In-memory state storage (valid for 10 minutes)
+const isProduction = process.env.NODE_ENV === 'production';
+const COOKIE_MAX_AGE = 7 * 24 * 60 * 60;
+
+function setAuthCookies(c: Context, token: string): void {
+  c.header('Set-Cookie', `shiplog_session=${token}; HttpOnly; Path=/; Max-Age=${COOKIE_MAX_AGE}; SameSite=Lax${isProduction ? '; Secure' : ''}`, { append: true });
+  c.header('Set-Cookie', `shiplog_logged_in=1; Path=/; Max-Age=${COOKIE_MAX_AGE}; SameSite=Lax${isProduction ? '; Secure' : ''}`, { append: true });
+}
+
+function clearAuthCookies(c: Context): void {
+  c.header('Set-Cookie', `shiplog_session=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax${isProduction ? '; Secure' : ''}`, { append: true });
+  c.header('Set-Cookie', `shiplog_logged_in=; Path=/; Max-Age=0; SameSite=Lax${isProduction ? '; Secure' : ''}`, { append: true });
+}
+
 const pendingStates = new Map<string, number>();
 const STATE_TTL_MS = 10 * 60 * 1000;
 
-// Clean up expired states periodically
+const pendingCodes = new Map<string, { token: string; createdAt: number }>();
+const CODE_TTL_MS = 30 * 1000;
+
 setInterval(() => {
   const now = Date.now();
   for (const [state, createdAt] of pendingStates) {
     if (now - createdAt > STATE_TTL_MS) {
       pendingStates.delete(state);
+    }
+  }
+  for (const [code, entry] of pendingCodes) {
+    if (now - entry.createdAt > CODE_TTL_MS) {
+      pendingCodes.delete(code);
     }
   }
 }, 60 * 1000);
@@ -40,8 +60,6 @@ auth.get('/github', (c) => {
     state,
   });
 
-  console.log(`🔑 OAuth initiated with state: ${state.slice(0, 8)}...`);
-
   return c.redirect(`https://github.com/login/oauth/authorize?${params}`);
 });
 
@@ -50,14 +68,11 @@ auth.get('/github/callback', async (c) => {
   const code = c.req.query('code');
   const state = c.req.query('state');
 
-  console.log(`🔑 OAuth callback with state: ${state?.slice(0, 8)}...`);
-
   if (!code) {
     return c.json({ error: 'No code provided' }, 400);
   }
 
   if (!state || !pendingStates.has(state)) {
-    console.log(`❌ Invalid state. Known states: ${pendingStates.size}`);
     return c.json({ error: 'Invalid OAuth state' }, 400);
   }
 
@@ -85,7 +100,7 @@ auth.get('/github/callback', async (c) => {
   const tokenData = await tokenResponse.json() as { access_token?: string; error?: string; error_description?: string };
 
   if (tokenData.error || !tokenData.access_token) {
-    return c.json({ error: 'Failed to get access token', details: tokenData.error_description }, 400);
+    return c.json({ error: 'Failed to get access token' }, 400);
   }
 
   // Get user info
@@ -147,16 +162,34 @@ auth.get('/github/callback', async (c) => {
 
   const sessionToken = await signToken(dbUser.id);
 
-  const redirectUrl = new URL(`${APP_URL}/dashboard`);
-  redirectUrl.searchParams.set('token', sessionToken);
+  const exchangeCode = crypto.randomUUID();
+  pendingCodes.set(exchangeCode, { token: sessionToken, createdAt: Date.now() });
 
-  console.log(`✅ OAuth complete for ${ghUser.login}`);
+  const redirectUrl = new URL(`${APP_URL}/dashboard`);
+  redirectUrl.searchParams.set('code', exchangeCode);
 
   return c.redirect(redirectUrl.toString());
 });
 
-// Logout
+auth.post('/exchange', async (c) => {
+  const body = await c.req.json<{ code?: string }>();
+
+  if (!body.code) {
+    return c.json({ error: 'Missing code' }, 400);
+  }
+
+  const entry = pendingCodes.get(body.code);
+  if (!entry) {
+    return c.json({ error: 'Invalid or expired code' }, 401);
+  }
+
+  pendingCodes.delete(body.code);
+  setAuthCookies(c, entry.token);
+
+  return c.json({ success: true });
+});
+
 auth.post('/logout', (c) => {
-  // TODO: Invalidate session
-  return c.json({ status: 'logged_out' });
+  clearAuthCookies(c);
+  return c.json({ success: true });
 });

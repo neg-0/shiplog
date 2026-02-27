@@ -91,25 +91,32 @@ export async function decrypt(encrypted: string): Promise<string> {
 // AUTH MIDDLEWARE
 // ============================================
 
-/**
- * Middleware that requires a valid JWT token
- * Sets c.get('user') with user data from database
- */
-export async function requireAuth(c: Context, next: Next) {
+function getSessionToken(c: Context): string | null {
+  const cookieHeader = c.req.header('Cookie');
+  if (cookieHeader) {
+    const match = cookieHeader.match(/shiplog_session=([^;]+)/);
+    if (match) return match[1];
+  }
   const authHeader = c.req.header('Authorization');
-  
-  if (!authHeader?.startsWith('Bearer ')) {
+  if (authHeader?.startsWith('Bearer ')) {
+    return authHeader.slice(7);
+  }
+  return null;
+}
+
+export async function requireAuth(c: Context, next: Next) {
+  const token = getSessionToken(c);
+
+  if (!token) {
     return c.json({ error: 'Missing or invalid Authorization header' }, 401);
   }
 
-  const token = authHeader.slice(7);
   const payload = await verifyToken(token);
 
   if (!payload) {
     return c.json({ error: 'Invalid or expired token' }, 401);
   }
 
-  // Fetch user from database
   const user = await prisma.user.findUnique({
     where: { id: payload.userId },
     select: {
@@ -124,20 +131,15 @@ export async function requireAuth(c: Context, next: Next) {
     return c.json({ error: 'User not found' }, 401);
   }
 
-  // Attach user to context
   c.set('user', user);
 
   await next();
 }
 
-/**
- * Optional auth - doesn't fail if no token, but sets user if valid
- */
 export async function optionalAuth(c: Context, next: Next) {
-  const authHeader = c.req.header('Authorization');
-  
-  if (authHeader?.startsWith('Bearer ')) {
-    const token = authHeader.slice(7);
+  const token = getSessionToken(c);
+
+  if (token) {
     const payload = await verifyToken(token);
 
     if (payload) {
