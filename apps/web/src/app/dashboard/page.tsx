@@ -5,7 +5,7 @@ import { AlertCircle, GitBranch, Loader2, Plus, RefreshCw, Ship } from 'lucide-r
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
-import { getRepos, getUser, isAuthenticated, setToken, type Repo, type User } from '../../lib/api';
+import { getRepos, getUser, isAuthenticated, exchangeAuthCode, type Repo, type User } from '../../lib/api';
 
 function DashboardContent() {
 
@@ -17,20 +17,23 @@ function DashboardContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  // Handle token from OAuth callback
+  // Handle auth code from OAuth callback
   useEffect(() => {
-    const token = searchParams.get('token');
-    if (token) {
-      setToken(token);
-      // Check if user has repos to decide redirection
-      getRepos().then(({ repos }) => {
-        if (repos.length === 0) {
-          router.replace('/dashboard/repos/connect');
-        } else {
+    const code = searchParams.get('code');
+    if (code) {
+      exchangeAuthCode(code).then(() => {
+        // Check if user has repos to decide redirection
+        getRepos().then(({ repos }) => {
+          if (repos.length === 0) {
+            router.replace('/dashboard/repos/connect');
+          } else {
+            router.replace('/dashboard');
+          }
+        }).catch(() => {
           router.replace('/dashboard');
-        }
+        });
       }).catch(() => {
-        router.replace('/dashboard');
+        router.replace('/login');
       });
     }
   }, [searchParams, router]);

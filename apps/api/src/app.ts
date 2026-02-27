@@ -30,6 +30,25 @@ app.use('*', cors({
   credentials: true,
 }));
 
+// CSRF protection: require Content-Type: application/json on state-changing requests.
+// This prevents cross-origin form submissions (which can only send url-encoded/multipart).
+// Exempt webhooks and billing webhooks which receive non-JSON payloads.
+app.use('*', async (c, next) => {
+  const method = c.req.method;
+  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') {
+    return next();
+  }
+  const path = c.req.path;
+  if (path.startsWith('/webhooks') || path.startsWith('/billing/webhook')) {
+    return next();
+  }
+  const contentType = c.req.header('Content-Type');
+  if (!contentType || !contentType.includes('application/json')) {
+    return c.json({ error: 'Content-Type must be application/json' }, 415);
+  }
+  return next();
+});
+
 // Routes
 app.route('/health', health);
 app.route('/webhooks', webhooks);

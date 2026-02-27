@@ -5,7 +5,7 @@ import { AlertDialog } from '@/components/Dialog';
 import { AlertTriangle, CreditCard, Key, User as UserIcon } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { clearToken, createCheckoutSession, createPortalSession, deleteUser, getUser, isAuthenticated, updateUser, type User } from '../../../lib/api';
+import { createCheckoutSession, createPortalSession, deleteUser, getUser, isAuthenticated, logout, updateUser, type User } from '../../../lib/api';
 
 export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
@@ -87,7 +87,7 @@ export default function SettingsPage() {
     setIsDeleting(true);
     try {
       await deleteUser();
-      clearToken();
+      await logout();
       router.push('/');
     } catch (err) {
       setAlertDialog({ isOpen: true, title: 'Error', message: 'Failed to delete account', variant: 'error' });

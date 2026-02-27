@@ -4,6 +4,7 @@ import { Ship, Calendar, Tag, ExternalLink, Loader2, AlertCircle } from 'lucide-
 import Link from 'next/link';
 import { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
+import ReactMarkdown from 'react-markdown';
 import { getChangelog, type Changelog } from '../../../../lib/api';
 
 export default function ChangelogPage() {
@@ -130,18 +131,9 @@ export default function ChangelogPage() {
                   {/* Content */}
                   <div className="bg-navy-50 rounded-xl p-6 border border-navy-100">
                     {notes ? (
-                      <div 
-                        className="prose prose-navy max-w-none"
-                        dangerouslySetInnerHTML={{ 
-                          __html: notes
-                            .replace(/^### (.+)$/gm, '<h3 class="text-lg font-semibold text-navy-900 mt-4 mb-2 first:mt-0">$1</h3>')
-                            .replace(/^## (.+)$/gm, '<h2 class="text-xl font-bold text-navy-900 mt-6 mb-3 first:mt-0">$1</h2>')
-                            .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-                            .replace(/`(.+?)`/g, '<code class="bg-navy-200 px-1 rounded text-sm">$1</code>')
-                            .replace(/^- (.+)$/gm, '<li class="text-navy-700 ml-4">$1</li>')
-                            .replace(/\n\n/g, '<br/><br/>')
-                        }}
-                      />
+                      <div className="prose prose-navy max-w-none prose-headings:text-navy-900 prose-p:text-navy-700 prose-li:text-navy-700 prose-strong:text-navy-900 prose-code:bg-navy-200 prose-code:px-1 prose-code:rounded prose-code:text-sm prose-code:before:content-none prose-code:after:content-none">
+                        <ReactMarkdown>{notes}</ReactMarkdown>
+                      </div>
                     ) : (
                       <p className="text-navy-500 italic">No notes available for this audience.</p>
                     )}

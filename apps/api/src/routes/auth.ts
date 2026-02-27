@@ -1,3 +1,4 @@
+import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { setCookie, getCookie, deleteCookie } from 'hono/cookie';
 import { zValidator } from '@hono/zod-validator';
@@ -20,10 +21,35 @@ const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET;
 const APP_URL = process.env.APP_URL || 'https://shiplog.io';
 const API_URL = process.env.API_URL || 'https://api.shiplog.io';
 
+const isProduction = process.env.NODE_ENV === 'production';
+const COOKIE_MAX_AGE = 7 * 24 * 60 * 60;
+
+function setAuthCookies(c: Context, token: string): void {
+  c.header('Set-Cookie', `shiplog_session=${token}; HttpOnly; Path=/; Max-Age=${COOKIE_MAX_AGE}; SameSite=Lax${isProduction ? '; Secure' : ''}`, { append: true });
+  c.header('Set-Cookie', `shiplog_logged_in=1; Path=/; Max-Age=${COOKIE_MAX_AGE}; SameSite=Lax${isProduction ? '; Secure' : ''}`, { append: true });
+}
+
+function clearAuthCookies(c: Context): void {
+  c.header('Set-Cookie', `shiplog_session=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax${isProduction ? '; Secure' : ''}`, { append: true });
+  c.header('Set-Cookie', `shiplog_logged_in=; Path=/; Max-Age=0; SameSite=Lax${isProduction ? '; Secure' : ''}`, { append: true });
+}
+
+// Short-lived exchange codes for secure token delivery
+const pendingCodes = new Map<string, { token: string; createdAt: number }>();
+const CODE_TTL_MS = 30 * 1000;
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [code, entry] of pendingCodes) {
+    if (now - entry.createdAt > CODE_TTL_MS) {
+      pendingCodes.delete(code);
+    }
+  }
+}, 60 * 1000);
+
 /**
  * GET /github
  * @description Initiates the GitHub OAuth flow.
- * @returns {Response} Redirects the user to GitHub's authorization page.
  */
 auth.get('/github', (c) => {
   if (!GITHUB_CLIENT_ID) {
@@ -32,12 +58,11 @@ auth.get('/github', (c) => {
 
   const state = crypto.randomUUID();
 
-  // Set secure cookie for state
   setCookie(c, 'oauth_state', state, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: isProduction,
     sameSite: 'Lax',
-    maxAge: 60 * 10, // 10 minutes
+    maxAge: 60 * 10,
     path: '/',
   });
 
@@ -48,17 +73,14 @@ auth.get('/github', (c) => {
     state,
   });
 
-  logger.info(`🔑 OAuth initiated`, { state: state.slice(0, 8) + '...' });
+  logger.info(`OAuth initiated`, { state: state.slice(0, 8) + '...' });
 
   return c.redirect(`https://github.com/login/oauth/authorize?${params}`);
 });
 
 /**
  * GET /github/callback
- * @description Handles the GitHub OAuth callback. Exchange code for token, fetch user profile, create/update user in DB, and issue session token.
- * @param {string} code - Authorization code from GitHub.
- * @param {string} state - CSRF state token.
- * @returns {Response} Redirects to the dashboard with a session token.
+ * @description Handles the GitHub OAuth callback.
  */
 auth.get(
   '/github/callback',
@@ -67,14 +89,13 @@ auth.get(
     const { code, state } = c.req.valid('query');
     const storedState = getCookie(c, 'oauth_state');
 
-    logger.info(`🔑 OAuth callback`, { state: state?.slice(0, 8) + '...' });
+    logger.info(`OAuth callback`, { state: state?.slice(0, 8) + '...' });
 
     if (!state || !storedState || state !== storedState) {
-      logger.warn(`❌ Invalid state`, { received: state, stored: storedState });
+      logger.warn(`Invalid state`, { received: state, stored: storedState });
       return c.json({ error: 'Invalid OAuth state' }, 400);
     }
 
-    // Remove used state cookie
     deleteCookie(c, 'oauth_state');
 
     if (!GITHUB_CLIENT_ID || !GITHUB_CLIENT_SECRET) {
@@ -98,7 +119,7 @@ auth.get(
     const tokenData = await tokenResponse.json() as { access_token?: string; error?: string; error_description?: string };
 
     if (tokenData.error || !tokenData.access_token) {
-      return c.json({ error: 'Failed to get access token', details: tokenData.error_description }, 400);
+      return c.json({ error: 'Failed to get access token' }, 400);
     }
 
     // Get user info
@@ -121,7 +142,7 @@ auth.get(
       avatar_url?: string | null;
     };
 
-    // GitHub often returns null email unless it's public. Fetch verified primary email if needed.
+    // Fetch verified primary email if needed
     let email: string | null | undefined = ghUser.email;
     if (!email) {
       const emailsResponse = await fetch('https://api.github.com/user/emails', {
@@ -160,53 +181,72 @@ auth.get(
 
     const sessionToken = await signToken(dbUser.id);
 
-    const redirectUrl = new URL(`${APP_URL}/dashboard`);
-    redirectUrl.searchParams.set('token', sessionToken);
+    // Use short-lived exchange code instead of putting token in URL
+    const exchangeCode = crypto.randomUUID();
+    pendingCodes.set(exchangeCode, { token: sessionToken, createdAt: Date.now() });
 
-    logger.info(`✅ OAuth complete for ${ghUser.login}`, { login: ghUser.login });
+    const redirectUrl = new URL(`${APP_URL}/dashboard`);
+    redirectUrl.searchParams.set('code', exchangeCode);
+
+    logger.info(`OAuth complete for ${ghUser.login}`, { login: ghUser.login });
 
     return c.redirect(redirectUrl.toString());
   }
 );
 
 /**
+ * POST /exchange
+ * @description Exchange a short-lived code for an httpOnly session cookie.
+ */
+auth.post('/exchange', async (c) => {
+  const body = await c.req.json<{ code?: string }>();
+
+  if (!body.code) {
+    return c.json({ error: 'Missing code' }, 400);
+  }
+
+  const entry = pendingCodes.get(body.code);
+  if (!entry) {
+    return c.json({ error: 'Invalid or expired code' }, 401);
+  }
+
+  pendingCodes.delete(body.code);
+  setAuthCookies(c, entry.token);
+
+  return c.json({ success: true });
+});
+
+/**
  * POST /demo
- * @description Creates a session for a demo user (only enabled if ENABLE_DEMO_LOGIN=true).
- * @returns {object} Session token and user info.
- * @throws 403 if demo login is disabled.
+ * @description Creates a session for a demo user (only enabled via DEMO_ACCESS_TOKEN).
  */
 auth.post('/demo', async (c) => {
-  // 1. Stealth Check
   const demoToken = c.req.header('X-Demo-Token');
   if (!process.env.DEMO_ACCESS_TOKEN || demoToken !== process.env.DEMO_ACCESS_TOKEN) {
-    // Return 401 with generic error to hide existence
     return c.json({ error: 'Unauthorized' }, 401);
   }
 
-  // 2. Sales Tool: Import Repo & Generate Preview
+  // Sales Tool: Import Repo & Generate Preview
   const body = await c.req.json().catch(() => ({}));
   if (body.repoUrl || body.repo) {
     const repoString = (body.repoUrl || body.repo) as string;
-    
-    // Parse owner/repo
-    // Supports: "owner/repo" or "https://github.com/owner/repo"
+
     const match = repoString.match(/github\.com\/([^\/]+)\/([^\/]+)/) || repoString.match(/^([^\/]+)\/([^\/]+)$/);
-    
+
     if (!match) {
       return c.json({ error: 'Invalid repo format. Use "owner/repo" or full URL.' }, 400);
     }
-    
+
     const owner = match[1];
     const repoName = match[2].replace(/\.git$/, '');
     const slug = `${owner}-${repoName}`.toLowerCase();
-    
-    // Check cache
+
     const existing = await prisma.preGenChangelog.findUnique({
       where: { slug },
     });
-    
+
     if (existing) {
-      return c.json({ 
+      return c.json({
         previewUrl: `${APP_URL}/preview/${existing.slug}`,
         status: 'existing',
         slug: existing.slug
@@ -214,22 +254,18 @@ auth.post('/demo', async (c) => {
     }
 
     try {
-      // Use system token if available (env.GITHUB_TOKEN), else unauthenticated (public only)
-      const accessToken = process.env.GITHUB_TOKEN || ''; 
-      
-      // Fetch latest release
+      const accessToken = process.env.GITHUB_TOKEN || '';
+
       const releases = await listReleases(owner, repoName, accessToken, 1);
-      
+
       if (!releases || releases.length === 0) {
         return c.json({ error: 'No releases found for this repository' }, 404);
       }
-      
+
       const release = releases[0];
-      
-      // Fetch detailed data for generation
+
       const data = await fetchReleaseData(owner, repoName, release?.tag_name, accessToken);
-      
-      // Generate Content
+
       const notes = await generateReleaseNotes({
         tagName: data.release?.tagName,
         previousTag: data.previousTag ?? undefined,
@@ -246,7 +282,6 @@ auth.post('/demo', async (c) => {
         },
       });
 
-      // Save Result
       const preGen = await prisma.preGenChangelog.create({
         data: {
           slug,
@@ -258,25 +293,25 @@ auth.post('/demo', async (c) => {
         },
       });
 
-      return c.json({ 
+      return c.json({
         previewUrl: `${APP_URL}/preview/${preGen.slug}`,
         status: 'created',
         slug: preGen.slug
       });
-      
+
     } catch (err: any) {
-      console.error(`Sales tool error for ${owner}/${repoName}:`, err);
+      logger.error(`Sales tool error for ${owner}/${repoName}`, { error: err.message });
       const isRateLimit = err.message?.includes('403') || err.message?.includes('rate limit');
-      return c.json({ 
-        error: isRateLimit ? 'GitHub rate limit exceeded' : `Failed to generate: ${err.message}` 
+      return c.json({
+        error: isRateLimit ? 'GitHub rate limit exceeded' : 'Failed to generate preview'
       }, 500);
     }
   }
 
-  // 3. Demo Login Session (if no repo provided)
+  // Demo Login Session (if no repo provided)
   const DEMO_GITHUB_ID = -1;
   const DEMO_EMAIL = 'demo@shiplog.io';
-  
+
   const encryptedAccessToken = await encrypt('demo-access-token');
 
   const dbUser = await prisma.user.upsert({
@@ -298,14 +333,17 @@ auth.post('/demo', async (c) => {
   });
 
   const sessionToken = await signToken(dbUser.id);
-  
-  return c.json({ token: sessionToken, user: { id: dbUser.id, login: dbUser.login } });
+
+  // Use exchange code for demo login too
+  const exchangeCode = crypto.randomUUID();
+  pendingCodes.set(exchangeCode, { token: sessionToken, createdAt: Date.now() });
+
+  return c.json({ code: exchangeCode, user: { id: dbUser.id, login: dbUser.login } });
 });
 
 /**
  * POST /logout
- * @description Logs out the user.
- * @returns {object} Logout status.
+ * @description Logs out the user, revokes token, and clears cookies.
  */
 auth.post('/logout', requireAuth, async (c) => {
   const user = c.get('user');
@@ -313,5 +351,6 @@ auth.post('/logout', requireAuth, async (c) => {
     where: { id: user.id },
     data: { lastLogoutAt: new Date() },
   });
+  clearAuthCookies(c);
   return c.json({ status: 'logged_out' });
 });

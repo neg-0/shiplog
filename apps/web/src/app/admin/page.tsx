@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { isAuthenticated, getUser } from '../../lib/api';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.shiplog.io';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
 interface Metrics {
   users: { total: number; free: number; pro: number; team: number };
@@ -37,12 +37,9 @@ export default function AdminDashboard() {
 
     const fetchData = async () => {
       try {
-        const token = localStorage.getItem('shiplog_token');
-        const headers = { 'Authorization': `Bearer ${token}` };
-
         const [metricsRes, activityRes] = await Promise.all([
-          fetch(`${API_URL}/admin/metrics`, { headers }),
-          fetch(`${API_URL}/admin/activity?limit=20`, { headers }),
+          fetch(`${API_URL}/admin/metrics`, { credentials: 'include' }),
+          fetch(`${API_URL}/admin/activity?limit=20`, { credentials: 'include' }),
         ]);
 
         if (metricsRes.status === 403) {

@@ -124,7 +124,7 @@ webhooks.post('/github', async (c) => {
       });
 
       if (existingRelease) {
-        console.log(`⚠️ Release ${release.id} already processed.`);
+        logger.warn(`Release ${release.id} already processed`, { releaseId: release.id });
         return c.json({ status: 'ignored', reason: 'already_processed' });
       }
 
@@ -141,7 +141,7 @@ webhooks.post('/github', async (c) => {
       );
 
       // Generate AI release notes
-      console.log(`🤖 Generating release notes...`);
+      // Generation timing logged below
       const start = Date.now();
       logger.info(`🤖 Generating release notes...`);
       const notes = await generateReleaseNotes({
@@ -291,9 +291,8 @@ webhooks.post('/github', async (c) => {
       });
 
     } catch (error) {
-      console.error('❌ Error processing release:', error);
       metrics.errorCounts++;
-      logger.error('❌ Error processing release', { error });
+      logger.error('Error processing release', { error });
       return c.json({ 
         status: 'error', 
         message: error instanceof Error ? error.message : 'Unknown error' 

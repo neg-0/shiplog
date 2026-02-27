@@ -184,7 +184,7 @@ const updateOrgSchema = z.object({
   slug: z.string().regex(/^[a-z0-9-]+$/).optional(),
   githubOrgId: z.number().nullable().optional(),
   githubOrgLogin: z.string().nullable().optional(),
-  subscriptionId: z.string().nullable().optional(),
+  // subscriptionId intentionally excluded — managed by billing system only
 });
 
 /**

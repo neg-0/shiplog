@@ -4,7 +4,7 @@ import { Ship, GitBranch, Key } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useState } from 'react';
-import { setToken } from '../../lib/api';
+import { exchangeAuthCode } from '../../lib/api';
 
 function LoginForm() {
   const router = useRouter();
@@ -35,7 +35,7 @@ function LoginForm() {
       }
 
       const data = await res.json();
-      setToken(data.token);
+      await exchangeAuthCode(data.code);
       router.push('/dashboard');
     } catch (err) {
       console.error(err);

@@ -5,9 +5,9 @@ import { AlertCircle, Building2, Crown, Loader2, Plus, Shield, User as UserIcon 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { getUser, isAuthenticated, type User } from '../../../lib/api';
+import { createOrganization, getOrganizations, getUser, isAuthenticated, type User } from '../../../lib/api';
 
-// Placeholder types until API is ready
+// Local type extending the API Organization with a derived role field
 interface Organization {
   id: string;
   name: string;
@@ -39,10 +39,13 @@ export default function OrganizationsPage() {
         setLoading(true);
         const userData = await getUser();
         setUser(userData);
-        // TODO: Fetch organizations when API is ready
-        // const orgs = await getOrganizations();
-        // setOrganizations(orgs);
-        setOrganizations([]); // Empty for now
+        const orgsData = await getOrganizations();
+        setOrganizations(
+          orgsData.organizations.map((org) => ({
+            ...org,
+            role: org.ownerId === userData.id ? 'OWNER' as const : 'MEMBER' as const,
+          }))
+        );
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load data');
       } finally {
@@ -176,26 +179,37 @@ export default function OrganizationsPage() {
       {/* Create Organization Modal */}
       {
         showCreateModal && (
-          <CreateOrganizationModal onClose={() => setShowCreateModal(false)} />
+          <CreateOrganizationModal
+            onClose={() => setShowCreateModal(false)}
+            onCreated={async () => {
+              setShowCreateModal(false);
+              const userData = await getUser();
+              const orgsData = await getOrganizations();
+              setOrganizations(
+                orgsData.organizations.map((org) => ({
+                  ...org,
+                  role: org.ownerId === userData.id ? 'OWNER' as const : 'MEMBER' as const,
+                }))
+              );
+            }}
+          />
         )
       }
     </DashboardLayout >
   );
 }
 
-function CreateOrganizationModal({ onClose }: { onClose: () => void }) {
+function CreateOrganizationModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const [name, setName] = useState('');
   const [githubOrg, setGithubOrg] = useState('');
   const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
   const [githubOrgs, setGithubOrgs] = useState<{ id: number; login: string }[]>([]);
   const [loadingOrgs, setLoadingOrgs] = useState(true);
 
   useEffect(() => {
-    // TODO: Fetch user's GitHub organizations
-    // const orgs = await getGitHubOrgs();
-    // setGithubOrgs(orgs);
+    // TODO: Fetch user's GitHub organizations when endpoint is available
     setLoadingOrgs(false);
-    // Mock data for now
     setGithubOrgs([]);
   }, []);
 
@@ -203,14 +217,16 @@ function CreateOrganizationModal({ onClose }: { onClose: () => void }) {
     if (!name.trim()) return;
 
     setCreating(true);
+    setCreateError(null);
     try {
-      // TODO: Call API to create organization
-      // await createOrganization({ name, githubOrgLogin: githubOrg || undefined });
-      console.log('Creating org:', { name, githubOrg });
-      onClose();
-      // Refresh page or navigate to new org
+      await createOrganization({
+        name,
+        slug: name.toLowerCase().replace(/\s+/g, '-'),
+        githubOrgLogin: githubOrg || undefined,
+      });
+      onCreated();
     } catch (err) {
-      console.error('Failed to create organization:', err);
+      setCreateError(err instanceof Error ? err.message : 'Failed to create organization');
     } finally {
       setCreating(false);
     }
@@ -280,6 +296,13 @@ function CreateOrganizationModal({ onClose }: { onClose: () => void }) {
               <strong>Team Plan:</strong> Unlimited seats included. Invite your entire team at no extra cost.
             </p>
           </div>
+
+          {createError && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
+              <p className="text-sm text-red-600">{createError}</p>
+            </div>
+          )}
         </div>
 
         <div className="p-6 border-t border-navy-100 flex gap-3">

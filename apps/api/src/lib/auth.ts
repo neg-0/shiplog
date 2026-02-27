@@ -49,8 +49,6 @@ function base64UrlDecode(str: string): Uint8Array {
   const base64 = str.replace(/-/g, '+').replace(/_/g, '/');
   const padded = base64.padEnd(base64.length + (4 - (base64.length % 4)) % 4, '=');
 
-  // Buffer is a Uint8Array but its .buffer is typed as ArrayBufferLike.
-  // Normalize to a plain ArrayBuffer-backed Uint8Array for WebCrypto BufferSource types.
   const buf = Buffer.from(padded, 'base64');
   return new Uint8Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
 }
@@ -64,9 +62,8 @@ async function deriveAesKey(): Promise<CryptoKey> {
   const secret = process.env.JWT_SECRET;
   if (!secret) throw new Error('JWT_SECRET is not set');
 
-  // Derive a stable 256-bit key from JWT_SECRET using PBKDF2
   const secretBytes = new TextEncoder().encode(secret);
-  const salt = new TextEncoder().encode('shiplog-secure-salt-v1'); // Fixed salt for determinism
+  const salt = new TextEncoder().encode('shiplog-secure-salt-v1');
 
   const keyMaterial = await crypto.subtle.importKey(
     'raw',
@@ -92,13 +89,7 @@ async function deriveAesKey(): Promise<CryptoKey> {
 
 /**
  * Encrypt a string using AES-GCM.
- *
- * @description
- * Generates a random IV and encrypts the plaintext. Returns a formatted string containing version, IV, and ciphertext.
  * Format: `v1.<iv_base64>.<ciphertext_base64>`
- *
- * @param plaintext - The string to encrypt.
- * @returns Encrypted string.
  */
 export async function encrypt(plaintext: string): Promise<string> {
   const key = await deriveAesKey();
@@ -111,10 +102,6 @@ export async function encrypt(plaintext: string): Promise<string> {
 
 /**
  * Decrypt a string encrypted by `encrypt()`.
- *
- * @param encrypted - The encrypted string (format: `v1.<iv>.<ciphertext>`).
- * @returns The original plaintext.
- * @throws Error if format is invalid or decryption fails.
  */
 export async function decrypt(encrypted: string): Promise<string> {
   if (!encrypted.startsWith('v1.')) {
@@ -147,31 +134,41 @@ export async function decrypt(encrypted: string): Promise<string> {
 // ============================================
 
 /**
+ * Extract session token from httpOnly cookie or Authorization header.
+ * Prefers cookie-based auth; falls back to Bearer token for API clients.
+ */
+function getSessionToken(c: Context): string | null {
+  const cookieHeader = c.req.header('Cookie');
+  if (cookieHeader) {
+    const match = cookieHeader.match(/shiplog_session=([^;]+)/);
+    if (match) return match[1];
+  }
+
+  const authHeader = c.req.header('Authorization');
+  if (authHeader?.startsWith('Bearer ')) {
+    return authHeader.slice(7);
+  }
+  return null;
+}
+
+/**
  * Middleware to enforce authentication.
- *
- * @description
- * Verifies the Bearer token in the Authorization header.
- * If valid, fetches the user from the database and attaches it to the request context.
- *
- * @param c - Hono context.
- * @param next - Next middleware.
- * @returns Response or calls next().
+ * Verifies session token from cookie or Authorization header.
+ * Checks token revocation via lastLogoutAt.
  */
 export async function requireAuth(c: Context, next: Next) {
-  const authHeader = c.req.header('Authorization');
-  
-  if (!authHeader?.startsWith('Bearer ')) {
+  const token = getSessionToken(c);
+
+  if (!token) {
     return c.json({ error: 'Missing or invalid Authorization header' }, 401);
   }
 
-  const token = authHeader.slice(7);
   const payload = await verifyToken(token);
 
   if (!payload) {
     return c.json({ error: 'Invalid or expired token' }, 401);
   }
 
-  // Fetch user from database
   const user = await prisma.user.findUnique({
     where: { id: payload.userId },
     select: {
@@ -190,13 +187,11 @@ export async function requireAuth(c: Context, next: Next) {
   // Check revocation
   if (user.lastLogoutAt && payload.iat) {
     const logoutTime = Math.floor(user.lastLogoutAt.getTime() / 1000);
-    // Revoke if token issued before last logout
     if (payload.iat < logoutTime) {
       return c.json({ error: 'Token revoked' }, 401);
     }
   }
 
-  // Attach user to context
   c.set('user', user);
   setLoggerContext({ userId: user.id });
 
@@ -205,20 +200,12 @@ export async function requireAuth(c: Context, next: Next) {
 
 /**
  * Middleware for optional authentication.
- *
- * @description
- * Checks for a Bearer token. If present and valid, attaches the user to the context.
- * Does not block the request if the token is missing or invalid.
- *
- * @param c - Hono context.
- * @param next - Next middleware.
- * @returns Calls next().
+ * Checks for a session token. If present and valid, attaches the user to context.
  */
 export async function optionalAuth(c: Context, next: Next) {
-  const authHeader = c.req.header('Authorization');
-  
-  if (authHeader?.startsWith('Bearer ')) {
-    const token = authHeader.slice(7);
+  const token = getSessionToken(c);
+
+  if (token) {
     const payload = await verifyToken(token);
 
     if (payload) {
@@ -244,9 +231,8 @@ export async function optionalAuth(c: Context, next: Next) {
 
         if (valid) {
           c.set('user', user);
+          setLoggerContext({ userId: user.id });
         }
-        c.set('user', user);
-        setLoggerContext({ userId: user.id });
       }
     }
   }

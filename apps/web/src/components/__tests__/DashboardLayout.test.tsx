@@ -10,7 +10,7 @@ jest.mock('next/navigation', () => ({
 }));
 
 jest.mock('../../lib/api', () => ({
-  clearToken: jest.fn(),
+  logout: jest.fn(() => Promise.resolve()),
 }));
 
 // Mock lucide-react icons to make them easy to find
@@ -95,7 +95,7 @@ describe('DashboardLayout', () => {
     expect(settingsLink).toHaveClass('text-white');
   });
 
-  it('handles logout', () => {
+  it('handles logout', async () => {
     render(
       <DashboardLayout user={mockUser}>
         <div>Content</div>
@@ -104,9 +104,11 @@ describe('DashboardLayout', () => {
 
     // Logout button is in sidebar
     const logoutButton = screen.getByTitle('Logout');
-    fireEvent.click(logoutButton);
+    await act(async () => {
+      fireEvent.click(logoutButton);
+    });
 
-    expect(api.clearToken).toHaveBeenCalled();
+    expect(api.logout).toHaveBeenCalled();
     expect(mockRouter.push).toHaveBeenCalledWith('/login');
   });
 

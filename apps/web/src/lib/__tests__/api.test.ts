@@ -1,85 +1,62 @@
-import { setToken, clearToken, isAuthenticated, getUser, getRepos, getRelease } from '../api';
+import { isAuthenticated, getUser, getRepos, getRelease } from '../api';
 
 const mockFetch = jest.fn() as jest.Mock;
 global.fetch = mockFetch;
 
 describe('api', () => {
   beforeEach(() => {
-    localStorage.clear();
     mockFetch.mockClear();
     mockFetch.mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({}),
       status: 200,
     });
-    // Reset location if possible, or assume it's stable
-    // window.history.pushState({}, '', '/');
+    // Clear cookies
+    Object.defineProperty(document, 'cookie', {
+      writable: true,
+      value: '',
+    });
   });
 
   describe('Auth Utils', () => {
-    it('sets token in localStorage', () => {
-      expect(localStorage.getItem('shiplog_token')).toBeNull();
-      setToken('test-token');
-      expect(localStorage.getItem('shiplog_token')).toBe('test-token');
-    });
-
-    it('clears token from localStorage', () => {
-      setToken('test-token');
-      clearToken();
-      expect(localStorage.getItem('shiplog_token')).toBeNull();
-    });
-
-    it('checks authentication', () => {
+    it('checks authentication via cookie', () => {
       expect(isAuthenticated()).toBe(false);
-      setToken('test-token');
+      Object.defineProperty(document, 'cookie', {
+        writable: true,
+        value: 'shiplog_logged_in=1',
+      });
       expect(isAuthenticated()).toBe(true);
     });
   });
 
   describe('fetchApi', () => {
-    it('calls fetch with correct headers and token', async () => {
-      setToken('test-token');
+    it('calls fetch with credentials: include', async () => {
       await getUser();
 
       expect(mockFetch).toHaveBeenCalledWith('/api/user/me', expect.objectContaining({
         headers: expect.objectContaining({
           'Content-Type': 'application/json',
-          'Authorization': 'Bearer test-token',
         }),
+        credentials: 'include',
       }));
     });
 
-    it('calls fetch without token if not set', async () => {
-      await getUser();
-
-      const callArgs = mockFetch.mock.calls[0];
-      const headers = callArgs[1].headers;
-
-      expect(headers).toHaveProperty('Content-Type', 'application/json');
-      expect(headers).not.toHaveProperty('Authorization');
-    });
-
     it('handles 401 Unauthorized', async () => {
-      // Mock console.error to avoid noise if JSDOM logs navigation error
-      const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
-
-      mockFetch.mockResolvedValue({
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({}),
+        status: 200,
+      }).mockResolvedValueOnce({
         ok: false,
         status: 401,
         json: () => Promise.resolve({ error: 'Unauthorized' }),
       });
 
-      setToken('test-token');
-
       try {
         await getUser();
       } catch (e: any) {
-        // Ignore errors (could be Unauthorized or JSDOM navigation error)
+        // Ignore errors
       }
-
-      expect(localStorage.getItem('shiplog_token')).toBeNull(); // Should clear token
-
-      consoleError.mockRestore();
     });
 
     it('handles other errors', async () => {
@@ -93,20 +70,20 @@ describe('api', () => {
     });
 
     it('handles network errors', async () => {
-        mockFetch.mockRejectedValue(new Error('Network Error'));
-        await expect(getUser()).rejects.toThrow('Network Error');
+      mockFetch.mockRejectedValue(new Error('Network Error'));
+      await expect(getUser()).rejects.toThrow('Network Error');
     });
   });
 
   describe('API Functions', () => {
     it('getRepos calls /repos', async () => {
-        await getRepos();
-        expect(mockFetch).toHaveBeenCalledWith('/api/repos', expect.anything());
+      await getRepos();
+      expect(mockFetch).toHaveBeenCalledWith('/api/repos', expect.anything());
     });
 
     it('getRelease calls /releases/:id', async () => {
-        await getRelease('123');
-        expect(mockFetch).toHaveBeenCalledWith('/api/releases/123', expect.anything());
+      await getRelease('123');
+      expect(mockFetch).toHaveBeenCalledWith('/api/releases/123', expect.anything());
     });
   });
 });

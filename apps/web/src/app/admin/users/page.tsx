@@ -5,8 +5,9 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { isAuthenticated } from '../../../lib/api';
+import { ConfirmDialog } from '../../../components/Dialog';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.shiplog.io';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
 interface User {
   id: string;
@@ -27,18 +28,18 @@ export default function AdminUsersPage() {
   const [tierFilter, setTierFilter] = useState('');
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; login: string } | null>(null);
   const router = useRouter();
 
   const fetchUsers = async () => {
     try {
       setLoading(true);
-      const token = localStorage.getItem('shiplog_token');
       const params = new URLSearchParams({ page: String(page), limit: '20' });
       if (search) params.set('search', search);
       if (tierFilter) params.set('tier', tierFilter);
 
       const res = await fetch(`${API_URL}/admin/users?${params}`, {
-        headers: { 'Authorization': `Bearer ${token}` },
+        credentials: 'include',
       });
 
       if (res.status === 403) {
@@ -71,26 +72,23 @@ export default function AdminUsersPage() {
   };
 
   const handleChangeTier = async (userId: string, newTier: string) => {
-    const token = localStorage.getItem('shiplog_token');
     await fetch(`${API_URL}/admin/users/${userId}`, {
       method: 'PATCH',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify({ subscriptionTier: newTier }),
     });
     fetchUsers();
   };
 
-  const handleDelete = async (userId: string, login: string) => {
-    if (!confirm(`Delete user ${login}? This cannot be undone.`)) return;
-    
-    const token = localStorage.getItem('shiplog_token');
-    await fetch(`${API_URL}/admin/users/${userId}`, {
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+
+    await fetch(`${API_URL}/admin/users/${deleteTarget.id}`, {
       method: 'DELETE',
-      headers: { 'Authorization': `Bearer ${token}` },
+      credentials: 'include',
     });
+    setDeleteTarget(null);
     fetchUsers();
   };
 
@@ -211,7 +209,7 @@ export default function AdminUsersPage() {
                       </td>
                       <td className="px-4 py-3 text-right">
                         <button
-                          onClick={() => handleDelete(user.id, user.login)}
+                          onClick={() => setDeleteTarget({ id: user.id, login: user.login })}
                           className="p-2 text-navy-400 hover:text-red-600 hover:bg-red-50 rounded transition"
                         >
                           <Trash2 className="w-4 h-4" />
@@ -246,6 +244,16 @@ export default function AdminUsersPage() {
           </div>
         </div>
       </main>
+
+      <ConfirmDialog
+        isOpen={deleteTarget !== null}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={handleDelete}
+        title="Delete User"
+        message={`Delete user ${deleteTarget?.login}? This cannot be undone.`}
+        confirmText="Delete"
+        variant="danger"
+      />
     </div>
   );
 }

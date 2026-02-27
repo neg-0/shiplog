@@ -2,42 +2,43 @@
  * API client for ShipLog
  */
 
-const getToken = (): string | null => {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem('shiplog_token');
-};
-
-export const setToken = (token: string) => {
-  localStorage.setItem('shiplog_token', token);
-};
-
-export const clearToken = () => {
-  localStorage.removeItem('shiplog_token');
-};
-
 export const isAuthenticated = (): boolean => {
-  return !!getToken();
+  if (typeof window === 'undefined') return false;
+  return document.cookie.includes('shiplog_logged_in=1');
 };
+
+export async function exchangeAuthCode(code: string): Promise<void> {
+  const res = await fetch('/api/auth/exchange', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ code }),
+  });
+  if (!res.ok) throw new Error('Failed to exchange auth code');
+}
+
+export async function logout(): Promise<void> {
+  await fetch('/api/auth/logout', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+  });
+}
 
 async function fetchApi<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const token = getToken();
-  
   const headers: HeadersInit = {
     'Content-Type': 'application/json',
     ...options.headers,
   };
 
-  if (token) {
-    (headers as Record<string, string>)['Authorization'] = `Bearer ${token}`;
-  }
-
   const res = await fetch(`/api${path}`, {
     ...options,
     headers,
+    credentials: 'include',
   });
 
   if (res.status === 401) {
-    clearToken();
+    await logout();
     if (typeof window !== 'undefined') {
       window.location.href = '/login';
     }
@@ -367,4 +368,81 @@ export async function getChangelog(org: string, repo: string, audience?: string)
     throw new Error(error.error || 'Changelog not found');
   }
   return res.json();
+}
+
+// ============================================
+// ORGANIZATIONS
+// ============================================
+
+export interface Organization {
+  id: string;
+  name: string;
+  slug: string;
+  githubOrgId: number | null;
+  githubOrgLogin: string | null;
+  ownerId: string;
+  memberCount: number;
+  repoCount: number;
+  createdAt: string;
+}
+
+export interface OrganizationMember {
+  id: string;
+  role: 'OWNER' | 'ADMIN' | 'MEMBER';
+  joinedAt: string;
+  user: {
+    id: string;
+    login: string;
+    name: string | null;
+    email: string | null;
+    avatarUrl: string | null;
+  };
+}
+
+export interface OrganizationDetail {
+  id: string;
+  name: string;
+  slug: string;
+  githubOrgId: number | null;
+  githubOrgLogin: string | null;
+  ownerId: string;
+  owner: { id: string; login: string; name: string | null; email: string | null; avatarUrl: string | null };
+  members: OrganizationMember[];
+  repos: { id: string; name: string; fullName: string; status: string }[];
+  createdAt: string;
+}
+
+export async function getOrganizations(): Promise<{ organizations: Organization[] }> {
+  return fetchApi('/organizations');
+}
+
+export async function getOrganization(id: string): Promise<OrganizationDetail> {
+  return fetchApi(`/organizations/${id}`);
+}
+
+export async function createOrganization(data: { name: string; slug: string; githubOrgLogin?: string }): Promise<Organization> {
+  return fetchApi('/organizations', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateOrganization(id: string, data: { name?: string; slug?: string }): Promise<Organization> {
+  return fetchApi(`/organizations/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function inviteOrganizationMember(orgId: string, data: { email: string; role?: 'ADMIN' | 'MEMBER' }): Promise<void> {
+  return fetchApi(`/organizations/${orgId}/invite`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function removeOrganizationMember(orgId: string, userId: string): Promise<void> {
+  return fetchApi(`/organizations/${orgId}/members/${userId}`, {
+    method: 'DELETE',
+  });
 }
