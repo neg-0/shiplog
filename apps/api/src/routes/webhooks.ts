@@ -23,10 +23,10 @@ export const webhooks = new Hono();
  */
 function verifyGitHubSignature(payload: string, signature: string | undefined, secret: string): boolean {
   if (!signature) return false;
-  
+
   const hmac = createHmac('sha256', secret);
   const digest = 'sha256=' + hmac.update(payload).digest('hex');
-  
+
   const signatureBuffer = Buffer.from(signature);
   const digestBuffer = Buffer.from(digest);
 
@@ -83,7 +83,7 @@ webhooks.post('/github', async (c) => {
       repo: repo.full_name,
       tagName: release.tag_name
     });
-    
+
     try {
       // Find the connected repository in our database
       const connectedRepo = await prisma.repo.findFirst({
@@ -130,9 +130,9 @@ webhooks.post('/github', async (c) => {
       // Fetch detailed release data
       logger.info(`📊 Fetching release data for ${repo.full_name}...`, { repo: repo.full_name });
       const releaseData = await fetchReleaseData(
-        connectedRepo.owner, 
-        connectedRepo.name, 
-        release.tag_name, 
+        connectedRepo.owner,
+        connectedRepo.name,
+        release.tag_name,
         accessToken
       );
 
