@@ -2,10 +2,21 @@
 
 import Link from 'next/link';
 import { Ship, GitBranch, Users, Mail, Slack, Zap, ArrowRight, Check, LayoutDashboard } from 'lucide-react';
+import { useState } from 'react';
 import { createCheckoutSession, isAuthenticated } from '../lib/api';
+
+const colorMap: Record<string, { bg: string; text: string }> = {
+  teal: { bg: 'bg-teal-100', text: 'text-teal-600' },
+  amber: { bg: 'bg-amber-100', text: 'text-amber-600' },
+  navy: { bg: 'bg-navy-100', text: 'text-navy-600' },
+  blue: { bg: 'bg-blue-100', text: 'text-blue-600' },
+  purple: { bg: 'bg-purple-100', text: 'text-purple-600' },
+  indigo: { bg: 'bg-indigo-100', text: 'text-indigo-600' },
+};
 
 export default function Home() {
   const loggedIn = isAuthenticated();
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
 
   const handleCheckout = async (plan: 'pro' | 'team') => {
     if (!loggedIn) {
@@ -13,9 +24,14 @@ export default function Home() {
       return;
     }
 
-    const session = await createCheckoutSession(plan);
-    if (session.url) {
-      window.location.href = session.url;
+    try {
+      setCheckoutError(null);
+      const session = await createCheckoutSession(plan);
+      if (session.url) {
+        window.location.href = session.url;
+      }
+    } catch (err) {
+      setCheckoutError(err instanceof Error ? err.message : 'Failed to start checkout');
     }
   };
 
@@ -176,8 +192,8 @@ export default function Home() {
                 key={item.title} 
                 className="bg-white rounded-2xl p-6 shadow-lg border border-navy-100 hover:shadow-xl transition"
               >
-                <div className={`w-12 h-12 bg-${item.color}-100 rounded-xl flex items-center justify-center mb-4`}>
-                  <item.icon className={`w-6 h-6 text-${item.color}-600`} />
+                <div className={`w-12 h-12 ${colorMap[item.color]?.bg ?? 'bg-gray-100'} rounded-xl flex items-center justify-center mb-4`}>
+                  <item.icon className={`w-6 h-6 ${colorMap[item.color]?.text ?? 'text-gray-600'}`} />
                 </div>
                 <h3 className="text-xl font-semibold text-navy-900 mb-2">{item.title}</h3>
                 <p className="text-navy-600 mb-4">{item.description}</p>
@@ -225,6 +241,11 @@ export default function Home() {
           <p className="text-navy-600 text-center mb-12">
             Start free. Upgrade when you need more.
           </p>
+          {checkoutError && (
+            <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-6 text-red-700 text-center">
+              {checkoutError}
+            </div>
+          )}
           <div className="grid md:grid-cols-3 gap-6">
             {[
               {

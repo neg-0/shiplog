@@ -9,5 +9,7 @@ export const securityHeaders = () => {
     c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
     c.header('Content-Security-Policy', "default-src 'self'");
     c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
+    c.header('Cache-Control', 'no-store');
+    c.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
   };
 };

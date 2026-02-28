@@ -1,7 +1,8 @@
 import type { ReleaseInput } from '../generator.js';
+import { sanitizePromptInput } from './index.js';
 
 export function buildDeveloperMessages(input: ReleaseInput) {
-  const productName = input.repoConfig.productName || 'the product';
+  const productName = sanitizePromptInput(input.repoConfig.productName || 'the product', 100);
 
   const system = `You write developer-facing release notes in Markdown for ${productName}.
 
@@ -17,6 +18,18 @@ Style:
 
 Output must be Markdown only (no code fences).`;
 
+  const releaseBody = sanitizePromptInput(input.releaseBody || '(none)', 3000);
+
+  const pullRequests = input.pullRequests.slice(0, 20).map((pr) => ({
+    ...pr,
+    body: pr.body ? sanitizePromptInput(pr.body, 500) : undefined,
+  }));
+
+  const commits = input.commits.slice(0, 50).map((c) => ({
+    ...c,
+    message: sanitizePromptInput(c.message, 200),
+  }));
+
   const user = `Generate developer release notes for tag ${input.tagName}${input.previousTag ? ` (changes since ${input.previousTag})` : ''}.
 
 Include:
@@ -26,11 +39,18 @@ Include:
 - Migration/upgrade notes only if strongly implied by the changes
 
 Source material:
-- Original GitHub release body:\n${input.releaseBody || '(none)'}
 
-Pull requests:\n${JSON.stringify(input.pullRequests, null, 2)}
+<release_data>
+${releaseBody}
+</release_data>
 
-Commits:\n${JSON.stringify(input.commits, null, 2)}
+<pull_requests>
+${JSON.stringify(pullRequests, null, 2)}
+</pull_requests>
+
+<commits>
+${JSON.stringify(commits, null, 2)}
+</commits>
 
 Output ONLY Markdown.`;
 

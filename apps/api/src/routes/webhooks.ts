@@ -102,20 +102,16 @@ webhooks.post('/github', async (c) => {
         },
       });
 
-      if (!connectedRepo) {
-        logger.warn(`⚠️ No connected repo found for ${repo.full_name}`, { repo: repo.full_name });
-        return c.json({ status: 'ignored', reason: 'repo_not_connected' });
-      }
-
-      // Verify signature using the repo's webhook secret
-      if (!connectedRepo.webhookSecret) {
-        logger.error(`⚠️ No webhook secret for repo ${repo.full_name}`, { repo: repo.full_name });
-        return c.json({ error: 'Webhook secret not configured' }, 500);
+      // Verify signature BEFORE processing any data.
+      // Return identical errors for "not found" and "bad signature" to prevent information leakage.
+      if (!connectedRepo || !connectedRepo.webhookSecret) {
+        logger.warn(`Webhook auth failed for ${repo.full_name}: repo not found or no secret`, { repo: repo.full_name });
+        return c.json({ error: 'Unauthorized' }, 401);
       }
 
       if (!verifyGitHubSignature(body, signature, connectedRepo.webhookSecret)) {
-        logger.error(`❌ Invalid signature for ${repo.full_name}`, { repo: repo.full_name });
-        return c.json({ error: 'Invalid signature' }, 401);
+        logger.error(`Webhook auth failed for ${repo.full_name}: invalid signature`, { repo: repo.full_name });
+        return c.json({ error: 'Unauthorized' }, 401);
       }
 
       // Check if release already exists to prevent replay attacks
@@ -293,9 +289,9 @@ webhooks.post('/github', async (c) => {
     } catch (error) {
       metrics.errorCounts++;
       logger.error('Error processing release', { error });
-      return c.json({ 
-        status: 'error', 
-        message: error instanceof Error ? error.message : 'Unknown error' 
+      return c.json({
+        status: 'error',
+        message: 'Failed to process release'
       }, 500);
     }
   }

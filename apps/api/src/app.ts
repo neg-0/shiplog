@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import { securityHeaders } from './middleware/security.js';
+import { webhookLimiter } from './lib/rate-limit.js';
 import { webhooks } from './routes/webhooks.js';
 import { feedback } from './routes/feedback.js';
 import { auth } from './routes/auth.js';
@@ -51,13 +52,13 @@ app.use('*', async (c, next) => {
 
 // Routes
 app.route('/health', health);
+app.use('/webhooks/*', webhookLimiter);
 app.route('/webhooks', webhooks);
 app.route('/feedback', feedback);
 app.route('/auth', auth);
 app.route('/repos', repos);
 app.route('/releases', releases);
 app.route('/user', user);
-app.route('/users', user);
 app.route('/billing', billing);
 app.route('/changelog', changelog);
 app.route('/organizations', organizations);

@@ -11,8 +11,7 @@ import { generateReleaseNotes } from './generator.js';
  * 1. Fetches the repository configuration from the database.
  * 2. Fetches the 5 most recent releases from GitHub.
  * 3. Iterates through the releases and:
- *    - Checks if the release already exists in the database.
- *    - Creates a new release record if it doesn't exist.
+ *    - Upserts the release record (race-condition safe).
  *    - If `autoGenerate` is enabled, triggers the release notes generation process.
  *    - Updates the release status to `READY`, `FAILED`, or `SKIPPED`.
  *
@@ -20,7 +19,7 @@ import { generateReleaseNotes } from './generator.js';
  * @param accessToken - GitHub OAuth access token with repo scope.
  * @returns A promise that resolves when the import process is complete.
  */
-export async function importRepoHistory(repoId: string, accessToken: string) {
+export async function importRepoHistory(repoId: string, accessToken: string): Promise<void> {
   try {
     const repo = await prisma.repo.findUnique({
       where: { id: repoId },
@@ -32,30 +31,25 @@ export async function importRepoHistory(repoId: string, accessToken: string) {
       return;
     }
 
-    logger.info(`📥 Starting import for ${repo.fullName}...`, { repoId, repo: repo.fullName });
+    logger.info(`Starting import for ${repo.fullName}`, { repoId, repo: repo.fullName });
 
-    // 1. Fetch recent releases
-    const releases = await listReleases(repo.owner, repo.name, accessToken, 5);
-
-    logger.info(`   Found ${releases.length} releases.`, { repoId, count: releases.length });
-
-    // 2. Process each release (newest first)
-    for (const ghRelease of releases) {
-      // Check if already exists
-      const existing = await prisma.release.findUnique({
-        where: { githubId: ghRelease.id },
-      });
-
-      if (existing) {
-        logger.info(`   Skipping ${ghRelease.tag_name} (already exists)`, { repoId, tagName: ghRelease.tag_name });
-        continue;
+    let releases;
+    try {
+      releases = await listReleases(repo.owner, repo.name, accessToken, 5);
+    } catch (err: unknown) {
+      if (err instanceof Error && err.message.includes('401')) {
+        logger.warn('GitHub token expired or revoked', { repoId });
+        throw new Error(`GitHub authentication failed for repo ${repoId}: token expired or revoked`);
       }
+      throw err;
+    }
 
-      logger.info(`   Importing ${ghRelease.tag_name}...`, { repoId, tagName: ghRelease.tag_name });
+    logger.info(`Found ${releases.length} releases`, { repoId, count: releases.length });
 
-      // Create basic record first
-      const release = await prisma.release.create({
-        data: {
+    for (const ghRelease of releases) {
+      const release = await prisma.release.upsert({
+        where: { githubId: ghRelease.id },
+        create: {
           repoId,
           githubId: ghRelease.id,
           tagName: ghRelease.tag_name,
@@ -64,33 +58,37 @@ export async function importRepoHistory(repoId: string, accessToken: string) {
           htmlUrl: ghRelease.html_url,
           isDraft: ghRelease.draft,
           isPrerelease: ghRelease.prerelease,
-          // Use created_at for drafts so they have a sortable date, otherwise use published_at
-          publishedAt: ghRelease.draft 
-            ? new Date(ghRelease.created_at) 
+          publishedAt: ghRelease.draft
+            ? new Date(ghRelease.created_at)
             : (ghRelease.published_at ? new Date(ghRelease.published_at) : null),
           status: 'PENDING',
         },
+        update: {},
       });
 
-      // Try to generate notes if config allows
+      // If the release already existed (not PENDING), skip processing
+      if (release.status !== 'PENDING') {
+        logger.info(`Skipping ${ghRelease.tag_name} (already processed)`, { repoId, tagName: ghRelease.tag_name });
+        continue;
+      }
+
+      logger.info(`Importing ${ghRelease.tag_name}`, { repoId, tagName: ghRelease.tag_name });
+
       if (repo.config?.autoGenerate) {
         try {
-          // Update status to PROCESSING
           await prisma.release.update({
             where: { id: release.id },
             data: { status: 'PROCESSING' },
           });
 
-          // Fetch detailed data (commits, PRs)
           const data = await fetchReleaseData(repo.owner, repo.name, ghRelease.tag_name, accessToken);
-          
-          // Generate notes
+
           const notes = await generateReleaseNotes({
             tagName: data.release.tagName,
             previousTag: data.previousTag ?? undefined,
             releaseBody: data.release.body ?? undefined,
             commits: data.commits,
-            pullRequests: data.pullRequests.map(pr => ({
+            pullRequests: data.pullRequests.map((pr) => ({
               ...pr,
               body: pr.body ?? undefined,
             })),
@@ -101,11 +99,10 @@ export async function importRepoHistory(repoId: string, accessToken: string) {
             },
           });
 
-          // Update release with notes
           await prisma.release.update({
             where: { id: release.id },
             data: {
-              status: 'READY', // Ready for review
+              status: 'READY',
               notes: {
                 create: {
                   customer: notes.customer,
@@ -117,10 +114,10 @@ export async function importRepoHistory(repoId: string, accessToken: string) {
               },
             },
           });
-          
-          logger.info(`   ✅ Generated notes for ${ghRelease.tag_name}`, { repoId, tagName: ghRelease.tag_name });
+
+          logger.info(`Generated notes for ${ghRelease.tag_name}`, { repoId, tagName: ghRelease.tag_name });
         } catch (err) {
-          logger.error(`   ❌ Failed to generate notes for ${ghRelease.tag_name}`, { repoId, tagName: ghRelease.tag_name, error: err });
+          logger.error(`Failed to generate notes for ${ghRelease.tag_name}`, { repoId, tagName: ghRelease.tag_name, error: err });
           await prisma.release.update({
             where: { id: release.id },
             data: { status: 'FAILED' },
@@ -129,12 +126,12 @@ export async function importRepoHistory(repoId: string, accessToken: string) {
       } else {
         await prisma.release.update({
           where: { id: release.id },
-          data: { status: 'SKIPPED' }, 
+          data: { status: 'SKIPPED' },
         });
       }
     }
 
-    logger.info(`🏁 Import complete for ${repo.fullName}`, { repoId, repo: repo.fullName });
+    logger.info(`Import complete for ${repo.fullName}`, { repoId, repo: repo.fullName });
   } catch (error) {
     logger.error(`Import failed for repo ${repoId}`, { repoId, error });
   }

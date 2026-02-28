@@ -79,7 +79,7 @@ publicChangelog.get('/:slug', async (c) => {
     where: {
       OR: [
         { slug },
-        { fullName: slug.replace('-', '/') }, // Fallback to fullName
+        { fullName: slug.replace(/^([^-]+)-(.+)$/, '$1/$2') }, // Fallback to fullName
       ],
       isPublic: true,
     },
@@ -165,7 +165,7 @@ publicChangelog.get('/:slug/releases', zValidator('query', listReleasesSchema as
 
   const repo = await prisma.repo.findFirst({
     where: {
-      OR: [{ slug }, { fullName: slug.replace('-', '/') }],
+      OR: [{ slug }, { fullName: slug.replace(/^([^-]+)-(.+)$/, '$1/$2') }],
       isPublic: true,
     },
     select: { id: true },
@@ -216,7 +216,7 @@ publicChangelog.get('/:slug/releases/:version', async (c) => {
 
   const repo = await prisma.repo.findFirst({
     where: {
-      OR: [{ slug }, { fullName: slug.replace('-', '/') }],
+      OR: [{ slug }, { fullName: slug.replace(/^([^-]+)-(.+)$/, '$1/$2') }],
       isPublic: true,
     },
     select: { id: true, name: true, publicTitle: true },

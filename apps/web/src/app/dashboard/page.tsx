@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
 import { getRepos, getUser, isAuthenticated, exchangeAuthCode, type Repo, type User } from '../../lib/api';
+import { formatRelativeDate } from '../../lib/utils';
 
 function DashboardContent() {
 
@@ -40,6 +41,9 @@ function DashboardContent() {
 
   // Check auth and fetch repos
   useEffect(() => {
+    // If an OAuth code is present, let the first effect handle the exchange
+    if (searchParams.get('code')) return;
+
     if (!isAuthenticated()) {
       router.push('/login');
       return;
@@ -65,23 +69,7 @@ function DashboardContent() {
     };
 
     fetchData();
-  }, [router]);
-
-
-
-  const formatRelativeDate = (dateStr: string | null) => {
-    if (!dateStr) return null;
-    const date = new Date(dateStr);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-    if (diffDays === 0) return 'today';
-    if (diffDays === 1) return 'yesterday';
-    if (diffDays < 7) return `${diffDays} days ago`;
-    if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
-    return `${Math.floor(diffDays / 30)} months ago`;
-  };
+  }, [router, searchParams]);
 
   return (
     <DashboardLayout user={user}>

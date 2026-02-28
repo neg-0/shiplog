@@ -14,19 +14,21 @@ export function FeedbackWidget({ repoId, repoName }: FeedbackWidgetProps) {
   const [email, setEmail] = useState('');
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
+  const [feedbackError, setFeedbackError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!feedback.trim()) return;
 
     setSending(true);
+    setFeedbackError(null);
     try {
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/public/feedback`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ repoId, feedback, email, source: 'widget' }),
       });
-      
+
       if (res.ok) {
         setSent(true);
         setTimeout(() => {
@@ -35,9 +37,11 @@ export function FeedbackWidget({ repoId, repoName }: FeedbackWidgetProps) {
           setFeedback('');
           setEmail('');
         }, 3000);
+      } else {
+        setFeedbackError('Failed to send feedback. Please try again.');
       }
-    } catch (err) {
-      console.error('Failed to send feedback', err);
+    } catch {
+      setFeedbackError('Failed to send feedback. Please try again.');
     } finally {
       setSending(false);
     }
@@ -89,6 +93,10 @@ export function FeedbackWidget({ repoId, repoName }: FeedbackWidgetProps) {
                 onChange={(e) => setEmail(e.target.value)}
               />
             </div>
+
+            {feedbackError && (
+              <p className="text-sm text-red-600">{feedbackError}</p>
+            )}
 
             <button
               type="submit"

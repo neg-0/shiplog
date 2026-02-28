@@ -26,9 +26,10 @@ changelog.get('/:org/:repo', async (c) => {
 
   // Find the repo
   const connectedRepo = await prisma.repo.findFirst({
-    where: { 
+    where: {
       fullName,
       status: 'ACTIVE',
+      isPublic: true,
     },
     select: {
       id: true,
@@ -92,6 +93,7 @@ changelog.get('/', async (c) => {
   const repos = await prisma.repo.findMany({
     where: {
       status: 'ACTIVE',
+      isPublic: true,
       excludeFromFeatured: false,
       releases: {
         some: {

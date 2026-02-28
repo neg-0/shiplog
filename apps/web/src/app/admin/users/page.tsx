@@ -1,6 +1,6 @@
 'use client';
 
-import { Ship, Users, BarChart3, Activity, Loader2, Search, ChevronLeft, ChevronRight, Trash2 } from 'lucide-react';
+import { Ship, Users, BarChart3, Loader2, Search, ChevronLeft, ChevronRight, Trash2 } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -23,6 +23,7 @@ interface User {
 
 export default function AdminUsersPage() {
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [users, setUsers] = useState<User[]>([]);
   const [search, setSearch] = useState('');
   const [tierFilter, setTierFilter] = useState('');
@@ -72,24 +73,35 @@ export default function AdminUsersPage() {
   };
 
   const handleChangeTier = async (userId: string, newTier: string) => {
-    await fetch(`${API_URL}/admin/users/${userId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ subscriptionTier: newTier }),
-    });
-    fetchUsers();
+    try {
+      setError(null);
+      await fetch(`${API_URL}/admin/users/${userId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ subscriptionTier: newTier }),
+      });
+      fetchUsers();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update user tier');
+    }
   };
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
 
-    await fetch(`${API_URL}/admin/users/${deleteTarget.id}`, {
-      method: 'DELETE',
-      credentials: 'include',
-    });
-    setDeleteTarget(null);
-    fetchUsers();
+    try {
+      setError(null);
+      await fetch(`${API_URL}/admin/users/${deleteTarget.id}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      setDeleteTarget(null);
+      fetchUsers();
+    } catch (err) {
+      setDeleteTarget(null);
+      setError(err instanceof Error ? err.message : 'Failed to delete user');
+    }
   };
 
   return (
@@ -110,10 +122,6 @@ export default function AdminUsersPage() {
             <Users className="w-5 h-5" />
             Users
           </Link>
-          <Link href="/admin/activity" className="flex items-center gap-3 px-4 py-3 rounded-lg text-navy-300 hover:bg-navy-800 hover:text-white transition">
-            <Activity className="w-5 h-5" />
-            Activity
-          </Link>
         </nav>
 
         <div className="absolute bottom-6 left-6 right-6">
@@ -127,6 +135,12 @@ export default function AdminUsersPage() {
       <main className="ml-64 p-8">
         <div className="max-w-6xl mx-auto">
           <h1 className="text-2xl font-bold text-navy-900 mb-6">Users</h1>
+
+          {error && (
+            <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-6 text-red-700">
+              {error}
+            </div>
+          )}
 
           {/* Filters */}
           <div className="bg-white rounded-xl p-4 shadow-sm border border-navy-100 mb-6 flex flex-wrap gap-4">

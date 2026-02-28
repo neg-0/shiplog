@@ -1,11 +1,12 @@
-type Release = { id: string; repoId: string; githubReleaseId: number; tagName: string; name: string; body: string; status: string; htmlUrl?: string; };
 /**
  * ShipLog Distribution Service
  * Sends generated notes to configured channels (Slack, Discord, Email, Hosted)
  */
 
+import type { Release } from '@prisma/client';
 import type { GeneratedNotes } from './generator.js';
 import { logError, logInfo } from '../lib/logger.js';
+import { logger } from '../lib/logger.js';
 
 export interface DistributionTarget {
   type: 'slack' | 'discord' | 'email' | 'hosted';
@@ -35,30 +36,69 @@ export interface DistributionResult {
   responseCode?: number;
 }
 
+// ============================================
+// SECURITY HELPERS
+// ============================================
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function isPrivateHostname(hostname: string): boolean {
+  if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') {
+    return true;
+  }
+  if (hostname.startsWith('10.')) return true;
+  if (hostname.startsWith('192.168.')) return true;
+  if (hostname.startsWith('169.254.')) return true;
+
+  // Check 172.16.0.0 - 172.31.255.255
+  if (hostname.startsWith('172.')) {
+    const secondOctet = parseInt(hostname.split('.')[1] ?? '', 10);
+    if (secondOctet >= 16 && secondOctet <= 31) return true;
+  }
+
+  return false;
+}
+
+function validateWebhookUrl(url: string): void {
+  const parsed = new URL(url);
+
+  if (parsed.protocol !== 'https:') {
+    throw new Error(`Webhook URL must use HTTPS, got ${parsed.protocol}`);
+  }
+
+  if (isPrivateHostname(parsed.hostname)) {
+    throw new Error('Webhook URL must not point to a private/internal address');
+  }
+}
+
+// ============================================
+// PUBLIC API
+// ============================================
+
 /**
  * Distribute release notes to all configured targets (Slack, Discord, Email, etc.).
- *
- * @description
- * Orchestrates the distribution process by calling `distributeReleaseWithResults` but ignoring the detailed results.
  *
  * @param release - The release entity from the database, including optional repo information.
  * @param notes - The generated release notes (customer, developer, stakeholder versions).
  * @param targets - An array of distribution targets configured for the repository.
- * @returns A promise that resolves when all distribution attempts have completed.
+ * @returns A promise that resolves to the distribution results for each target.
  */
 export async function distributeRelease(
   release: Release & { repo?: { fullName: string } },
   notes: GeneratedNotes,
   targets: DistributionTarget[]
-): Promise<void> {
-  await distributeReleaseWithResults(release, notes, targets);
+): Promise<DistributionResult[]> {
+  return distributeReleaseWithResults(release, notes, targets);
 }
 
 /**
  * Distribute release notes and return detailed results for each target.
- *
- * @description
- * Prepares the payload and iterates through all targets, attempting distribution in parallel (via `Promise.allSettled`).
  *
  * @param release - The release entity from the database.
  * @param notes - The generated release notes.
@@ -104,14 +144,6 @@ export async function distributeReleaseWithResults(
 
 /**
  * Distribute release notes to a single specific target.
- *
- * @description
- * Routes the distribution to the appropriate handler (Slack, Discord, Email) based on the target type.
- * Also selects the appropriate version of the notes based on the target audience.
- *
- * @param target - The distribution target configuration.
- * @param payload - The data payload containing release info and notes.
- * @returns A promise that resolves to the result of the distribution attempt.
  */
 async function distributeToTarget(
   target: DistributionTarget,
@@ -183,21 +215,27 @@ async function fetchWithRetry(
     : url;
 
   try {
-    const response = await fetch(url, options);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    try {
+      const response = await fetch(url, { ...options, signal: controller.signal });
 
-    if (response.ok) return response;
+      if (response.ok) return response;
 
-    // Retry on 5xx or 429
-    if (retries > 0 && (response.status === 429 || response.status >= 500)) {
-      logInfo(`Retrying request to ${safeUrl} (status ${response.status})`, { retriesLeft: retries });
-      await new Promise((resolve) => setTimeout(resolve, backoff));
-      return fetchWithRetry(url, options, retries - 1, backoff * 2);
+      // Retry on 5xx or 429
+      if (retries > 0 && (response.status === 429 || response.status >= 500)) {
+        logger.warn(`Retrying request to ${safeUrl} (status ${response.status})`, { retriesLeft: retries });
+        await new Promise((resolve) => setTimeout(resolve, backoff));
+        return fetchWithRetry(url, options, retries - 1, backoff * 2);
+      }
+
+      return response;
+    } finally {
+      clearTimeout(timeoutId);
     }
-
-    return response;
   } catch (error) {
      if (retries > 0) {
-       logInfo(`Retrying request to ${safeUrl} (network error)`, { retriesLeft: retries, error });
+       logger.warn(`Retrying request to ${safeUrl} (network error)`, { retriesLeft: retries, error });
        await new Promise((resolve) => setTimeout(resolve, backoff));
        return fetchWithRetry(url, options, retries - 1, backoff * 2);
      }
@@ -210,14 +248,6 @@ async function fetchWithRetry(
 // SLACK
 // ============================================
 
-/**
- * Send release notes to a Slack channel via webhook.
- *
- * @param target - The distribution target containing the webhook URL.
- * @param payload - The release payload.
- * @param notes - The release notes formatted for Slack (although passed as string, Slack uses `mrkdwn`).
- * @returns A promise that resolves to the distribution result.
- */
 async function sendToSlack(
   target: DistributionTarget,
   payload: DistributionPayload,
@@ -227,14 +257,16 @@ async function sendToSlack(
     return { target, success: false, error: 'Missing webhookUrl' };
   }
 
+  validateWebhookUrl(target.webhookUrl);
+
   const slackPayload = {
-    text: `🚀 New Release: ${payload.repoFullName} ${payload.tagName}`,
+    text: `New Release: ${payload.repoFullName} ${payload.tagName}`,
     blocks: [
       {
         type: 'header',
         text: {
           type: 'plain_text',
-          text: `🚀 ${payload.tagName} Released`,
+          text: `${payload.tagName} Released`,
           emoji: true,
         },
       },
@@ -288,14 +320,6 @@ function truncateForSlack(text: string, maxLength = 2900): string {
 // DISCORD
 // ============================================
 
-/**
- * Send release notes to a Discord channel via webhook.
- *
- * @param target - The distribution target containing the webhook URL.
- * @param payload - The release payload.
- * @param notes - The release notes.
- * @returns A promise that resolves to the distribution result.
- */
 async function sendToDiscord(
   target: DistributionTarget,
   payload: DistributionPayload,
@@ -305,8 +329,10 @@ async function sendToDiscord(
     return { target, success: false, error: 'Missing webhookUrl' };
   }
 
+  validateWebhookUrl(target.webhookUrl);
+
   const discordPayload = {
-    content: `🚀 ${payload.repoFullName} ${payload.tagName} released`,
+    content: `${payload.repoFullName} ${payload.tagName} released`,
     embeds: [
       {
         title: `${payload.tagName} Released`,
@@ -352,14 +378,6 @@ function truncateForDiscord(text: string, maxLength = 4000): string {
 // EMAIL (via SendGrid)
 // ============================================
 
-/**
- * Send release notes via email using SendGrid.
- *
- * @param target - The distribution target containing the recipient email.
- * @param payload - The release payload.
- * @param notes - The release notes (Markdown format).
- * @returns A promise that resolves to the distribution result.
- */
 async function sendEmail(
   target: DistributionTarget,
   payload: DistributionPayload,
@@ -367,6 +385,11 @@ async function sendEmail(
 ): Promise<DistributionResult> {
   if (!target.email) {
     return { target, success: false, error: 'Missing email' };
+  }
+
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(target.email)) {
+    return { target, success: false, error: 'Invalid email format' };
   }
 
   const sendGridApiKey = process.env.SENDGRID_API_KEY;
@@ -432,15 +455,11 @@ async function sendEmail(
 
 /**
  * Convert Markdown release notes to HTML for email distribution.
- *
- * @description
- * Applies basic styling and structure to the Markdown content.
- *
- * @param markdown - The release notes in Markdown format.
- * @param payload - The release payload for context.
- * @returns An HTML string ready for email sending.
  */
 function markdownToHtml(markdown: string, payload: DistributionPayload): string {
+  const safeTagName = escapeHtml(payload.tagName);
+  const safeRepoFullName = escapeHtml(payload.repoFullName);
+
   let html = markdown
     .replace(/^### (.+)$/gm, '<h3 style="color: #102a43; margin-top: 16px;">$1</h3>')
     .replace(/^## (.+)$/gm, '<h2 style="color: #102a43; margin-top: 20px;">$1</h2>')
@@ -452,8 +471,8 @@ function markdownToHtml(markdown: string, payload: DistributionPayload): string 
   return `
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto;">
       <div style="background: #102a43; padding: 24px; border-radius: 8px 8px 0 0;">
-        <h1 style="color: white; margin: 0; font-size: 24px;">🚀 ${payload.tagName}</h1>
-        <p style="color: #9fb3c8; margin: 8px 0 0 0;">${payload.repoFullName}</p>
+        <h1 style="color: white; margin: 0; font-size: 24px;">${safeTagName}</h1>
+        <p style="color: #9fb3c8; margin: 8px 0 0 0;">${safeRepoFullName}</p>
       </div>
       <div style="padding: 24px; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 8px 8px;">
         ${html}

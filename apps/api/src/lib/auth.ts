@@ -54,16 +54,16 @@ function base64UrlDecode(str: string): Uint8Array {
 }
 
 /**
- * Derive an AES-GCM key from the JWT_SECRET.
+ * Derive an AES-GCM key from the JWT_SECRET using the given salt.
+ * @param salt - The salt bytes to use for PBKDF2 derivation.
  * @returns CryptoKey for AES-GCM.
  * @throws Error if JWT_SECRET is not set.
  */
-async function deriveAesKey(): Promise<CryptoKey> {
+async function deriveAesKey(salt: Uint8Array): Promise<CryptoKey> {
   const secret = process.env.JWT_SECRET;
   if (!secret) throw new Error('JWT_SECRET is not set');
 
   const secretBytes = new TextEncoder().encode(secret);
-  const salt = new TextEncoder().encode('shiplog-secure-salt-v1');
 
   const keyMaterial = await crypto.subtle.importKey(
     'raw',
@@ -76,7 +76,7 @@ async function deriveAesKey(): Promise<CryptoKey> {
   return await crypto.subtle.deriveKey(
     {
       name: 'PBKDF2',
-      salt,
+      salt: salt as BufferSource,
       iterations: 100000,
       hash: 'SHA-256',
     },
@@ -88,45 +88,73 @@ async function deriveAesKey(): Promise<CryptoKey> {
 }
 
 /**
- * Encrypt a string using AES-GCM.
- * Format: `v1.<iv_base64>.<ciphertext_base64>`
+ * Encrypt a string using AES-GCM with a random 16-byte salt.
+ * Format: `v2.<salt_base64>.<iv_base64>.<ciphertext_base64>`
  */
 export async function encrypt(plaintext: string): Promise<string> {
-  const key = await deriveAesKey();
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const key = await deriveAesKey(salt);
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const plaintextBytes = new TextEncoder().encode(plaintext);
   const ciphertext = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plaintextBytes));
 
-  return `v1.${base64UrlEncode(iv)}.${base64UrlEncode(ciphertext)}`;
+  return `v2.${base64UrlEncode(salt)}.${base64UrlEncode(iv)}.${base64UrlEncode(ciphertext)}`;
 }
 
 /**
  * Decrypt a string encrypted by `encrypt()`.
+ * Supports both v1 (static salt) and v2 (random salt) formats.
  */
 export async function decrypt(encrypted: string): Promise<string> {
-  if (!encrypted.startsWith('v1.')) {
-    throw new Error('Invalid encrypted format');
+  if (encrypted.startsWith('v2.')) {
+    const parts = encrypted.split('.');
+    if (parts.length !== 4) {
+      throw new Error('Invalid encrypted format');
+    }
+
+    const saltStr = parts[1];
+    const ivStr = parts[2];
+    const ciphertextStr = parts[3];
+
+    if (!saltStr || !ivStr || !ciphertextStr) {
+      throw new Error('Invalid encrypted format');
+    }
+
+    const salt = base64UrlDecode(saltStr);
+    const iv = base64UrlDecode(ivStr);
+    const ciphertext = base64UrlDecode(ciphertextStr);
+
+    const key = await deriveAesKey(salt);
+    const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv as any }, key, ciphertext as any);
+
+    return new TextDecoder().decode(decrypted);
   }
 
-  const parts = encrypted.split('.');
-  if (parts.length !== 3) {
-    throw new Error('Invalid encrypted format');
+  if (encrypted.startsWith('v1.')) {
+    // Backward compatibility: v1 used a static salt
+    const parts = encrypted.split('.');
+    if (parts.length !== 3) {
+      throw new Error('Invalid encrypted format');
+    }
+
+    const ivStr = parts[1];
+    const ciphertextStr = parts[2];
+
+    if (!ivStr || !ciphertextStr) {
+      throw new Error('Invalid encrypted format');
+    }
+
+    const iv = base64UrlDecode(ivStr);
+    const ciphertext = base64UrlDecode(ciphertextStr);
+
+    const staticSalt = new TextEncoder().encode('shiplog-secure-salt-v1');
+    const key = await deriveAesKey(staticSalt);
+    const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv as any }, key, ciphertext as any);
+
+    return new TextDecoder().decode(decrypted);
   }
 
-  const ivStr = parts[1];
-  const ciphertextStr = parts[2];
-
-  if (!ivStr || !ciphertextStr) {
-    throw new Error('Invalid encrypted format');
-  }
-
-  const iv = base64UrlDecode(ivStr);
-  const ciphertext = base64UrlDecode(ciphertextStr);
-
-  const key = await deriveAesKey();
-  const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv as any }, key, ciphertext as any);
-
-  return new TextDecoder().decode(decrypted);
+  throw new Error('Invalid encrypted format');
 }
 
 // ============================================

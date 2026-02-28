@@ -6,6 +6,7 @@ import { prisma } from '../lib/db.js';
 import { logger } from '../lib/logger.js';
 import { signToken } from '../lib/jwt.js';
 import { encrypt, requireAuth } from '../lib/auth.js';
+import { authLimiter } from '../lib/rate-limit.js';
 import { githubCallbackSchema } from '../lib/schemas.js';
 import { listReleases, fetchReleaseData } from '../services/github.js';
 import { generateReleaseNotes } from '../services/generator.js';
@@ -198,7 +199,7 @@ auth.get(
  * POST /exchange
  * @description Exchange a short-lived code for an httpOnly session cookie.
  */
-auth.post('/exchange', async (c) => {
+auth.post('/exchange', authLimiter, async (c) => {
   const body = await c.req.json<{ code?: string }>();
 
   if (!body.code) {
@@ -220,7 +221,7 @@ auth.post('/exchange', async (c) => {
  * POST /demo
  * @description Creates a session for a demo user (only enabled via DEMO_ACCESS_TOKEN).
  */
-auth.post('/demo', async (c) => {
+auth.post('/demo', authLimiter, async (c) => {
   const demoToken = c.req.header('X-Demo-Token');
   if (!process.env.DEMO_ACCESS_TOKEN || demoToken !== process.env.DEMO_ACCESS_TOKEN) {
     return c.json({ error: 'Unauthorized' }, 401);

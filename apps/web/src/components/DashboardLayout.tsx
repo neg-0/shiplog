@@ -44,9 +44,10 @@ export function DashboardLayout({ children, user }: DashboardLayoutProps) {
           <Ship className="w-6 h-6 text-teal-400" />
           <span className="text-lg font-bold">ShipLog</span>
         </div>
-        <button 
+        <button
           onClick={() => setSidebarOpen(!sidebarOpen)}
           className="p-2 hover:bg-navy-800 rounded-lg transition"
+          aria-label="Toggle menu"
         >
           {sidebarOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
         </button>
@@ -95,21 +96,27 @@ export function DashboardLayout({ children, user }: DashboardLayoutProps) {
         </nav>
 
         <div className="absolute bottom-6 left-6 right-6">
-          {user && (
+          {user ? (
             <div className="flex items-center gap-3 px-4 py-3 bg-navy-800 rounded-lg">
-              <img 
-                src={user.avatarUrl || 'https://github.com/github.png'} 
+              <img
+                src={user.avatarUrl || 'https://github.com/github.png'}
                 alt={user.name || user.login}
                 className="w-8 h-8 rounded-full"
               />
               <span className="font-medium flex-1 truncate">{user.name || user.login}</span>
-              <button 
+              <button
                 onClick={handleLogout}
                 className="text-navy-400 hover:text-white transition"
                 title="Logout"
+                aria-label="Sign out"
               >
                 <LogOut className="w-4 h-4" />
               </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-3 px-4 py-3 bg-navy-800 rounded-lg animate-pulse">
+              <div className="w-8 h-8 rounded-full bg-navy-700" />
+              <div className="flex-1"><div className="h-4 bg-navy-700 rounded w-24" /></div>
             </div>
           )}
         </div>

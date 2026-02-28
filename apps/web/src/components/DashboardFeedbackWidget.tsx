@@ -11,6 +11,7 @@ export function DashboardFeedbackWidget() {
   const [email, setEmail] = useState(''); // Optional, or pre-filled if we had auth context here
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
+  const [feedbackError, setFeedbackError] = useState<string | null>(null);
   const pathname = usePathname();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -18,6 +19,7 @@ export function DashboardFeedbackWidget() {
     if (!message.trim()) return;
 
     setSending(true);
+    setFeedbackError(null);
     try {
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/feedback`, {
         method: 'POST',
@@ -29,7 +31,7 @@ export function DashboardFeedbackWidget() {
           page: pathname,
         }),
       });
-      
+
       if (res.ok) {
         setSent(true);
         setTimeout(() => {
@@ -40,10 +42,10 @@ export function DashboardFeedbackWidget() {
           setType('other');
         }, 3000);
       } else {
-        console.error('Feedback submission failed');
+        setFeedbackError('Failed to send feedback. Please try again.');
       }
-    } catch (err) {
-      console.error('Failed to send feedback', err);
+    } catch {
+      setFeedbackError('Failed to send feedback. Please try again.');
     } finally {
       setSending(false);
     }
@@ -121,6 +123,10 @@ export function DashboardFeedbackWidget() {
                 onChange={(e) => setEmail(e.target.value)}
               />
             </div>
+
+            {feedbackError && (
+              <p className="text-sm text-red-600">{feedbackError}</p>
+            )}
 
             <button
               type="submit"

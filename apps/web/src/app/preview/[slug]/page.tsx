@@ -4,7 +4,6 @@ import Link from 'next/link';
 
 async function getPreview(slug: string) {
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://api.shiplog.io';
-  console.log(`Fetching preview from ${apiUrl}/preview/${slug}`);
   const res = await fetch(`${apiUrl}/preview/${slug}`, {
     cache: 'no-store'
   });
