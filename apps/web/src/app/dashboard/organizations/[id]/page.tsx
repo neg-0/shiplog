@@ -1,7 +1,7 @@
 'use client';
 
 import { DashboardLayout } from '@/components/DashboardLayout';
-import { AlertDialog } from '@/components/Dialog';
+import { ConfirmDialog } from '@/components/Dialog';
 import { AlertCircle, ArrowLeft, Building2, Crown, Loader2, Mail, Plus, Settings, Shield, Trash2, User, Users } from 'lucide-react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
@@ -42,7 +42,7 @@ export default function OrganizationDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [org, setOrg] = useState<OrgDetail | null>(null);
   const [showInviteModal, setShowInviteModal] = useState(false);
-  const [showDeleteAlert, setShowDeleteAlert] = useState(false);
+  const [removeMemberTarget, setRemoveMemberTarget] = useState<{ userId: string; name: string } | null>(null);
   const [activeTab, setActiveTab] = useState<'members' | 'settings'>('members');
   const [user, setUser] = useState<UserType | null>(null);
   const [settingsName, setSettingsName] = useState('');
@@ -112,11 +112,14 @@ export default function OrganizationDetailPage() {
     fetchOrg();
   }, [orgId, router, refreshOrg]);
 
-  const handleRemoveMember = async (userId: string) => {
+  const handleRemoveMember = async () => {
+    if (!removeMemberTarget) return;
     try {
-      await removeOrganizationMember(orgId, userId);
+      await removeOrganizationMember(orgId, removeMemberTarget.userId);
+      setRemoveMemberTarget(null);
       await refreshOrg();
     } catch (err) {
+      setRemoveMemberTarget(null);
       setError(err instanceof Error ? err.message : 'Failed to remove member');
     }
   };
@@ -255,7 +258,7 @@ export default function OrganizationDetailPage() {
                         </div>
                         {canManageMembers && member.role !== 'OWNER' && (
                           <button
-                            onClick={() => handleRemoveMember(member.userId)}
+                            onClick={() => setRemoveMemberTarget({ userId: member.userId, name: member.name })}
                             className="p-1.5 text-navy-400 hover:text-red-600 hover:bg-red-50 rounded transition"
                           >
                             <Trash2 className="w-4 h-4" />
@@ -296,19 +299,12 @@ export default function OrganizationDetailPage() {
                   </div>
                 </div>
 
-                {/* Danger Zone */}
-                <div className="bg-white rounded-xl p-6 shadow-sm border border-red-200">
-                  <h2 className="text-lg font-semibold text-red-600 mb-4">Danger Zone</h2>
-                  <p className="text-navy-600 text-sm mb-4">
-                    Deleting this organization will remove all members and unlink all repositories. This action cannot be undone.
+                {/* Delete Note */}
+                <div className="bg-white rounded-xl p-6 shadow-sm border border-navy-100">
+                  <h2 className="text-lg font-semibold text-navy-900 mb-2">Delete Organization</h2>
+                  <p className="text-navy-600 text-sm">
+                    To delete this organization, please contact support.
                   </p>
-                  <button
-                    onClick={() => setShowDeleteAlert(true)}
-                    className="px-4 py-2 text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition flex items-center gap-2"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                    Delete Organization
-                  </button>
                 </div>
               </div>
             )}
@@ -329,13 +325,15 @@ export default function OrganizationDetailPage() {
         />
       )}
 
-      {/* Delete Alert */}
-      <AlertDialog
-        isOpen={showDeleteAlert}
-        onClose={() => setShowDeleteAlert(false)}
-        title="Cannot Delete Organization"
-        message="Organization deletion is not yet supported. Please contact support if you need to delete this organization."
-        variant="error"
+      {/* Remove Member Confirmation */}
+      <ConfirmDialog
+        isOpen={removeMemberTarget !== null}
+        onClose={() => setRemoveMemberTarget(null)}
+        onConfirm={handleRemoveMember}
+        title="Remove Member"
+        message={`Are you sure you want to remove ${removeMemberTarget?.name} from this organization?`}
+        confirmText="Remove"
+        variant="danger"
       />
     </DashboardLayout >
   );
@@ -349,6 +347,11 @@ function InviteMemberModal({ onClose, onInvited, orgId }: { onClose: () => void;
 
   const handleInvite = async () => {
     if (!email.trim()) return;
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setInviteError('Please enter a valid email address.');
+      return;
+    }
 
     setInviting(true);
     setInviteError(null);

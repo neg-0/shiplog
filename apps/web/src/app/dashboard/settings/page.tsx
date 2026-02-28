@@ -52,16 +52,24 @@ export default function SettingsPage() {
 
 
   const handleUpgrade = async (plan: 'pro' | 'team') => {
-    const session = await createCheckoutSession(plan);
-    if (session.url) {
-      window.location.href = session.url;
+    try {
+      const session = await createCheckoutSession(plan);
+      if (session.url) {
+        window.location.href = session.url;
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to start checkout');
     }
   };
 
   const handleManage = async () => {
-    const session = await createPortalSession();
-    if (session.url) {
-      window.location.href = session.url;
+    try {
+      const session = await createPortalSession();
+      if (session.url) {
+        window.location.href = session.url;
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to open billing portal');
     }
   };
 

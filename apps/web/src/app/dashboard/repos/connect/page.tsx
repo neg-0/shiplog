@@ -87,10 +87,14 @@ export default function ConnectRepoPage() {
 
   const handleUpgrade = async () => {
     if (!upgradePrompt) return;
-    const plan = upgradePrompt.requiredTier === 'TEAM' ? 'team' : 'pro';
-    const session = await createCheckoutSession(plan);
-    if (session.url) {
-      window.location.href = session.url;
+    try {
+      const plan = upgradePrompt.requiredTier === 'TEAM' ? 'team' : 'pro';
+      const session = await createCheckoutSession(plan);
+      if (session.url) {
+        window.location.href = session.url;
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to start checkout');
     }
   };
 

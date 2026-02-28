@@ -412,8 +412,7 @@ repos.patch(
       return c.json(config);
     } catch (error) {
       logger.error('Failed to update repo config', { repoId: id, error });
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      return c.json({ error: `Failed to update configuration: ${message}` }, 500);
+      return c.json({ error: 'Failed to update configuration' }, 500);
     }
   }
 );
@@ -464,8 +463,7 @@ repos.patch(
       return c.json(updated);
     } catch (error) {
       logger.error('Failed to update repo settings', { repoId: id, error });
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      return c.json({ error: `Failed to update settings: ${message}` }, 500);
+      return c.json({ error: 'Failed to update settings' }, 500);
     }
   }
 );

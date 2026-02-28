@@ -1,9 +1,10 @@
 import type { ReleaseInput } from '../generator.js';
+import { sanitizePromptInput } from './index.js';
 
 export function buildCustomerMessages(input: ReleaseInput) {
-  const companyName = input.repoConfig.companyName || 'the team';
-  const productName = input.repoConfig.productName || 'the product';
-  const tone = input.repoConfig.customerTone || 'friendly, clear, and concise';
+  const companyName = sanitizePromptInput(input.repoConfig.companyName || 'the team', 100);
+  const productName = sanitizePromptInput(input.repoConfig.productName || 'the product', 100);
+  const tone = sanitizePromptInput(input.repoConfig.customerTone || 'friendly, clear, and concise', 100);
 
   const system = `You write customer-facing release notes in Markdown for ${productName}.
 
@@ -19,21 +20,40 @@ Style:
 Tone: ${tone}.
 Signer: ${companyName}.`;
 
+  const releaseBody = sanitizePromptInput(input.releaseBody || '(none)', 3000);
+
+  const pullRequests = input.pullRequests.slice(0, 20).map((pr) => ({
+    ...pr,
+    body: pr.body ? sanitizePromptInput(pr.body, 500) : undefined,
+  }));
+
+  const commits = input.commits.slice(0, 50).map((c) => ({
+    ...c,
+    message: sanitizePromptInput(c.message, 200),
+  }));
+
   const user = `Generate customer release notes for tag ${input.tagName}${input.previousTag ? ` (changes since ${input.previousTag})` : ''}.
 
 Include:
 - A brief headline summary (1-2 sentences).
-- "What’s new" (bullets).
+- "What's new" (bullets).
 - "Improvements" (bullets).
 - "Fixes" (bullets).
 - "Known issues" only if clearly indicated in the input.
 
 Source material:
-- Original GitHub release body (may contain useful phrasing):\n${input.releaseBody || '(none)'}
 
-Pull requests (preferred over commits):\n${JSON.stringify(input.pullRequests, null, 2)}
+<release_data>
+${releaseBody}
+</release_data>
 
-Commits (use only when PRs are missing context):\n${JSON.stringify(input.commits, null, 2)}
+<pull_requests>
+${JSON.stringify(pullRequests, null, 2)}
+</pull_requests>
+
+<commits>
+${JSON.stringify(commits, null, 2)}
+</commits>
 
 Output ONLY Markdown. Do not wrap in code fences.`;
 

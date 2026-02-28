@@ -7,6 +7,7 @@ import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useEffect, useState, type FormEvent } from 'react';
 import { addChannel, deleteChannel, disconnectRepo, getRepo, getUser, isAuthenticated, updateChannel, type Channel, type RepoDetail, type User } from '../../../../lib/api';
+import { formatRelativeDate } from '../../../../lib/utils';
 
 export default function RepoDetailPage() {
   const [repo, setRepo] = useState<RepoDetail | null>(null);
@@ -126,20 +127,6 @@ export default function RepoDetailPage() {
     } catch (err) {
       setChannelError(err instanceof Error ? err.message : 'Failed to delete channel');
     }
-  };
-
-  const formatRelativeDate = (dateStr: string | null) => {
-    if (!dateStr) return null;
-    const date = new Date(dateStr);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-    if (diffDays === 0) return 'today';
-    if (diffDays === 1) return 'yesterday';
-    if (diffDays < 7) return `${diffDays} days ago`;
-    if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
-    return `${Math.floor(diffDays / 30)} months ago`;
   };
 
   return (

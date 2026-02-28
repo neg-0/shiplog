@@ -221,7 +221,7 @@ function CreateOrganizationModal({ onClose, onCreated }: { onClose: () => void; 
     try {
       await createOrganization({
         name,
-        slug: name.toLowerCase().replace(/\s+/g, '-'),
+        slug: name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''),
         githubOrgLogin: githubOrg || undefined,
       });
       onCreated();

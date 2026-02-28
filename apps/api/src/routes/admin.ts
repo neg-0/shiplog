@@ -137,7 +137,16 @@ admin.get('/users/:id', async (c) => {
   
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    include: {
+    select: {
+      id: true,
+      login: true,
+      name: true,
+      email: true,
+      avatarUrl: true,
+      githubId: true,
+      subscriptionTier: true,
+      createdAt: true,
+      updatedAt: true,
       repos: {
         select: {
           id: true,
@@ -170,7 +179,7 @@ admin.patch(
     const updated = await prisma.user.update({
       where: { id: userId },
       data: {
-        ...(subscriptionTier && { subscriptionTier: subscriptionTier as string }),
+        ...(subscriptionTier && { subscriptionTier: subscriptionTier as 'FREE' | 'PRO' | 'TEAM' }),
       },
     });
 

@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { prisma } from '../lib/db.js';
 import { metrics } from '../lib/metrics.js';
+import { requireAuth } from '../lib/auth.js';
 import Stripe from 'stripe';
 
 /**
@@ -18,13 +19,12 @@ health.get('/ready', (c) => {
   return c.json({ status: 'ready' }, 200);
 });
 
-health.get('/metrics', (c) => {
+health.get('/metrics', requireAuth, (c) => {
   const avgGenerationTime = metrics.generationCount > 0
     ? metrics.generationTimeTotal / metrics.generationCount
     : 0;
 
   return c.json({
-    totalRequests: metrics.totalRequests,
     releasesProcessed: metrics.releasesProcessed,
     distributionsSent: metrics.distributionsSent,
     generationTime: Math.round(avgGenerationTime),
@@ -96,8 +96,6 @@ health.get('/', async (c) => {
   const status = isHealthy ? 200 : 503;
 
   return c.json({
-    status: isHealthy ? 'healthy' : 'unhealthy',
-    timestamp: new Date().toISOString(),
-    checks: results,
+    status: isHealthy ? 'ok' : 'degraded',
   }, status);
 });

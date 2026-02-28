@@ -16,7 +16,7 @@ class Logger {
   private log(level: LogLevel, message: string, meta?: object) {
     const context = asyncLocalStorage.getStore() || {};
     const timestamp = new Date().toISOString();
-    let safeMeta = { ...meta };
+    let safeMeta: Record<string, any> = { ...meta };
     if (meta && 'error' in meta && meta.error instanceof Error) {
       safeMeta = {
         ...meta,
@@ -27,6 +27,12 @@ class Logger {
           cause: meta.error.cause,
         },
       };
+    }
+    // Truncate large string values to prevent logging full release bodies on errors
+    for (const key of Object.keys(safeMeta)) {
+      if (typeof safeMeta[key] === 'string' && safeMeta[key].length > 500) {
+        safeMeta[key] = safeMeta[key].slice(0, 500) + '...[truncated]';
+      }
     }
     const logEntry = {
       timestamp,

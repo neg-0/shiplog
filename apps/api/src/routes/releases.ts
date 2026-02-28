@@ -7,7 +7,7 @@ import { apiLimiter } from '../lib/rate-limit.js';
 import { fetchReleaseData } from '../services/github.js';
 import { generateReleaseNotes } from '../services/generator.js';
 import { sanitizeHtml } from '../lib/sanitize.js';
-import { rateLimit } from '../middleware/rate-limit.js';
+import { rateLimit } from '../lib/rate-limit.js';
 import {
   regenerateNotesSchema,
   publishReleaseSchema,
@@ -98,7 +98,10 @@ releases.get('/:id', async (c) => {
 const regenerateLimitMiddleware = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
   limit: 10,
-  message: 'Too many regeneration requests. Please try again later.'
+  keyGenerator: (c) => {
+    const user = c.get('user');
+    return user ? `regen:${user.id}` : `regen:${c.req.header('x-forwarded-for') || 'unknown'}`;
+  },
 });
 
 /**
@@ -112,7 +115,7 @@ const regenerateLimitMiddleware = rateLimit({
  */
 releases.post(
   '/:id/regenerate',
-  regenerateLimitMiddleware as any,
+  regenerateLimitMiddleware,
   zValidator("json", regenerateNotesSchema as any),
   async (c) => {
     const user = c.get('user');
@@ -220,10 +223,7 @@ releases.post(
         },
       });
 
-      return c.json({ 
-        error: 'Failed to regenerate notes',
-        details: error instanceof Error ? error.message : 'Unknown error',
-      }, 500);
+      return c.json({ error: 'Failed to regenerate notes' }, 500);
     }
   }
 );

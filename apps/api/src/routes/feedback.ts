@@ -14,7 +14,6 @@ const feedbackSchema = z.object({
   message: z.string().min(1).max(2000),
   email: z.string().email().optional().or(z.literal('')),
   page: z.string().optional(),
-  userId: z.string().optional(),
 });
 
 /**
@@ -32,7 +31,11 @@ feedback.post('/', zValidator('json', feedbackSchema), async (c) => {
   const data = c.req.valid('json');
   const webhookUrl = process.env.DISCORD_FEEDBACK_WEBHOOK_URL;
 
-  logger.info('Received feedback', { data });
+  // Derive userId from authenticated session if available, otherwise 'Anonymous'
+  const user = c.get('user') as { id: string } | undefined;
+  const userId = user?.id ?? 'Anonymous';
+
+  logger.info('Received feedback', { data, userId });
 
   if (!webhookUrl) {
     logger.warn('DISCORD_FEEDBACK_WEBHOOK_URL is not set. Feedback will not be sent to Discord.');
@@ -51,7 +54,7 @@ feedback.post('/', zValidator('json', feedbackSchema), async (c) => {
             color: getColorForType(data.type),
             fields: [
               { name: 'Message', value: data.message },
-              { name: 'User', value: data.email || data.userId || 'Anonymous', inline: true },
+              { name: 'User', value: data.email || userId, inline: true },
               { name: 'Page', value: data.page || 'Unknown', inline: true },
             ],
             timestamp: new Date().toISOString(),

@@ -1,8 +1,9 @@
 import type { ReleaseInput } from '../generator.js';
+import { sanitizePromptInput } from './index.js';
 
 export function buildStakeholderMessages(input: ReleaseInput) {
-  const companyName = input.repoConfig.companyName || 'the team';
-  const productName = input.repoConfig.productName || 'the product';
+  const companyName = sanitizePromptInput(input.repoConfig.companyName || 'the team', 100);
+  const productName = sanitizePromptInput(input.repoConfig.productName || 'the product', 100);
 
   const system = `You write stakeholder/executive release notes in Markdown for ${productName}.
 
@@ -17,6 +18,18 @@ Style:
 
 Output must be Markdown only (no code fences). Signed by ${companyName}.`;
 
+  const releaseBody = sanitizePromptInput(input.releaseBody || '(none)', 3000);
+
+  const pullRequests = input.pullRequests.slice(0, 20).map((pr) => ({
+    ...pr,
+    body: pr.body ? sanitizePromptInput(pr.body, 500) : undefined,
+  }));
+
+  const commits = input.commits.slice(0, 50).map((c) => ({
+    ...c,
+    message: sanitizePromptInput(c.message, 200),
+  }));
+
   const user = `Generate stakeholder release notes for tag ${input.tagName}${input.previousTag ? ` (since ${input.previousTag})` : ''}.
 
 Include:
@@ -26,11 +39,18 @@ Include:
 - Risks / follow-ups (bullets; only if supported by data)
 
 Source material:
-- Original GitHub release body (may include planned scope):\n${input.releaseBody || '(none)'}
 
-Pull requests:\n${JSON.stringify(input.pullRequests, null, 2)}
+<release_data>
+${releaseBody}
+</release_data>
 
-Commits:\n${JSON.stringify(input.commits, null, 2)}
+<pull_requests>
+${JSON.stringify(pullRequests, null, 2)}
+</pull_requests>
+
+<commits>
+${JSON.stringify(commits, null, 2)}
+</commits>
 
 Output ONLY Markdown.`;
 

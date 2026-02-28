@@ -142,13 +142,21 @@ export default function ReleaseDetailPage() {
     <DashboardLayout user={user}>
       <div className="max-w-4xl mx-auto">
         {/* Back Button */}
-        {release && (
+        {release ? (
           <Link
             href={`/dashboard/repos/${release.repo.id}`}
             className="inline-flex items-center gap-2 text-navy-600 hover:text-navy-900 mb-6 transition"
           >
             <ArrowLeft className="w-4 h-4" />
             Back to {release.repo.fullName}
+          </Link>
+        ) : (
+          <Link
+            href="/dashboard"
+            className="inline-flex items-center gap-2 text-navy-600 hover:text-navy-900 mb-6 transition"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Back to Dashboard
           </Link>
         )}
 

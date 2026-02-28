@@ -1,6 +1,5 @@
-
-import { prisma } from './lib/db';
-import { importRepoHistory } from './services/importer';
+import { prisma } from './lib/db.js';
+import { importRepoHistory } from './services/importer.js';
 import { execSync } from 'child_process';
 
 const args = process.argv.slice(2);
@@ -16,6 +15,7 @@ async function main() {
   let token = process.env.GITHUB_TOKEN;
   if (!token) {
     try {
+      // Safe: hardcoded command with no user input
       token = execSync('gh auth token').toString().trim();
     } catch (e) {
       console.error('No GITHUB_TOKEN and gh CLI failed.');
@@ -23,7 +23,6 @@ async function main() {
     }
   }
 
-  console.log(`Using token: ${token.slice(0, 4)}...`);
   console.log(`Processing ${fullName}...`);
 
   // Ensure user exists (or create dummy)
@@ -33,16 +32,16 @@ async function main() {
     try {
       user = await prisma.user.create({
         data: {
-          email: 'admin@shiplog.io',
+          githubId: 0,
+          login: 'admin',
           name: 'Admin',
-          githubId: 'admin',
-          githubUsername: 'admin',
-          avatarUrl: '',
+          email: 'admin@shiplog.io',
+          accessToken: 'placeholder',
           subscriptionTier: 'PRO',
         },
       });
     } catch (e) {
-      // If fails, maybe unique constraint on email
+      // If fails, maybe unique constraint
       console.log('User creation failed, trying to find existing...');
       user = await prisma.user.findFirst();
     }
@@ -54,7 +53,7 @@ async function main() {
   }
 
   // Ensure repo exists
-  let repo = await prisma.repo.findUnique({
+  let repo = await prisma.repo.findFirst({
     where: { fullName },
   });
 
@@ -64,12 +63,12 @@ async function main() {
       repo = await prisma.repo.create({
         data: {
           userId: user.id,
+          githubId: 0,
           owner,
           name,
           fullName,
-          slug: name, // simple slug
+          slug: name,
           defaultBranch: 'main',
-          isPrivate: false,
           config: {
             create: {
               autoGenerate: true,
@@ -84,7 +83,6 @@ async function main() {
     }
   } else {
     // Ensure auto-generate is on
-    // This assumes RepoConfig model exists and relates to Repo via repoId
     try {
        await prisma.repoConfig.upsert({
          where: { repoId: repo.id },

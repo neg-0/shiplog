@@ -158,6 +158,17 @@ organizations.get('/:id', async (c) => {
     return c.json({ error: 'Organization not found' }, 404);
   }
 
+  // Only OWNER/ADMIN can see member emails
+  const callerMember = org.members.find((m: any) => m.user.id === user.id);
+  const callerRole = callerMember?.role ?? (org.ownerId === user.id ? 'OWNER' : null);
+  const canSeeEmails = callerRole === 'OWNER' || callerRole === 'ADMIN';
+
+  function stripEmail(u: { id: string; login: string; name: string | null; email: string | null; avatarUrl: string | null }) {
+    if (canSeeEmails) return u;
+    const { email: _email, ...rest } = u;
+    return rest;
+  }
+
   return c.json({
     id: org.id,
     name: org.name,
@@ -165,7 +176,7 @@ organizations.get('/:id', async (c) => {
     githubOrgId: org.githubOrgId,
     githubOrgLogin: org.githubOrgLogin,
     ownerId: org.ownerId,
-    owner: org.owner,
+    owner: stripEmail(org.owner),
     subscriptionId: org.subscriptionId,
     createdAt: org.createdAt,
     updatedAt: org.updatedAt,
@@ -173,7 +184,7 @@ organizations.get('/:id', async (c) => {
       id: member.id,
       role: member.role,
       joinedAt: member.joinedAt,
-      user: member.user,
+      user: stripEmail(member.user),
     })),
     repos: org.repos,
   });
@@ -271,6 +282,11 @@ organizations.post('/:id/invite', validate(inviteSchema), async (c) => {
     return c.json({ error: 'Not authorized' }, 403);
   }
 
+  // Prevent role escalation: ADMINs cannot grant OWNER role
+  if (memberRole === 'ADMIN' && body.role === 'OWNER') {
+    return c.json({ error: 'Admins cannot grant owner role' }, 403);
+  }
+
   const existingUser = await prisma.user.findFirst({
     where: { email: body.email },
     select: { id: true },
@@ -325,6 +341,8 @@ organizations.get('/:id/members', async (c) => {
     return c.json({ error: 'Not authorized' }, 403);
   }
 
+  const canSeeEmails = member.role === 'OWNER' || member.role === 'ADMIN';
+
   const members = await prisma.organizationMember.findMany({
     where: { organizationId: id },
     include: {
@@ -336,12 +354,15 @@ organizations.get('/:id/members', async (c) => {
   });
 
   return c.json({
-    members: members.map((entry: any) => ({
-      id: entry.id,
-      role: entry.role,
-      joinedAt: entry.joinedAt,
-      user: entry.user,
-    })),
+    members: members.map((entry: any) => {
+      const { email: _email, ...userWithoutEmail } = entry.user;
+      return {
+        id: entry.id,
+        role: entry.role,
+        joinedAt: entry.joinedAt,
+        user: canSeeEmails ? entry.user : userWithoutEmail,
+      };
+    }),
   });
 });
 

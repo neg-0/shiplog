@@ -1,10 +1,11 @@
 'use client';
 
-import { Ship, Users, BarChart3, Activity, Settings, Loader2, DollarSign, GitBranch, Tag } from 'lucide-react';
+import { Ship, Users, BarChart3, Loader2, DollarSign, GitBranch, Tag } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { isAuthenticated, getUser } from '../../lib/api';
+import { formatRelativeDate } from '../../lib/utils';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
@@ -66,20 +67,6 @@ export default function AdminDashboard() {
     fetchData();
   }, [router]);
 
-  const formatTimeAgo = (dateString: string) => {
-    const date = new Date(dateString);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMs / 3600000);
-    const diffDays = Math.floor(diffMs / 86400000);
-
-    if (diffMins < 1) return 'just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    return `${diffDays}d ago`;
-  };
-
   return (
     <div className="min-h-screen bg-navy-50">
       {/* Sidebar */}
@@ -97,10 +84,6 @@ export default function AdminDashboard() {
           <Link href="/admin/users" className="flex items-center gap-3 px-4 py-3 rounded-lg text-navy-300 hover:bg-navy-800 hover:text-white transition">
             <Users className="w-5 h-5" />
             Users
-          </Link>
-          <Link href="/admin/activity" className="flex items-center gap-3 px-4 py-3 rounded-lg text-navy-300 hover:bg-navy-800 hover:text-white transition">
-            <Activity className="w-5 h-5" />
-            Activity
           </Link>
         </nav>
 
@@ -188,7 +171,7 @@ export default function AdminDashboard() {
                       <div className="flex-1">
                         <p className="text-navy-900">{event.description}</p>
                       </div>
-                      <span className="text-sm text-navy-500">{formatTimeAgo(event.createdAt)}</span>
+                      <span className="text-sm text-navy-500">{formatRelativeDate(event.createdAt)}</span>
                     </div>
                   ))}
                   {activity.length === 0 && (

@@ -86,7 +86,11 @@ export interface ReleaseData {
   }>;
 }
 
-function getHeaders(accessToken?: string) {
+// ============================================
+// HELPERS
+// ============================================
+
+function getHeaders(accessToken?: string): Record<string, string> {
   const headers: Record<string, string> = {
     'Accept': 'application/vnd.github.v3+json',
     'X-GitHub-Api-Version': '2022-11-28',
@@ -97,25 +101,36 @@ function getHeaders(accessToken?: string) {
   return headers;
 }
 
+async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 10000): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/**
+ * Parse a Link header and return the URL for the given rel value (e.g. "next").
+ */
+function parseLinkHeader(linkHeader: string, rel: string): string | null {
+  const parts = linkHeader.split(',');
+  for (const part of parts) {
+    const match = part.match(/<([^>]+)>;\s*rel="([^"]+)"/);
+    if (match && match[2] === rel && match[1]) {
+      return match[1];
+    }
+  }
+  return null;
+}
+
+// ============================================
+// PUBLIC API
+// ============================================
+
 /**
  * Fetch detailed release data including commits and PRs between the given tag and the previous one.
- *
- * @description
- * This function performs the following steps:
- * 1. Fetches the specific release by tag name.
- * 2. Identifies the previous release tag to establish a comparison range.
- * 3. Fetches commits between the previous tag and the current tag.
- * 4. Extracts Pull Request numbers from commit messages and fetches details for each PR.
- *
- * @param owner - The owner of the repository (e.g., "facebook").
- * @param repo - The name of the repository (e.g., "react").
- * @param tagName - The tag name of the release to fetch (e.g., "v1.0.0").
- * @param accessToken - GitHub OAuth access token with repo scope.
- * @returns A promise that resolves to `ReleaseData` containing release info, commits, and PRs.
- * @throws Error if the release cannot be fetched or if the GitHub API returns an error.
- *
- * @example
- * const data = await fetchReleaseData('facebook', 'react', 'v18.0.0', 'gho_token...');
  */
 export async function fetchReleaseData(
   owner: string,
@@ -126,38 +141,38 @@ export async function fetchReleaseData(
   const headers = getHeaders(accessToken);
 
   // 1. Get the release
-  const releaseRes = await fetch(
+  const releaseRes = await fetchWithTimeout(
     `https://api.github.com/repos/${owner}/${repo}/releases/tags/${tagName}`,
     { headers }
   );
-  
+
   if (!releaseRes.ok) {
     throw new Error(`Failed to fetch release: ${releaseRes.status}`);
   }
-  
+
   const release = (await releaseRes.json()) as GitHubRelease;
 
   // 2. Get previous release tag
-  const releasesRes = await fetch(
+  const releasesRes = await fetchWithTimeout(
     `https://api.github.com/repos/${owner}/${repo}/releases?per_page=10`,
     { headers }
   );
-  
+
   const releases = (await releasesRes.json()) as GitHubRelease[];
   const currentIndex = releases.findIndex(r => r.tag_name === tagName);
-  const previousTag = currentIndex < releases.length - 1 
+  const previousTag = currentIndex < releases.length - 1
     ? releases[currentIndex + 1]?.tag_name ?? null
     : null;
 
   // 3. Get commits between tags
   let commits: Array<{ sha: string; message: string; author: string }> = [];
-  
+
   if (previousTag) {
-    const compareRes = await fetch(
+    const compareRes = await fetchWithTimeout(
       `https://api.github.com/repos/${owner}/${repo}/compare/${previousTag}...${tagName}`,
       { headers }
     );
-    
+
     if (compareRes.ok) {
       const compareData = (await compareRes.json()) as GitHubCompareResponse;
       commits = (compareData.commits || []).map((c) => ({
@@ -168,32 +183,40 @@ export async function fetchReleaseData(
     }
   }
 
-  // 4. Get merged PRs (extract from commit messages or fetch separately)
-  // For now, extract PR numbers from commit messages and fetch them
+  // 4. Get merged PRs -- fetch in parallel batches
   const prNumbers = extractPRNumbers(commits.map(c => c.message));
-  
   const pullRequests: ReleaseData['pullRequests'] = [];
-  
-  for (const prNumber of prNumbers.slice(0, 20)) { // Limit to 20 PRs
-    try {
-      const prRes = await fetch(
-        `https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}`,
-        { headers }
-      );
-      
-      if (prRes.ok) {
-        const pr = (await prRes.json()) as GitHubPR;
-        pullRequests.push({
-          number: pr.number,
-          title: pr.title,
-          body: pr.body,
-          author: pr.user.login,
-          labels: pr.labels.map(l => l.name),
-        });
-      }
-    } catch {
-      // Skip failed PR fetches
-    }
+
+  const CONCURRENCY = 5;
+  const limitedPrNumbers = prNumbers.slice(0, 20);
+
+  for (let i = 0; i < limitedPrNumbers.length; i += CONCURRENCY) {
+    const batch = limitedPrNumbers.slice(i, i + CONCURRENCY);
+    const results = await Promise.all(
+      batch.map(async (prNumber) => {
+        try {
+          const prRes = await fetchWithTimeout(
+            `https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}`,
+            { headers }
+          );
+
+          if (prRes.ok) {
+            const pr = (await prRes.json()) as GitHubPR;
+            return {
+              number: pr.number,
+              title: pr.title,
+              body: pr.body,
+              author: pr.user.login,
+              labels: pr.labels.map(l => l.name),
+            };
+          }
+          return null;
+        } catch {
+          return null;
+        }
+      })
+    );
+    pullRequests.push(...results.filter(Boolean) as ReleaseData['pullRequests']);
   }
 
   return {
@@ -215,44 +238,29 @@ export async function fetchReleaseData(
 
 /**
  * Extract PR numbers from a list of commit messages.
- *
- * @description
- * Parses commit messages to find PR references. Supports standard GitHub merge commits
- * ("Merge pull request #123") and squash merge formats ("(#456)").
- *
- * @param messages - An array of commit messages.
- * @returns An array of unique PR numbers found in the messages.
  */
 function extractPRNumbers(messages: string[]): number[] {
   const prNumbers = new Set<number>();
-  
+
   for (const message of messages) {
     // Match "Merge pull request #123"
     const mergeMatch = message.match(/Merge pull request #(\d+)/);
     if (mergeMatch && mergeMatch[1]) {
       prNumbers.add(parseInt(mergeMatch[1], 10));
     }
-    
+
     // Match "(#456)" at end of message (squash merge format)
     const squashMatch = message.match(/\(#(\d+)\)$/);
     if (squashMatch && squashMatch[1]) {
       prNumbers.add(parseInt(squashMatch[1], 10));
     }
   }
-  
+
   return Array.from(prNumbers);
 }
 
 /**
  * Create a webhook on a GitHub repository to listen for release events.
- *
- * @param owner - The owner of the repository.
- * @param repo - The name of the repository.
- * @param webhookUrl - The URL where GitHub should send webhook events.
- * @param secret - The shared secret for validating webhook payloads.
- * @param accessToken - GitHub OAuth access token with repo scope.
- * @returns A promise that resolves to an object containing the new webhook's ID.
- * @throws Error if the webhook creation fails.
  */
 export async function createWebhook(
   owner: string,
@@ -262,10 +270,8 @@ export async function createWebhook(
   accessToken: string
 ): Promise<{ id: number }> {
   const headers = getHeaders(accessToken);
-  // Webhook creation requires auth, so accessToken must be present.
-  // Assuming caller ensures this, but headers map handles it.
-  
-  const response = await fetch(
+
+  const response = await fetchWithTimeout(
     `https://api.github.com/repos/${owner}/${repo}/hooks`,
     {
       method: 'POST',
@@ -298,13 +304,6 @@ export async function createWebhook(
 
 /**
  * Delete a webhook from a GitHub repository.
- *
- * @param owner - The owner of the repository.
- * @param repo - The name of the repository.
- * @param webhookId - The ID of the webhook to delete.
- * @param accessToken - GitHub OAuth access token with repo scope.
- * @returns A promise that resolves when the webhook is deleted.
- * @throws Error if the deletion fails (unless it's a 404 Not Found, which is ignored).
  */
 export async function deleteWebhook(
   owner: string,
@@ -313,8 +312,8 @@ export async function deleteWebhook(
   accessToken: string
 ): Promise<void> {
   const headers = getHeaders(accessToken);
-  
-  const response = await fetch(
+
+  const response = await fetchWithTimeout(
     `https://api.github.com/repos/${owner}/${repo}/hooks/${webhookId}`,
     {
       method: 'DELETE',
@@ -329,50 +328,46 @@ export async function deleteWebhook(
 
 /**
  * List repositories accessible to the authenticated user.
- *
- * @description
- * Fetches up to 100 repositories sorted by updated date.
- *
- * @param accessToken - GitHub OAuth access token.
- * @returns A promise that resolves to an array of repositories with basic details.
- * @throws Error if the API request fails.
+ * Paginates through all results (up to 10 pages / 1000 repos).
  */
 export async function listUserRepos(
   accessToken: string
 ): Promise<Array<{ id: number; name: string; full_name: string; owner: string; description: string | null }>> {
   const headers = getHeaders(accessToken);
-  
-  const response = await fetch(
-    'https://api.github.com/user/repos?per_page=100&sort=updated',
-    {
-      headers,
-    }
-  );
+  const MAX_PAGES = 10;
+  const allRepos: Array<{ id: number; name: string; full_name: string; owner: string; description: string | null }> = [];
 
-  if (!response.ok) {
-    throw new Error(`Failed to list repos: ${response.status}`);
+  let nextUrl: string | null = 'https://api.github.com/user/repos?per_page=100&sort=updated';
+  let page = 0;
+
+  while (nextUrl && page < MAX_PAGES) {
+    const response = await fetchWithTimeout(nextUrl, { headers });
+
+    if (!response.ok) {
+      throw new Error(`Failed to list repos: ${response.status}`);
+    }
+
+    const repos = (await response.json()) as GitHubRepo[];
+    allRepos.push(
+      ...repos.map((r) => ({
+        id: r.id,
+        name: r.name,
+        full_name: r.full_name,
+        owner: r.owner.login,
+        description: r.description,
+      }))
+    );
+
+    const linkHeader = response.headers.get('Link');
+    nextUrl = linkHeader ? parseLinkHeader(linkHeader, 'next') : null;
+    page++;
   }
 
-  const repos = (await response.json()) as GitHubRepo[];
-  
-  return repos.map((r) => ({
-    id: r.id,
-    name: r.name,
-    full_name: r.full_name,
-    owner: r.owner.login,
-    description: r.description,
-  }));
+  return allRepos;
 }
 
 /**
  * List recent releases for a specific repository.
- *
- * @param owner - The owner of the repository.
- * @param repo - The name of the repository.
- * @param accessToken - GitHub OAuth access token.
- * @param perPage - The number of releases to fetch (default: 5).
- * @returns A promise that resolves to an array of `GitHubRelease` objects.
- * @throws Error if the API request fails.
  */
 export async function listReleases(
   owner: string,
@@ -381,12 +376,10 @@ export async function listReleases(
   perPage = 5
 ): Promise<GitHubRelease[]> {
   const headers = getHeaders(accessToken);
-  
-  const response = await fetch(
+
+  const response = await fetchWithTimeout(
     `https://api.github.com/repos/${owner}/${repo}/releases?per_page=${perPage}`,
-    {
-      headers,
-    }
+    { headers }
   );
 
   if (!response.ok) {

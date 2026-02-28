@@ -11,25 +11,26 @@ function LoginForm() {
   const searchParams = useSearchParams();
   const showDemo = searchParams.get('demo') === 'true';
   const [loading, setLoading] = useState(false);
+  const [demoToken, setDemoToken] = useState('');
+  const [showDemoInput, setShowDemoInput] = useState(false);
+  const [demoError, setDemoError] = useState<string | null>(null);
 
   const handleDemoLogin = async () => {
-    const token = prompt('Enter Demo Access Token:');
-    if (!token) return;
+    if (!demoToken.trim()) return;
 
     setLoading(true);
+    setDemoError(null);
     try {
-      // The demo endpoint is handled by next.config.js rewrite or direct API call
-      // In this repo, /api is rewritten to the API server
       const res = await fetch('/api/auth/demo', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Demo-Token': token,
+          'X-Demo-Token': demoToken,
         },
       });
 
       if (!res.ok) {
-        alert('Invalid token or unauthorized');
+        setDemoError('Invalid token or unauthorized');
         setLoading(false);
         return;
       }
@@ -38,8 +39,7 @@ function LoginForm() {
       await exchangeAuthCode(data.code);
       router.push('/dashboard');
     } catch (err) {
-      console.error(err);
-      alert('Login failed');
+      setDemoError(err instanceof Error ? err.message : 'Login failed');
       setLoading(false);
     }
   };
@@ -68,14 +68,39 @@ function LoginForm() {
       </a>
 
       {showDemo && (
-        <button
-          onClick={handleDemoLogin}
-          disabled={loading}
-          className="w-full mt-4 bg-gray-100 text-navy-900 py-4 px-6 rounded-xl font-semibold hover:bg-gray-200 transition flex items-center justify-center gap-3"
-        >
-          <Key className="w-5 h-5 text-gray-500" />
-          {loading ? 'Logging in...' : 'Demo Login'}
-        </button>
+        <div className="mt-4">
+          {showDemoInput ? (
+            <div className="space-y-3">
+              <input
+                type="text"
+                value={demoToken}
+                onChange={(e) => setDemoToken(e.target.value)}
+                placeholder="Enter Demo Access Token"
+                className="w-full px-4 py-3 border border-navy-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500 text-navy-900"
+                onKeyDown={(e) => { if (e.key === 'Enter') handleDemoLogin(); }}
+              />
+              {demoError && (
+                <p className="text-sm text-red-600">{demoError}</p>
+              )}
+              <button
+                onClick={handleDemoLogin}
+                disabled={loading || !demoToken.trim()}
+                className="w-full bg-gray-100 text-navy-900 py-3 px-6 rounded-xl font-semibold hover:bg-gray-200 transition flex items-center justify-center gap-3 disabled:opacity-50"
+              >
+                <Key className="w-5 h-5 text-gray-500" />
+                {loading ? 'Logging in...' : 'Submit Token'}
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setShowDemoInput(true)}
+              className="w-full bg-gray-100 text-navy-900 py-4 px-6 rounded-xl font-semibold hover:bg-gray-200 transition flex items-center justify-center gap-3"
+            >
+              <Key className="w-5 h-5 text-gray-500" />
+              Demo Login
+            </button>
+          )}
+        </div>
       )}
 
       <div className="mt-6 text-center">
