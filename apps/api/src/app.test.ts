@@ -8,7 +8,7 @@ jest.mock('./lib/db', () => ({
   prisma: mockDeep<PrismaClient>(),
 }));
 
-import { app } from './app.js';
+import { app, getAllowedCorsOrigins } from './app.js';
 
 describe('API Versioning', () => {
 
@@ -54,5 +54,26 @@ describe('API Versioning', () => {
     const res = await app.request('/');
     expect(res.status).toBe(200);
     expect(res.headers.get('Warning')).toBeNull();
+  });
+
+  it('should allow both bare and www ShipLog origins when APP_URL is bare domain', () => {
+    const origins = getAllowedCorsOrigins({ APP_URL: 'https://shiplog.io' } as NodeJS.ProcessEnv);
+    expect(origins).toContain('https://shiplog.io');
+    expect(origins).toContain('https://www.shiplog.io');
+  });
+
+  it('should allow both bare and www ShipLog origins when APP_URL is www domain', () => {
+    const origins = getAllowedCorsOrigins({ APP_URL: 'https://www.shiplog.io' } as NodeJS.ProcessEnv);
+    expect(origins).toContain('https://shiplog.io');
+    expect(origins).toContain('https://www.shiplog.io');
+  });
+
+  it('should emit CORS header for https://www.shiplog.io', async () => {
+    const res = await app.request('/health', {
+      headers: {
+        Origin: 'https://www.shiplog.io',
+      },
+    });
+    expect(res.headers.get('Access-Control-Allow-Origin')).toBe('https://www.shiplog.io');
   });
 });

@@ -20,11 +20,39 @@ import { preview } from './routes/preview.js';
 
 const app = new Hono();
 
+function getAllowedCorsOrigins(env: NodeJS.ProcessEnv = process.env): string[] {
+  const configured = [env.APP_URL, env.CORS_ORIGIN]
+    .filter(Boolean)
+    .flatMap((value) => value!.split(','))
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  const baseOrigins = configured.length > 0 ? configured : ['http://localhost:3000'];
+  const allowed = new Set<string>(baseOrigins);
+
+  for (const origin of baseOrigins) {
+    try {
+      const url = new URL(origin);
+      if (url.hostname === 'shiplog.io') {
+        allowed.add(`${url.protocol}//www.shiplog.io`);
+      } else if (url.hostname === 'www.shiplog.io') {
+        allowed.add(`${url.protocol}//shiplog.io`);
+      }
+    } catch {
+      // Ignore malformed origins and keep the raw configured value as-is.
+    }
+  }
+
+  return [...allowed];
+}
+
+const allowedCorsOrigins = getAllowedCorsOrigins();
+
 // Middleware
 app.use('*', logger());
 app.use('*', securityHeaders());
 app.use('*', cors({
-  origin: process.env.APP_URL || process.env.CORS_ORIGIN || 'http://localhost:3000',
+  origin: allowedCorsOrigins,
   allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowHeaders: ['Content-Type', 'Authorization'],
   maxAge: 86400,
@@ -77,4 +105,5 @@ app.get('/', (c) => {
   });
 });
 
+export { app, getAllowedCorsOrigins };
 export default app;
