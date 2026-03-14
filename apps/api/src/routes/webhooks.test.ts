@@ -117,10 +117,10 @@ describe('Webhooks', () => {
 
     expect(res.status).toBe(401);
     const body = await res.json() as any;
-    expect(body).toEqual({ error: 'Invalid signature' });
+    expect(body).toEqual({ error: 'Unauthorized' });
   });
 
-  test('should return 500 if webhook secret is missing in DB', async () => {
+  test('should return 401 if webhook secret is missing in DB', async () => {
     prismaMock.repo.findFirst.mockResolvedValue({
       id: 'repo-1',
       webhookSecret: null, // No secret configured
@@ -136,8 +136,8 @@ describe('Webhooks', () => {
       },
     });
 
-    expect(res.status).toBe(500);
-    expect(await res.json()).toEqual({ error: 'Webhook secret not configured' });
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: 'Unauthorized' });
   });
 
   test('should process valid release event', async () => {

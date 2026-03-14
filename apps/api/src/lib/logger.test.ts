@@ -1,8 +1,10 @@
-import { logger, requestLogger, setLoggerContext } from './logger.js';
-import { Context, Next } from 'hono';
+import { jest, describe, it, expect, beforeEach, afterAll } from '@jest/globals';
+import type { Context, Next } from 'hono';
 
 // Spy on console.log
 const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+const { logger, requestLogger, setLoggerContext } = await import('./logger.js');
 
 describe('Logger', () => {
   beforeEach(() => {
@@ -16,14 +18,14 @@ describe('Logger', () => {
   it('should log info messages as JSON', () => {
     logger.info('test message');
     expect(consoleSpy).toHaveBeenCalled();
-    const logCall = JSON.parse(consoleSpy.mock.calls[0][0]);
+    const logCall = JSON.parse(consoleSpy.mock.calls[0][0] as string);
     expect(logCall.level).toBe('info');
     expect(logCall.message).toBe('test message');
     expect(logCall.timestamp).toBeDefined();
   });
 
   it('should include context in logs', async () => {
-    const mockNext: Next = jest.fn().mockResolvedValue(undefined);
+    const mockNext: Next = jest.fn<any>().mockResolvedValue(undefined);
     const mockContext = {
       req: {
         method: 'GET',
@@ -43,19 +45,13 @@ describe('Logger', () => {
       logger.info('with user');
     });
 
-    // Check calls
-    // 1. Incoming request
-    // 2. inside middleware
-    // 3. with user
-    // 4. Request completed
-
     expect(consoleSpy).toHaveBeenCalledTimes(4);
 
-    const call2 = JSON.parse(consoleSpy.mock.calls[1][0]);
+    const call2 = JSON.parse(consoleSpy.mock.calls[1][0] as string);
     expect(call2.message).toBe('inside middleware');
     expect(call2.requestId).toBeDefined();
 
-    const call3 = JSON.parse(consoleSpy.mock.calls[2][0]);
+    const call3 = JSON.parse(consoleSpy.mock.calls[2][0] as string);
     expect(call3.message).toBe('with user');
     expect(call3.userId).toBe('user-123');
     expect(call3.requestId).toBeDefined();

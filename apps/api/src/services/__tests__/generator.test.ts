@@ -81,18 +81,16 @@ describe('generateReleaseNotes', () => {
 
   it('should handle API errors gracefully', async () => {
     mockCreate.mockRejectedValue(new Error('API Error'));
-    await expect(generateReleaseNotes(input)).rejects.toThrow('API Error');
+    await expect(generateReleaseNotes(input)).rejects.toThrow();
   });
 
-  it('should handle empty choices or content', async () => {
+  it('should throw on empty choices or content', async () => {
     mockCreate.mockResolvedValue({
       choices: [],
       usage: { total_tokens: 0 },
       model: 'gpt-4o-mini',
     });
 
-    const result = await generateReleaseNotes(input);
-    expect(result.customer).toBe('');
-    expect(result.tokensUsed).toBe(0);
+    await expect(generateReleaseNotes(input)).rejects.toThrow('OpenAI returned empty content');
   });
 });

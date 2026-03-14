@@ -14,7 +14,6 @@ const mockFetchReleaseData = jest.fn();
 jest.unstable_mockModule('../github.js', () => ({
   listReleases: mockListReleases,
   fetchReleaseData: mockFetchReleaseData,
-  // Other exports not used in importer but might be needed if imported
   createWebhook: jest.fn(),
   deleteWebhook: jest.fn(),
   listUserRepos: jest.fn(),
@@ -25,6 +24,9 @@ const mockGenerateReleaseNotes = jest.fn();
 jest.unstable_mockModule('../generator.js', () => ({
   generateReleaseNotes: mockGenerateReleaseNotes,
 }));
+
+// Suppress console output
+jest.spyOn(console, 'log').mockImplementation(() => {});
 
 // Dynamic import
 const { importRepoHistory } = await import('../importer.js');
@@ -53,11 +55,13 @@ describe('importRepoHistory', () => {
       { id: 100, tag_name: 'v1.0.0', name: 'R1', body: 'b', html_url: 'u', draft: false, prerelease: false, published_at: 'date', created_at: 'date' }
     ]);
 
-    mockPrisma.release.findUnique.mockResolvedValue({ id: 'rel-existing' } as any);
+    // upsert returns existing release with non-PENDING status
+    mockPrisma.release.upsert.mockResolvedValue({ id: 'rel-existing', status: 'READY' } as any);
 
     await importRepoHistory('repo-1', 'token');
 
-    expect(mockPrisma.release.create).not.toHaveBeenCalled();
+    // Should not update since it was already processed
+    expect(mockPrisma.release.update).not.toHaveBeenCalled();
   });
 
   it('should import and generate notes for new releases when autoGenerate is true', async () => {
@@ -73,11 +77,11 @@ describe('importRepoHistory', () => {
       { id: 100, tag_name: 'v1.0.0', name: 'R1', body: 'b', html_url: 'u', draft: false, prerelease: false, published_at: 'date', created_at: 'date' }
     ]);
 
-    mockPrisma.release.findUnique.mockResolvedValue(null);
-
-    mockPrisma.release.create.mockResolvedValue({
+    // upsert returns new release with PENDING status
+    mockPrisma.release.upsert.mockResolvedValue({
       id: 'rel-1',
       tagName: 'v1.0.0',
+      status: 'PENDING',
     } as any);
 
     mockFetchReleaseData.mockResolvedValue({
@@ -93,7 +97,6 @@ describe('importRepoHistory', () => {
 
     await importRepoHistory('repo-1', 'token');
 
-    expect(mockPrisma.release.create).toHaveBeenCalled();
     // Status update to PROCESSING
     expect(mockPrisma.release.update).toHaveBeenCalledWith({
       where: { id: 'rel-1' },
@@ -125,8 +128,7 @@ describe('importRepoHistory', () => {
       { id: 100, tag_name: 'v1.0.0', name: 'R1', body: 'b', html_url: 'u', draft: false, prerelease: false, published_at: 'date', created_at: 'date' }
     ]);
 
-    mockPrisma.release.findUnique.mockResolvedValue(null);
-    mockPrisma.release.create.mockResolvedValue({ id: 'rel-1' } as any);
+    mockPrisma.release.upsert.mockResolvedValue({ id: 'rel-1', status: 'PENDING' } as any);
 
     await importRepoHistory('repo-1', 'token');
 
@@ -148,8 +150,7 @@ describe('importRepoHistory', () => {
       { id: 100, tag_name: 'v1.0.0', name: 'R1', body: 'b', html_url: 'u', draft: false, prerelease: false, published_at: 'date', created_at: 'date' }
     ]);
 
-    mockPrisma.release.findUnique.mockResolvedValue(null);
-    mockPrisma.release.create.mockResolvedValue({ id: 'rel-1' } as any);
+    mockPrisma.release.upsert.mockResolvedValue({ id: 'rel-1', status: 'PENDING' } as any);
 
     // Mock failure during fetch or generation
     mockFetchReleaseData.mockRejectedValue(new Error('Fetch failed'));
