@@ -35,8 +35,7 @@ function getAllowedCorsOrigins(env: NodeJS.ProcessEnv = process.env): string[] {
       const url = new URL(origin);
       if (url.hostname === 'shiplog.io') {
         allowed.add(`${url.protocol}//www.shiplog.io`);
-      }
-      if (url.hostname === 'www.shiplog.io') {
+      } else if (url.hostname === 'www.shiplog.io') {
         allowed.add(`${url.protocol}//shiplog.io`);
       }
     } catch {
