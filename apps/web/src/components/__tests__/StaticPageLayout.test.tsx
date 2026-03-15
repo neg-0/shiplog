@@ -47,11 +47,11 @@ describe('StaticPageLayout', () => {
 
     const docsLinks = screen.getAllByText('Docs');
     expect(docsLinks.length).toBeGreaterThanOrEqual(1);
-    expect(docsLinks[0].closest('a')).toHaveAttribute('href', '/docs');
+    expect(docsLinks[0]!.closest('a')).toHaveAttribute('href', '/docs');
 
     const changelogLinks = screen.getAllByText('Changelog');
     expect(changelogLinks.length).toBeGreaterThanOrEqual(1);
-    expect(changelogLinks[0].closest('a')).toHaveAttribute('href', '/changelog');
+    expect(changelogLinks[0]!.closest('a')).toHaveAttribute('href', '/changelog');
 
     const pricingLink = screen.getByText('Pricing');
     expect(pricingLink.closest('a')).toHaveAttribute('href', '/#pricing');
@@ -72,11 +72,11 @@ describe('StaticPageLayout', () => {
     // Footer has Docs, Changelog, Terms, Privacy links
     const termsLinks = screen.getAllByText('Terms');
     expect(termsLinks.length).toBeGreaterThanOrEqual(1);
-    expect(termsLinks[0].closest('a')).toHaveAttribute('href', '/terms');
+    expect(termsLinks[0]!.closest('a')).toHaveAttribute('href', '/terms');
 
     const privacyLinks = screen.getAllByText('Privacy');
     expect(privacyLinks.length).toBeGreaterThanOrEqual(1);
-    expect(privacyLinks[0].closest('a')).toHaveAttribute('href', '/privacy');
+    expect(privacyLinks[0]!.closest('a')).toHaveAttribute('href', '/privacy');
   });
 
   it('renders home link in header', () => {
@@ -87,7 +87,7 @@ describe('StaticPageLayout', () => {
     );
 
     // The ShipLog logo/name in header links to home
-    const headerLink = screen.getAllByText('ShipLog')[0].closest('a');
+    const headerLink = screen.getAllByText('ShipLog')[0]!.closest('a');
     expect(headerLink).toHaveAttribute('href', '/');
   });
 });
