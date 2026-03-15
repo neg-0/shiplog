@@ -5,7 +5,7 @@ global.fetch = mockFetch;
 
 describe('api', () => {
   beforeEach(() => {
-    mockFetch.mockClear();
+    mockFetch.mockReset();
     mockFetch.mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({}),

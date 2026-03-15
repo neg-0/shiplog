@@ -134,6 +134,7 @@ describe('Auth Routes', () => {
     it('returns error for invalid state', async () => {
       const res = await auth.request('/github/callback?code=mock-code&state=invalid-state');
       expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: 'Invalid OAuth state' });
     });
 
     it('returns error if no code provided', async () => {
