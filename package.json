@@ -6,9 +6,13 @@
     "dev": "pnpm -r dev",
     "build": "pnpm -r build",
     "lint": "pnpm -r lint",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "test:api": "pnpm --filter api test",
+    "test:web": "pnpm --filter web test",
+    "test:e2e": "playwright test"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "typescript": "^5.3.0"
   },
   "packageManager": "pnpm@8.15.0",
