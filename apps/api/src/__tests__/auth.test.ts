@@ -142,6 +142,60 @@ describe('Auth Routes', () => {
     });
   });
 
+  describe('POST /demo', () => {
+    it('allows demo login with valid token', async () => {
+      process.env.DEMO_ACCESS_TOKEN = 'valid-demo-token';
+
+      prismaMock.user.upsert.mockResolvedValue({
+        id: 'demo-user-id',
+        login: 'demo-user',
+      } as any);
+
+      const res = await auth.request('/demo', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Demo-Token': 'valid-demo-token',
+        },
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body).toHaveProperty('code');
+      expect(body.user).toEqual({ id: 'demo-user-id', login: 'demo-user' });
+    });
+
+    it('rejects demo login with invalid token', async () => {
+      process.env.DEMO_ACCESS_TOKEN = 'valid-demo-token';
+
+      const res = await auth.request('/demo', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Demo-Token': 'wrong-token',
+        },
+      });
+
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({ error: 'Unauthorized' });
+    });
+
+    it('rejects demo login when token is not configured', async () => {
+      delete process.env.DEMO_ACCESS_TOKEN;
+
+      const res = await auth.request('/demo', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Demo-Token': 'any-token',
+        },
+      });
+
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({ error: 'Unauthorized' });
+    });
+  });
+
   describe('POST /logout', () => {
     it('returns logged_out status', async () => {
       const res = await auth.request('/logout', {
