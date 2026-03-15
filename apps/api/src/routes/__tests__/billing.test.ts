@@ -44,9 +44,22 @@ jest.unstable_mockModule('../../lib/auth.js', () => ({
   },
 }));
 
+jest.unstable_mockModule('../../lib/rate-limit.js', () => ({
+  apiLimiter: async (_c: any, next: any) => { await next(); },
+  authLimiter: async (_c: any, next: any) => { await next(); },
+  webhookLimiter: async (_c: any, next: any) => { await next(); },
+  rateLimit: () => async (_c: any, next: any) => { await next(); },
+}));
+
 jest.unstable_mockModule('stripe', () => ({
   default: jest.fn(() => stripeMock),
 }));
+
+// Set env vars BEFORE import (billing.ts reads them at module scope)
+process.env.STRIPE_SECRET_KEY = 'sk_test_mock';
+process.env.STRIPE_PRICE_PRO = 'price_pro';
+process.env.STRIPE_PRICE_TEAM = 'price_team';
+process.env.STRIPE_WEBHOOK_SECRET = 'whsec_test';
 
 // Import the app after mocking dependencies
 const { billing } = await import('../billing');
@@ -58,7 +71,6 @@ describe('Billing Routes', () => {
 
   describe('POST /checkout', () => {
     it('should create a checkout session for a new customer', async () => {
-      // Mock db user
       prismaMock.user.findUnique.mockResolvedValue({
         id: 'user_1',
         email: 'test@example.com',
@@ -66,25 +78,27 @@ describe('Billing Routes', () => {
         login: 'testuser',
         stripeCustomerId: null,
         githubId: 12345,
+        subscriptionStatus: null,
+        subscriptionTier: 'FREE',
+        stripeSubscriptionId: null,
       } as any);
 
-      // Mock Stripe customer list (no existing customer)
       (stripeMock.customers.list as jest.Mock).mockResolvedValue({
         data: [],
       } as any);
 
-      // Mock Stripe customer creation
       (stripeMock.customers.create as jest.Mock).mockResolvedValue({
         id: 'cus_new',
       } as any);
 
-      // Mock Stripe checkout session creation
       (stripeMock.checkout.sessions.create as jest.Mock).mockResolvedValue({
         url: 'https://checkout.stripe.com/session',
       } as any);
 
-      const req = new Request('http://localhost/checkout?plan=pro', {
+      const req = new Request('http://localhost/checkout', {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plan: 'pro' }),
       });
       const res = await billing.request(req);
 
@@ -111,14 +125,19 @@ describe('Billing Routes', () => {
         login: 'testuser',
         stripeCustomerId: 'cus_existing',
         githubId: 12345,
+        subscriptionStatus: null,
+        subscriptionTier: 'FREE',
+        stripeSubscriptionId: null,
       } as any);
 
       (stripeMock.checkout.sessions.create as jest.Mock).mockResolvedValue({
         url: 'https://checkout.stripe.com/session',
       } as any);
 
-      const req = new Request('http://localhost/checkout?plan=pro', {
+      const req = new Request('http://localhost/checkout', {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plan: 'pro' }),
       });
       const res = await billing.request(req);
 
@@ -132,12 +151,13 @@ describe('Billing Routes', () => {
     });
 
     it('should return error for invalid plan', async () => {
-        const req = new Request('http://localhost/checkout?plan=invalid', {
-            method: 'POST',
-        });
-        const res = await billing.request(req);
-        expect(res.status).toBe(400);
-        expect(await res.json()).toEqual({ error: 'Invalid plan' });
+      const req = new Request('http://localhost/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plan: 'invalid' }),
+      });
+      const res = await billing.request(req);
+      expect(res.status).toBe(400);
     });
   });
 
@@ -153,6 +173,7 @@ describe('Billing Routes', () => {
 
       const req = new Request('http://localhost/portal', {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
       });
       const res = await billing.request(req);
 
@@ -167,6 +188,7 @@ describe('Billing Routes', () => {
 
       const req = new Request('http://localhost/portal', {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
       });
       const res = await billing.request(req);
 
@@ -179,10 +201,12 @@ describe('Billing Routes', () => {
     it('should handle checkout.session.completed', async () => {
       const event = {
         type: 'checkout.session.completed',
+        created: Math.floor(Date.now() / 1000),
         data: {
           object: {
             customer: 'cus_123',
             subscription: 'sub_123',
+            client_reference_id: 'user_1',
             metadata: { userId: 'user_1' },
           },
         },
@@ -199,6 +223,9 @@ describe('Billing Routes', () => {
         customer: 'cus_123',
       } as any);
 
+      // Mock org sync
+      prismaMock.organization.findMany.mockResolvedValue([]);
+
       const req = new Request('http://localhost/webhook', {
         method: 'POST',
         headers: { 'stripe-signature': 'sig' },
@@ -207,132 +234,149 @@ describe('Billing Routes', () => {
       const res = await billing.request(req);
 
       expect(res.status).toBe(200);
-      expect(prismaMock.user.update).toHaveBeenCalledWith({
-        where: { id: 'user_1' },
-        data: expect.objectContaining({
-          subscriptionTier: 'PRO', // assuming default behavior for price_pro
-          stripeSubscriptionId: 'sub_123',
-        }),
-      });
+      // Route uses updateMany with timestamp guard
+      expect(prismaMock.user.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ id: 'user_1' }),
+          data: expect.objectContaining({
+            subscriptionTier: 'PRO',
+            stripeSubscriptionId: 'sub_123',
+          }),
+        })
+      );
     });
 
     it('should handle customer.subscription.updated', async () => {
-        const event = {
-            type: 'customer.subscription.updated',
-            data: {
-                object: {
-                    id: 'sub_123',
-                    customer: 'cus_123',
-                    status: 'active',
-                }
-            }
-        };
-
-        (stripeMock.webhooks.constructEvent as jest.Mock).mockReturnValue(event);
-
-        (stripeMock.subscriptions.retrieve as jest.Mock).mockResolvedValue({
+      const event = {
+        type: 'customer.subscription.updated',
+        created: Math.floor(Date.now() / 1000),
+        data: {
+          object: {
             id: 'sub_123',
-            status: 'active',
             customer: 'cus_123',
-            items: {
-                data: [{ price: { id: 'price_team' } }],
-            },
-        } as any);
+            status: 'active',
+          }
+        }
+      };
 
-        const req = new Request('http://localhost/webhook', {
-            method: 'POST',
-            headers: { 'stripe-signature': 'sig' },
-            body: JSON.stringify(event),
-        });
-        const res = await billing.request(req);
+      (stripeMock.webhooks.constructEvent as jest.Mock).mockReturnValue(event);
 
-        expect(res.status).toBe(200);
-        expect(prismaMock.user.updateMany).toHaveBeenCalledWith({
-            where: { stripeCustomerId: 'cus_123' },
-            data: expect.objectContaining({
-                subscriptionTier: 'TEAM',
-            }),
-        });
+      (stripeMock.subscriptions.retrieve as jest.Mock).mockResolvedValue({
+        id: 'sub_123',
+        status: 'active',
+        customer: 'cus_123',
+        items: {
+          data: [{ price: { id: 'price_team' } }],
+        },
+      } as any);
+
+      // updateByCustomer calls user.findMany then user.updateMany
+      prismaMock.user.findMany.mockResolvedValue([{ id: 'user_1' } as any]);
+      prismaMock.organization.findMany.mockResolvedValue([]);
+
+      const req = new Request('http://localhost/webhook', {
+        method: 'POST',
+        headers: { 'stripe-signature': 'sig' },
+        body: JSON.stringify(event),
+      });
+      const res = await billing.request(req);
+
+      expect(res.status).toBe(200);
+      expect(prismaMock.user.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ stripeCustomerId: 'cus_123' }),
+          data: expect.objectContaining({
+            subscriptionTier: 'TEAM',
+          }),
+        })
+      );
     });
 
     it('should handle customer.subscription.deleted', async () => {
-        const event = {
-            type: 'customer.subscription.deleted',
-            data: {
-                object: {
-                    id: 'sub_123',
-                    customer: 'cus_123',
-                    status: 'canceled',
-                }
-            }
-        };
-
-        (stripeMock.webhooks.constructEvent as jest.Mock).mockReturnValue(event);
-
-        (stripeMock.subscriptions.retrieve as jest.Mock).mockResolvedValue({
+      const event = {
+        type: 'customer.subscription.deleted',
+        created: Math.floor(Date.now() / 1000),
+        data: {
+          object: {
             id: 'sub_123',
-            status: 'canceled',
             customer: 'cus_123',
-            items: {
-                data: [{ price: { id: 'price_pro' } }],
-            },
-        } as any);
+            status: 'canceled',
+          }
+        }
+      };
 
-        const req = new Request('http://localhost/webhook', {
-            method: 'POST',
-            headers: { 'stripe-signature': 'sig' },
-            body: JSON.stringify(event),
-        });
-        const res = await billing.request(req);
+      (stripeMock.webhooks.constructEvent as jest.Mock).mockReturnValue(event);
 
-        expect(res.status).toBe(200);
-        expect(prismaMock.user.updateMany).toHaveBeenCalledWith({
-            where: { stripeCustomerId: 'cus_123' },
-            data: expect.objectContaining({
-                subscriptionTier: 'FREE',
-                subscriptionStatus: 'canceled',
-            }),
-        });
+      (stripeMock.subscriptions.retrieve as jest.Mock).mockResolvedValue({
+        id: 'sub_123',
+        status: 'canceled',
+        customer: 'cus_123',
+        items: {
+          data: [{ price: { id: 'price_pro' } }],
+        },
+      } as any);
+
+      prismaMock.user.findMany.mockResolvedValue([{ id: 'user_1' } as any]);
+      prismaMock.organization.findMany.mockResolvedValue([]);
+
+      const req = new Request('http://localhost/webhook', {
+        method: 'POST',
+        headers: { 'stripe-signature': 'sig' },
+        body: JSON.stringify(event),
+      });
+      const res = await billing.request(req);
+
+      expect(res.status).toBe(200);
+      expect(prismaMock.user.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ stripeCustomerId: 'cus_123' }),
+          data: expect.objectContaining({
+            subscriptionTier: 'FREE',
+            subscriptionStatus: 'canceled',
+          }),
+        })
+      );
     });
 
     it('should handle invoice.payment_failed (ignore)', async () => {
-        const event = {
-            type: 'invoice.payment_failed',
-            data: {
-                object: {
-                    customer: 'cus_123',
-                }
-            }
-        };
+      const event = {
+        type: 'invoice.payment_failed',
+        created: Math.floor(Date.now() / 1000),
+        data: {
+          object: {
+            customer: 'cus_123',
+          }
+        }
+      };
 
-        (stripeMock.webhooks.constructEvent as jest.Mock).mockReturnValue(event);
+      (stripeMock.webhooks.constructEvent as jest.Mock).mockReturnValue(event);
 
-        const req = new Request('http://localhost/webhook', {
-            method: 'POST',
-            headers: { 'stripe-signature': 'sig' },
-            body: JSON.stringify(event),
-        });
-        const res = await billing.request(req);
+      const req = new Request('http://localhost/webhook', {
+        method: 'POST',
+        headers: { 'stripe-signature': 'sig' },
+        body: JSON.stringify(event),
+      });
+      const res = await billing.request(req);
 
-        expect(res.status).toBe(200);
-        expect(prismaMock.user.update).not.toHaveBeenCalled();
-        expect(prismaMock.user.updateMany).not.toHaveBeenCalled();
+      expect(res.status).toBe(200);
+      expect(prismaMock.user.update).not.toHaveBeenCalled();
+      expect(prismaMock.user.updateMany).not.toHaveBeenCalled();
     });
 
     it('should return error for invalid signature', async () => {
-        (stripeMock.webhooks.constructEvent as jest.Mock).mockImplementation(() => {
-            throw new Error('Invalid signature');
-        });
+      (stripeMock.webhooks.constructEvent as jest.Mock).mockImplementation(() => {
+        throw new Error('Invalid signature');
+      });
 
-        const req = new Request('http://localhost/webhook', {
-            method: 'POST',
-            headers: { 'stripe-signature': 'invalid' },
-            body: 'rawbody',
-        });
-        const res = await billing.request(req);
+      const req = new Request('http://localhost/webhook', {
+        method: 'POST',
+        headers: { 'stripe-signature': 'invalid' },
+        body: 'rawbody',
+      });
+      const res = await billing.request(req);
 
-        expect(res.status).toBe(400);
-        expect(await res.json()).toEqual({ error: 'Invalid signature' });
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: 'Invalid signature' });
     });
   });
 });

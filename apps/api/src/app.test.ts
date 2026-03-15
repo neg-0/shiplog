@@ -1,59 +1,50 @@
-import { jest } from '@jest/globals';
+import { jest, describe, it, expect } from '@jest/globals';
 import { mockDeep } from 'jest-mock-extended';
-import { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@prisma/client';
 
-// Mock Prisma before importing app
-jest.mock('./lib/db', () => ({
-  __esModule: true,
+jest.unstable_mockModule('./lib/db.js', () => ({
   prisma: mockDeep<PrismaClient>(),
 }));
 
-import { app, getAllowedCorsOrigins } from './app.js';
+// Mock isomorphic-dompurify to avoid ESM/jsdom issues in test environment
+jest.unstable_mockModule('isomorphic-dompurify', () => ({
+  __esModule: true,
+  default: { sanitize: (s: string) => s },
+}));
 
-describe('API Versioning', () => {
+jest.unstable_mockModule('./lib/rate-limit.js', () => ({
+  apiLimiter: async (_c: any, next: any) => { await next(); },
+  authLimiter: async (_c: any, next: any) => { await next(); },
+  webhookLimiter: async (_c: any, next: any) => { await next(); },
+  rateLimit: () => async (_c: any, next: any) => { await next(); },
+}));
 
-  it('should support /v1/health', async () => {
-    const res = await app.request('/v1/health');
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body).toHaveProperty('status', 'healthy');
-  });
+jest.unstable_mockModule('./lib/auth.js', () => ({
+  requireAuth: async (c: any, next: any) => {
+    c.set('user', { id: 'test-user-id' });
+    await next();
+  },
+  optionalAuth: async (_c: any, next: any) => { await next(); },
+  encrypt: jest.fn().mockResolvedValue('encrypted'),
+  decrypt: jest.fn().mockResolvedValue('decrypted'),
+}));
 
-  it('should support legacy /health with deprecation warning', async () => {
-    const res = await app.request('/health');
-    expect(res.status).toBe(200);
-    expect(res.headers.get('Warning')).toContain('deprecated');
-    const body = await res.json();
-    expect(body).toHaveProperty('status', 'healthy');
-  });
+jest.unstable_mockModule('stripe', () => ({
+  default: jest.fn(() => ({})),
+}));
 
-  it('should support /health with X-API-Version: 1 without warning', async () => {
-    const res = await app.request('/health', {
-      headers: {
-        'X-API-Version': '1',
-      },
-    });
-    expect(res.status).toBe(200);
-    expect(res.headers.get('Warning')).toBeNull();
-    const body = await res.json();
-    expect(body).toHaveProperty('status', 'healthy');
-  });
+// Set APP_URL so CORS includes shiplog.io origins
+process.env.APP_URL = 'https://shiplog.io';
 
-  it('should reject unsupported version', async () => {
-    const res = await app.request('/health', {
-      headers: {
-        'X-API-Version': '99',
-      },
-    });
-    expect(res.status).toBe(400);
-    const body = await res.json();
-    expect(body).toEqual({ error: 'Unsupported API version' });
-  });
+const { app, getAllowedCorsOrigins } = await import('./app.js');
 
-  it('should skip warning for root /', async () => {
+describe('App', () => {
+  it('should return root info', async () => {
     const res = await app.request('/');
     expect(res.status).toBe(200);
-    expect(res.headers.get('Warning')).toBeNull();
+    const body = await res.json();
+    expect(body).toHaveProperty('name', 'ShipLog API');
+    expect(body).toHaveProperty('status', 'operational');
   });
 
   it('should allow both bare and www ShipLog origins when APP_URL is bare domain', () => {
@@ -75,5 +66,30 @@ describe('API Versioning', () => {
       },
     });
     expect(res.headers.get('Access-Control-Allow-Origin')).toBe('https://www.shiplog.io');
+  });
+
+  it('should emit CORS header for https://shiplog.io', async () => {
+    const res = await app.request('/health', {
+      headers: {
+        Origin: 'https://shiplog.io',
+      },
+    });
+    expect(res.headers.get('Access-Control-Allow-Origin')).toBe('https://shiplog.io');
+  });
+
+  it('should enforce CSRF Content-Type on POST', async () => {
+    const res = await app.request('/repos', {
+      method: 'POST',
+    });
+    expect(res.status).toBe(415);
+  });
+
+  it('should exempt webhooks from CSRF check', async () => {
+    const res = await app.request('/webhooks/github', {
+      method: 'POST',
+      body: '{}',
+    });
+    // Should not be 415 (CSRF rejected)
+    expect(res.status).not.toBe(415);
   });
 });

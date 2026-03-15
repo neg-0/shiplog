@@ -266,6 +266,7 @@ const inviteSchema = z.object({
 organizations.post('/:id/invite', validate(inviteSchema), async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
+  if (!id) return c.json({ error: 'Missing organization ID' }, 400);
   const body = c.req.valid('json');
 
   const org = await prisma.organization.findUnique({

@@ -1,16 +1,9 @@
+import { jest, describe, it, expect, beforeEach } from '@jest/globals';
+import { mockDeep } from 'jest-mock-extended';
+import type { PrismaClient } from '@prisma/client';
 import { Hono } from 'hono';
-import { user } from './user.js';
-import { prisma } from '../lib/db.js';
-import { requireAuth } from '../lib/auth.js';
-import { describe, it, expect, beforeEach, jest } from '@jest/globals';
-import { DeepMockProxy } from 'jest-mock-extended';
-import { PrismaClient } from '@prisma/client';
 
-// Mock dependencies
-jest.mock('../lib/db.js');
-jest.mock('../lib/auth.js');
-
-const prismaMock = prisma as unknown as DeepMockProxy<PrismaClient>;
+const prismaMock = mockDeep<PrismaClient>();
 const mockUser = {
   id: 'user-1',
   githubId: 123,
@@ -18,17 +11,24 @@ const mockUser = {
   email: 'test@example.com',
 };
 
+jest.unstable_mockModule('../lib/db.js', () => ({
+  prisma: prismaMock,
+}));
+
+jest.unstable_mockModule('../lib/auth.js', () => ({
+  requireAuth: jest.fn<any>(async (c: any, next: any) => {
+    c.set('user', mockUser);
+    await next();
+  }),
+}));
+
+const { user } = await import('./user.js');
+
 describe('User Routes', () => {
   let app: Hono;
 
   beforeEach(() => {
     app = new Hono();
-    // Default auth mock
-    (requireAuth as jest.Mock).mockImplementation(async (c: any, next: any) => {
-      c.set('user', mockUser);
-      await next();
-    });
-
     app.route('/', user);
     jest.clearAllMocks();
   });
