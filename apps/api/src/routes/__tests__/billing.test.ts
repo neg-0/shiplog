@@ -159,6 +159,7 @@ describe('Billing Routes', () => {
       const res = await billing.request(req);
       expect(res.status).toBe(400);
       const body = await res.json();
+      expect(body.success).toBe(false);
       expect(body.error).toBeDefined();
     });
   });

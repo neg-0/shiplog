@@ -20,7 +20,7 @@
     "@hono/zod-validator": "^0.2.0",
     "@prisma/client": "^5.10.0",
     "hono": "^4.0.0",
-    "isomorphic-dompurify": "^2.36.0",
+    "isomorphic-dompurify": "~2.18.0",
     "jose": "^5.2.0",
     "openai": "^4.28.0",
     "stripe": "^15.0.0",

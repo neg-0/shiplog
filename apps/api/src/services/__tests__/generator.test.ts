@@ -4,14 +4,25 @@ import type { ReleaseInput } from '../generator.js';
 // Mock OpenAI
 const mockCreate = jest.fn();
 
-jest.unstable_mockModule('openai', () => ({
-  default: jest.fn().mockImplementation(() => ({
-    chat: {
-      completions: {
-        create: mockCreate,
-      },
+class MockAPIError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
+const MockOpenAI = jest.fn().mockImplementation(() => ({
+  chat: {
+    completions: {
+      create: mockCreate,
     },
-  })),
+  },
+}));
+(MockOpenAI as any).APIError = MockAPIError;
+
+jest.unstable_mockModule('openai', () => ({
+  default: MockOpenAI,
 }));
 
 // Dynamic import after mocking
@@ -81,7 +92,7 @@ describe('generateReleaseNotes', () => {
 
   it('should handle API errors gracefully', async () => {
     mockCreate.mockRejectedValue(new Error('API Error'));
-    await expect(generateReleaseNotes(input)).rejects.toThrow();
+    await expect(generateReleaseNotes(input)).rejects.toThrow('API Error');
   });
 
   it('should throw on empty choices or content', async () => {
