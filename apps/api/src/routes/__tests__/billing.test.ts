@@ -160,7 +160,7 @@ describe('Billing Routes', () => {
       expect(res.status).toBe(400);
       const body = await res.json();
       expect(body.success).toBe(false);
-      expect(body.error).toBeDefined();
+      expect(body.error.issues[0].message).toBe("Plan must be 'pro' or 'team'");
     });
   });
 
