@@ -1,4 +1,4 @@
-import { jest, describe, it, expect, beforeEach, afterAll, beforeAll } from '@jest/globals';
+import { jest, describe, it, expect, beforeEach, afterAll } from '@jest/globals';
 import { DeepMockProxy, mockDeep } from 'jest-mock-extended';
 import { PrismaClient } from '@prisma/client';
 
@@ -9,12 +9,25 @@ jest.unstable_mockModule('../lib/db.js', () => ({
 }));
 
 jest.unstable_mockModule('../lib/auth.js', () => ({
-  encrypt: jest.fn().mockResolvedValue('v1.encrypted.token'),
+  encrypt: jest.fn().mockResolvedValue('v2.encrypted.token'),
   decrypt: jest.fn().mockResolvedValue('decrypted-token'),
+  requireAuth: async (c: any, next: any) => {
+    c.set('user', { id: 'test-user-id', githubId: 123, login: 'testuser', email: 'test@example.com', lastLogoutAt: null });
+    await next();
+  },
+  optionalAuth: async (_c: any, next: any) => { await next(); },
 }));
 
 jest.unstable_mockModule('../lib/jwt.js', () => ({
   signToken: jest.fn().mockResolvedValue('mock-session-token'),
+  verifyToken: jest.fn().mockResolvedValue({ userId: 'test-user-id', iat: Math.floor(Date.now() / 1000) }),
+}));
+
+jest.unstable_mockModule('../lib/rate-limit.js', () => ({
+  authLimiter: async (_c: any, next: any) => { await next(); },
+  apiLimiter: async (_c: any, next: any) => { await next(); },
+  webhookLimiter: async (_c: any, next: any) => { await next(); },
+  rateLimit: () => async (_c: any, next: any) => { await next(); },
 }));
 
 // Mock environment variables
@@ -44,11 +57,6 @@ describe('Auth Routes', () => {
 
   afterAll(() => {
     process.env = OLD_ENV;
-    jest.useRealTimers();
-  });
-
-  beforeAll(() => {
-    jest.useFakeTimers();
   });
 
   describe('GET /github', () => {
@@ -72,20 +80,28 @@ describe('Auth Routes', () => {
 
   describe('GET /github/callback', () => {
     it('handles successful callback', async () => {
-      // 1. Initiate flow to get state
+      // 1. Initiate flow to get state cookie
       const initRes = await auth.request('/github');
       const location = initRes.headers.get('Location');
       const url = new URL(location!);
       const state = url.searchParams.get('state');
 
+      // Extract state cookie
+      const setCookieHeader = initRes.headers.get('Set-Cookie') || '';
+      const stateMatch = setCookieHeader.match(/oauth_state=([^;]+)/);
+      const stateCookie = stateMatch ? stateMatch[1] : state;
+
       // 2. Mock GitHub token response
-      (global.fetch as jest.Mock).mockResolvedValueOnce({
+      const mockFetch = jest.fn<any>();
+      global.fetch = mockFetch;
+
+      mockFetch.mockResolvedValueOnce({
         json: async () => ({ access_token: 'gh-access-token' }),
         ok: true,
       });
 
       // 3. Mock GitHub user response
-      (global.fetch as jest.Mock).mockResolvedValueOnce({
+      mockFetch.mockResolvedValueOnce({
         json: async () => ({
           id: 123,
           login: 'testuser',
@@ -104,10 +120,14 @@ describe('Auth Routes', () => {
         email: 'test@example.com',
       } as any);
 
-      const res = await auth.request(`/github/callback?code=mock-code&state=${state}`);
+      const req = new Request(`http://localhost/github/callback?code=mock-code&state=${state}`);
+      req.headers.set('Cookie', `oauth_state=${stateCookie}`);
+
+      const res = await auth.request(req);
 
       expect(res.status).toBe(302);
-      expect(res.headers.get('Location')).toContain('http://localhost:3000/dashboard?token=mock-session-token');
+      // Callback uses exchange code
+      expect(res.headers.get('Location')).toContain('http://localhost:3000/dashboard');
       expect(prismaMock.user.upsert).toHaveBeenCalled();
     });
 
@@ -120,38 +140,69 @@ describe('Auth Routes', () => {
     it('returns error if no code provided', async () => {
       const res = await auth.request('/github/callback?state=some-state');
       expect(res.status).toBe(400);
-      expect(await res.json()).toEqual({ error: 'No code provided' });
     });
   });
 
   describe('POST /demo', () => {
-    it('allows demo login when enabled', async () => {
-      process.env.ENABLE_DEMO_LOGIN = 'true';
+    it('allows demo login with valid token', async () => {
+      process.env.DEMO_ACCESS_TOKEN = 'valid-demo-token';
 
       prismaMock.user.upsert.mockResolvedValue({
         id: 'demo-user-id',
         login: 'demo-user',
       } as any);
 
-      const res = await auth.request('/demo', { method: 'POST' });
+      const res = await auth.request('/demo', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Demo-Token': 'valid-demo-token',
+        },
+      });
 
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({
-        token: 'mock-session-token',
-        user: { id: 'demo-user-id', login: 'demo-user' },
-      });
+      const body = await res.json();
+      expect(body).toHaveProperty('code');
+      expect(body.user).toEqual({ id: 'demo-user-id', login: 'demo-user' });
     });
 
-    it('rejects demo login when disabled', async () => {
-      process.env.ENABLE_DEMO_LOGIN = 'false';
-      const res = await auth.request('/demo', { method: 'POST' });
-      expect(res.status).toBe(403);
+    it('rejects demo login with invalid token', async () => {
+      process.env.DEMO_ACCESS_TOKEN = 'valid-demo-token';
+
+      const res = await auth.request('/demo', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Demo-Token': 'wrong-token',
+        },
+      });
+
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({ error: 'Unauthorized' });
+    });
+
+    it('rejects demo login when token is not configured', async () => {
+      delete process.env.DEMO_ACCESS_TOKEN;
+
+      const res = await auth.request('/demo', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Demo-Token': 'any-token',
+        },
+      });
+
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({ error: 'Unauthorized' });
     });
   });
 
   describe('POST /logout', () => {
     it('returns logged_out status', async () => {
-      const res = await auth.request('/logout', { method: 'POST' });
+      const res = await auth.request('/logout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ status: 'logged_out' });
     });

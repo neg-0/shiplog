@@ -1,6 +1,10 @@
+import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { Hono } from 'hono';
-import { feedback } from './feedback.js';
-import { describe, it, expect, beforeEach, jest, afterEach } from '@jest/globals';
+
+const mockFetch = jest.fn<any>();
+global.fetch = mockFetch as any;
+
+const { feedback } = await import('./feedback.js');
 
 describe('Feedback Routes', () => {
   let app: Hono;
@@ -9,6 +13,7 @@ describe('Feedback Routes', () => {
     app = new Hono();
     app.route('/', feedback);
     jest.clearAllMocks();
+    mockFetch.mockReset();
     process.env.DISCORD_FEEDBACK_WEBHOOK_URL = 'https://discord.com/api/webhooks/test';
   });
 
@@ -18,7 +23,7 @@ describe('Feedback Routes', () => {
 
   describe('POST /', () => {
     it('should submit feedback successfully', async () => {
-      (global.fetch as jest.Mock<any>).mockResolvedValue({
+      mockFetch.mockResolvedValue({
         ok: true,
       });
 
@@ -39,7 +44,7 @@ describe('Feedback Routes', () => {
       const data = await res.json();
       expect(data.success).toBe(true);
 
-      expect(global.fetch).toHaveBeenCalledWith(
+      expect(mockFetch).toHaveBeenCalledWith(
         'https://discord.com/api/webhooks/test',
         expect.objectContaining({
           method: 'POST',
@@ -50,8 +55,8 @@ describe('Feedback Routes', () => {
 
     it('should validate input', async () => {
       const payload = {
-        type: 'invalid-type', // Invalid enum
-        message: '', // Too short
+        type: 'invalid-type',
+        message: '',
       };
 
       const res = await app.request('/', {
@@ -82,11 +87,11 @@ describe('Feedback Routes', () => {
       expect(data.success).toBe(true);
       expect(data.message).toContain('simulation');
 
-      expect(global.fetch).not.toHaveBeenCalled();
+      expect(mockFetch).not.toHaveBeenCalled();
     });
 
     it('should handle webhook error', async () => {
-      (global.fetch as jest.Mock<any>).mockResolvedValue({
+      mockFetch.mockResolvedValue({
         ok: false,
         text: async () => 'Error message',
       });

@@ -1,16 +1,21 @@
+import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { mockDeep } from 'jest-mock-extended';
+import type { PrismaClient } from '@prisma/client';
 import { Hono } from 'hono';
-import { admin } from './admin.js';
-import { prisma } from '../lib/db.js';
-import { requireAuth } from '../lib/auth.js';
-import { describe, it, expect, beforeEach, jest, afterEach } from '@jest/globals';
-import { DeepMockProxy } from 'jest-mock-extended';
-import { PrismaClient } from '@prisma/client';
 
-// Mock dependencies
-jest.mock('../lib/db.js');
-jest.mock('../lib/auth.js');
+const prismaMock = mockDeep<PrismaClient>();
+const requireAuthMock = jest.fn<any>();
 
-const prismaMock = prisma as unknown as DeepMockProxy<PrismaClient>;
+jest.unstable_mockModule('../lib/db.js', () => ({
+  prisma: prismaMock,
+}));
+
+jest.unstable_mockModule('../lib/auth.js', () => ({
+  requireAuth: requireAuthMock,
+}));
+
+const { admin } = await import('./admin.js');
+
 const mockAdminUser = {
   id: 'admin-1',
   githubId: 123,
@@ -35,7 +40,7 @@ describe('Admin Routes', () => {
     app.route('/', admin);
 
     // Default to admin user
-    (requireAuth as jest.Mock).mockImplementation(async (c: any, next: any) => {
+    requireAuthMock.mockImplementation(async (c: any, next: any) => {
       c.set('user', mockAdminUser);
       await next();
     });
@@ -49,6 +54,10 @@ describe('Admin Routes', () => {
 
   describe('Authorization', () => {
     it('should allow admin user', async () => {
+      requireAuthMock.mockImplementation(async (c: any, next: any) => {
+        c.set('user', mockAdminUser);
+        await next();
+      });
       prismaMock.user.count.mockResolvedValue(10);
       prismaMock.repo.count.mockResolvedValue(5);
       prismaMock.release.count.mockResolvedValue(2);
@@ -59,7 +68,7 @@ describe('Admin Routes', () => {
     });
 
     it('should deny regular user', async () => {
-      (requireAuth as jest.Mock).mockImplementation(async (c: any, next: any) => {
+      requireAuthMock.mockImplementation(async (c: any, next: any) => {
         c.set('user', mockRegularUser);
         await next();
       });
@@ -72,10 +81,14 @@ describe('Admin Routes', () => {
 
   describe('GET /metrics', () => {
     it('should return metrics', async () => {
-      prismaMock.user.count.mockResolvedValueOnce(100); // total
-      prismaMock.user.count.mockResolvedValueOnce(50); // free
-      prismaMock.user.count.mockResolvedValueOnce(30); // pro
-      prismaMock.user.count.mockResolvedValueOnce(20); // team
+      requireAuthMock.mockImplementation(async (c: any, next: any) => {
+        c.set('user', mockAdminUser);
+        await next();
+      });
+      prismaMock.user.count.mockResolvedValueOnce(100);
+      prismaMock.user.count.mockResolvedValueOnce(50);
+      prismaMock.user.count.mockResolvedValueOnce(30);
+      prismaMock.user.count.mockResolvedValueOnce(20);
       prismaMock.repo.count.mockResolvedValue(500);
       prismaMock.release.count.mockResolvedValue(200);
 
@@ -89,13 +102,16 @@ describe('Admin Routes', () => {
       expect(data.users.team).toBe(20);
       expect(data.repos).toBe(500);
       expect(data.releases).toBe(200);
-      // MRR: 30*29 + 20*79 = 870 + 1580 = 2450
       expect(data.mrr).toBe(2450);
     });
   });
 
   describe('GET /users', () => {
     it('should list users with pagination and search', async () => {
+      requireAuthMock.mockImplementation(async (c: any, next: any) => {
+        c.set('user', mockAdminUser);
+        await next();
+      });
       prismaMock.user.findMany.mockResolvedValue([
         {
           id: 'u1',
@@ -128,6 +144,10 @@ describe('Admin Routes', () => {
 
   describe('GET /users/:id', () => {
     it('should return user details', async () => {
+      requireAuthMock.mockImplementation(async (c: any, next: any) => {
+        c.set('user', mockAdminUser);
+        await next();
+      });
       prismaMock.user.findUnique.mockResolvedValue({
         id: 'u1',
         login: 'u1',
@@ -142,6 +162,10 @@ describe('Admin Routes', () => {
     });
 
     it('should return 404 if user not found', async () => {
+      requireAuthMock.mockImplementation(async (c: any, next: any) => {
+        c.set('user', mockAdminUser);
+        await next();
+      });
       prismaMock.user.findUnique.mockResolvedValue(null);
 
       const res = await app.request('/users/u1');
@@ -152,6 +176,10 @@ describe('Admin Routes', () => {
 
   describe('PATCH /users/:id', () => {
     it('should update user tier', async () => {
+      requireAuthMock.mockImplementation(async (c: any, next: any) => {
+        c.set('user', mockAdminUser);
+        await next();
+      });
       prismaMock.user.update.mockResolvedValue({
         id: 'u1',
         subscriptionTier: 'PRO'
@@ -173,6 +201,10 @@ describe('Admin Routes', () => {
 
   describe('DELETE /users/:id', () => {
     it('should delete user', async () => {
+      requireAuthMock.mockImplementation(async (c: any, next: any) => {
+        c.set('user', mockAdminUser);
+        await next();
+      });
       prismaMock.user.delete.mockResolvedValue({ id: 'u1' } as any);
 
       const res = await app.request('/users/u1', { method: 'DELETE' });
@@ -184,6 +216,10 @@ describe('Admin Routes', () => {
 
   describe('GET /activity', () => {
     it('should return recent activity', async () => {
+      requireAuthMock.mockImplementation(async (c: any, next: any) => {
+        c.set('user', mockAdminUser);
+        await next();
+      });
       const now = new Date();
       prismaMock.user.findMany.mockResolvedValue([
         { id: 'u1', login: 'u1', email: 'u1@e.c', subscriptionTier: 'FREE', createdAt: now } as any

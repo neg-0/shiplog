@@ -1,16 +1,9 @@
+import { jest, describe, it, expect, beforeEach } from '@jest/globals';
+import { mockDeep } from 'jest-mock-extended';
+import type { PrismaClient } from '@prisma/client';
 import { Hono } from 'hono';
-import { organizations } from './organizations.js';
-import { prisma } from '../lib/db.js';
-import { requireAuth } from '../lib/auth.js';
-import { describe, it, expect, beforeEach, jest } from '@jest/globals';
-import { DeepMockProxy } from 'jest-mock-extended';
-import { PrismaClient } from '@prisma/client';
 
-// Mock dependencies
-jest.mock('../lib/db.js');
-jest.mock('../lib/auth.js');
-
-const prismaMock = prisma as unknown as DeepMockProxy<PrismaClient>;
+const prismaMock = mockDeep<PrismaClient>();
 const mockUser = {
   id: 'user-1',
   githubId: 123,
@@ -18,23 +11,27 @@ const mockUser = {
   email: 'test@example.com',
 };
 
+jest.unstable_mockModule('../lib/db.js', () => ({
+  prisma: prismaMock,
+}));
+
+jest.unstable_mockModule('../lib/auth.js', () => ({
+  requireAuth: jest.fn<any>(async (c: any, next: any) => {
+    c.set('user', mockUser);
+    await next();
+  }),
+}));
+
+const { organizations } = await import('./organizations.js');
+
 describe('Organizations Routes', () => {
   let app: Hono;
 
   beforeEach(() => {
     app = new Hono();
-    // Default auth mock implementation
-    (requireAuth as jest.Mock).mockImplementation(async (c: any, next: any) => {
-      c.set('user', mockUser);
-      await next();
-    });
-
     app.route('/', organizations);
     jest.clearAllMocks();
   });
-
-  // ... (previous tests are preserved by previous write_file, wait, write_file overwrites. I need to append or rewrite all.)
-  // I will rewrite the whole file including new tests.
 
   describe('POST /', () => {
     it('should create an organization', async () => {
@@ -44,9 +41,8 @@ describe('Organizations Routes', () => {
       };
 
       prismaMock.organization.findUnique.mockResolvedValue(null);
-      // Mock transaction
       prismaMock.$transaction.mockImplementation(async (callback: any) => {
-          return await callback(prismaMock);
+        return await callback(prismaMock);
       });
 
       prismaMock.organization.create.mockResolvedValue({
@@ -99,15 +95,15 @@ describe('Organizations Routes', () => {
     });
 
     it('should validate required fields', async () => {
-        const payload = { name: 'Test Org' }; // Missing slug
+      const payload = { name: 'Test Org' }; // Missing slug
 
-        const res = await app.request('/', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
+      const res = await app.request('/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
 
-        expect(res.status).toBe(400);
+      expect(res.status).toBe(400);
     });
   });
 
@@ -218,7 +214,7 @@ describe('Organizations Routes', () => {
         members: [{ role: 'OWNER' }],
       } as any);
 
-      prismaMock.user.findFirst.mockResolvedValue(null); // User doesn't exist yet
+      prismaMock.user.findFirst.mockResolvedValue(null);
 
       prismaMock.organizationInvite.create.mockResolvedValue({
         id: 'invite-1',
@@ -236,23 +232,23 @@ describe('Organizations Routes', () => {
     });
 
     it('should fail if user is already a member', async () => {
-        prismaMock.organization.findUnique.mockResolvedValue({
-          id: 'org-1',
-          ownerId: mockUser.id,
-          members: [{ role: 'OWNER' }],
-        } as any);
+      prismaMock.organization.findUnique.mockResolvedValue({
+        id: 'org-1',
+        ownerId: mockUser.id,
+        members: [{ role: 'OWNER' }],
+      } as any);
 
-        prismaMock.user.findFirst.mockResolvedValue({ id: 'existing-user' } as any);
-        prismaMock.organizationMember.findFirst.mockResolvedValue({ id: 'member-1' } as any);
+      prismaMock.user.findFirst.mockResolvedValue({ id: 'existing-user' } as any);
+      prismaMock.organizationMember.findFirst.mockResolvedValue({ id: 'member-1' } as any);
 
-        const res = await app.request('/org-1/invite', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: 'invitee@example.com' }),
-        });
+      const res = await app.request('/org-1/invite', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'invitee@example.com' }),
+      });
 
-        expect(res.status).toBe(400);
-        expect(await res.json()).toEqual({ error: 'User is already a member' });
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: 'User is already a member' });
     });
   });
 

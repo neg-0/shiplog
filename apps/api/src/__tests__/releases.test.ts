@@ -23,6 +23,20 @@ jest.unstable_mockModule('../services/generator.js', () => ({
   generateReleaseNotes: jest.fn(),
 }));
 
+jest.unstable_mockModule('isomorphic-dompurify', () => ({
+  __esModule: true,
+  default: { sanitize: (s: string) => s },
+}));
+
+jest.unstable_mockModule('../lib/sanitize.js', () => ({
+  sanitizeHtml: (s: string) => s,
+}));
+
+jest.unstable_mockModule('../lib/rate-limit.js', () => ({
+  apiLimiter: async (_c: any, next: any) => { await next(); },
+  rateLimit: () => async (_c: any, next: any) => { await next(); },
+}));
+
 describe('Releases Routes', () => {
   let releases: any;
   let prismaMock: DeepMockProxy<PrismaClient>;
@@ -59,14 +73,12 @@ describe('Releases Routes', () => {
       expect(data.notes.customer).toBe('notes');
     });
 
-    it('returns 403 if unauthorized', async () => {
-      prismaMock.release.findFirst.mockResolvedValue({
-        id: 'rel-1',
-        repo: { userId: 'other-user' },
-      } as any);
+    it('returns 404 if unauthorized (access filter in WHERE clause)', async () => {
+      // Route embeds access check in the query - unauthorized releases are not found
+      prismaMock.release.findFirst.mockResolvedValue(null);
 
       const res = await releases.request('/rel-1');
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(404);
     });
 
     it('returns 404 if not found', async () => {

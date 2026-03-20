@@ -1,34 +1,33 @@
+import { jest, describe, it, expect, beforeEach } from '@jest/globals';
+import { mockDeep } from 'jest-mock-extended';
+import type { PrismaClient } from '@prisma/client';
 import { Hono } from 'hono';
-import { activity } from './activity.js';
-import { prisma } from '../lib/db.js';
-import { requireAuth } from '../lib/auth.js';
-import { describe, it, expect, beforeEach, jest } from '@jest/globals';
-import { DeepMockProxy } from 'jest-mock-extended';
-import { PrismaClient } from '@prisma/client';
 
-// Mock dependencies
-jest.mock('../lib/db.js');
-jest.mock('../lib/auth.js');
+const prismaMock = mockDeep<PrismaClient>();
 
-const prismaMock = prisma as unknown as DeepMockProxy<PrismaClient>;
-const mockUser = {
-  id: 'user-1',
-  githubId: 123,
-  login: 'testuser',
-  email: 'test@example.com',
-};
+jest.unstable_mockModule('../lib/db.js', () => ({
+  prisma: prismaMock,
+}));
+
+jest.unstable_mockModule('../lib/auth.js', () => ({
+  requireAuth: jest.fn<any>(async (c: any, next: any) => {
+    c.set('user', {
+      id: 'user-1',
+      githubId: 123,
+      login: 'testuser',
+      email: 'test@example.com',
+    });
+    await next();
+  }),
+}));
+
+const { activity } = await import('./activity.js');
 
 describe('Activity Routes', () => {
   let app: Hono;
 
   beforeEach(() => {
     app = new Hono();
-    // Default auth mock
-    (requireAuth as jest.Mock).mockImplementation(async (c: any, next: any) => {
-      c.set('user', mockUser);
-      await next();
-    });
-
     app.route('/', activity);
     jest.clearAllMocks();
   });
@@ -53,7 +52,7 @@ describe('Activity Routes', () => {
       expect(prismaMock.release.findMany).toHaveBeenCalledWith(expect.objectContaining({
         where: expect.objectContaining({
           repo: expect.objectContaining({
-            userId: mockUser.id
+            userId: 'user-1'
           })
         })
       }));

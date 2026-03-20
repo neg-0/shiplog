@@ -217,11 +217,15 @@ describe('Repos Routes', () => {
 
   describe('DELETE /:id', () => {
     it('disconnects repo and deletes webhook', async () => {
-      prismaMock.repo.findFirst.mockResolvedValue({
+      // checkRepoAdmin uses prisma.repo.findUnique (not findFirst)
+      prismaMock.repo.findUnique.mockResolvedValue({
         id: 'repo-1',
+        userId: 'test-user-id',
+        organizationId: null,
         webhookId: 999,
         owner: 'owner',
         name: 'repo',
+        fullName: 'owner/repo',
       } as any);
 
       prismaMock.user.findUnique.mockResolvedValue({

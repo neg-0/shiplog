@@ -169,6 +169,7 @@ describe('github service', () => {
         json: async () => ([
           { id: 1, name: 'repo1', full_name: 'owner/repo1', owner: { login: 'owner' }, description: 'desc' }
         ]),
+        headers: new Headers(),
       });
 
       const repos = await listUserRepos('token');

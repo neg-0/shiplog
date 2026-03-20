@@ -144,12 +144,15 @@ describe('Webhooks Routes', () => {
     });
 
     it('should ignore events other than release.published', async () => {
+        const pushBody = JSON.stringify({});
+        const pushSig = `sha256=${createHmac('sha256', 'any').update(pushBody).digest('hex')}`;
         const req = new Request('http://localhost/github', {
             method: 'POST',
             headers: {
                 'x-github-event': 'push',
+                'x-hub-signature-256': pushSig,
             },
-            body: JSON.stringify({}),
+            body: pushBody,
         });
         const res = await webhooks.request(req);
         expect(res.status).toBe(200);
@@ -174,10 +177,10 @@ describe('Webhooks Routes', () => {
         // Verify signature check happens after DB lookup
         expect(prismaMock.repo.findFirst).toHaveBeenCalled();
         expect(res.status).toBe(401);
-        expect(await res.json()).toEqual({ error: 'Invalid signature' });
+        expect(await res.json()).toEqual({ error: 'Unauthorized' });
     });
 
-    it('should return error if repo not found', async () => {
+    it('should return 401 if repo not found', async () => {
         prismaMock.repo.findFirst.mockResolvedValue(null);
 
         const req = new Request('http://localhost/github', {
@@ -190,8 +193,9 @@ describe('Webhooks Routes', () => {
         });
         const res = await webhooks.request(req);
 
-        expect(res.status).toBe(200);
-        expect(await res.json()).toEqual({ status: 'ignored', reason: 'repo_not_connected' });
+        // Source returns identical error for not-found and bad-signature to prevent info leakage
+        expect(res.status).toBe(401);
+        expect(await res.json()).toEqual({ error: 'Unauthorized' });
     });
   });
 });

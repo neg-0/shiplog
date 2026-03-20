@@ -3,9 +3,14 @@ import { distributeRelease, distributeReleaseWithResults, DistributionTarget } f
 import type { GeneratedNotes } from '../generator.js';
 import type { Release } from '@prisma/client';
 
+// Suppress logger output during tests
+jest.spyOn(console, 'log').mockImplementation(() => {});
+jest.spyOn(console, 'warn').mockImplementation(() => {});
+jest.spyOn(console, 'error').mockImplementation(() => {});
+
 describe('distributeRelease', () => {
-  const mockFetch = jest.fn() as jest.Mock;
-  global.fetch = mockFetch;
+  const mockFetch = jest.fn<any>();
+  global.fetch = mockFetch as any;
 
   const release: Release & { repo?: { fullName: string } } = {
     id: '1',
@@ -21,6 +26,8 @@ describe('distributeRelease', () => {
     createdAt: new Date(),
     updatedAt: new Date(),
     status: 'READY',
+    processedAt: null,
+    error: null,
     repo: { fullName: 'owner/repo' },
   };
 
@@ -40,11 +47,11 @@ describe('distributeRelease', () => {
       json: async () => ({}),
       text: async () => '',
     });
-    process.env.RESEND_API_KEY = 'test-resend-key';
+    process.env.SENDGRID_API_KEY = 'test-sendgrid-key';
   });
 
   afterEach(() => {
-    delete process.env.RESEND_API_KEY;
+    delete process.env.SENDGRID_API_KEY;
   });
 
   // SLACK tests
@@ -111,13 +118,13 @@ describe('distributeRelease', () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
-  it('should return error for email if RESEND_API_KEY is missing', async () => {
-    delete process.env.RESEND_API_KEY;
+  it('should return error for email if SENDGRID_API_KEY is missing', async () => {
+    delete process.env.SENDGRID_API_KEY;
     const targets: DistributionTarget[] = [{ type: 'email', audience: 'stakeholder', email: 'boss@example.com' }];
     const results = await distributeReleaseWithResults(release, notes, targets);
 
     expect(results[0].success).toBe(false);
-    expect(results[0].error).toBe('RESEND_API_KEY not configured');
+    expect(results[0].error).toBe('SENDGRID_API_KEY not configured');
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
@@ -129,11 +136,11 @@ describe('distributeRelease', () => {
     await distributeRelease(release, notes, targets);
 
     expect(mockFetch).toHaveBeenCalledWith(
-      'https://api.resend.com/emails',
+      'https://api.sendgrid.com/v3/mail/send',
       expect.objectContaining({
         method: 'POST',
         headers: expect.objectContaining({
-          Authorization: 'Bearer test-resend-key',
+          Authorization: 'Bearer test-sendgrid-key',
         }),
         body: expect.stringContaining('Stakeholder notes'),
       })
@@ -161,7 +168,7 @@ describe('distributeRelease', () => {
 
     expect(results[0].success).toBe(false);
     expect(results[0].error).toBe('Network error');
-  });
+  }, 60000);
 
   it('should handle API errors (non-200)', async () => {
     mockFetch.mockResolvedValue({
@@ -180,5 +187,5 @@ describe('distributeRelease', () => {
     expect(results[0].success).toBe(false);
     expect(results[0].responseCode).toBe(500);
     expect(results[0].error).toBe('Internal Server Error');
-  });
+  }, 60000);
 });

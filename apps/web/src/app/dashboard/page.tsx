@@ -4,7 +4,7 @@ import { DashboardLayout } from '@/components/DashboardLayout';
 import { AlertCircle, GitBranch, Loader2, Plus, RefreshCw, Ship } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { getRepos, getUser, isAuthenticated, exchangeAuthCode, type Repo, type User } from '../../lib/api';
 import { formatRelativeDate } from '../../lib/utils';
 
@@ -14,62 +14,63 @@ function DashboardContent() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
+  const exchangeInProgress = useRef(false);
 
   const router = useRouter();
   const searchParams = useSearchParams();
 
+  const fetchDashboardData = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const [repoData, userData] = await Promise.all([
+        getRepos(),
+        getUser(),
+      ]);
+      setRepos(repoData.repos);
+      setUser(userData);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load data');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   // Handle auth code from OAuth callback
   useEffect(() => {
     const code = searchParams.get('code');
-    if (code) {
-      exchangeAuthCode(code).then(() => {
-        // Check if user has repos to decide redirection
-        getRepos().then(({ repos }) => {
-          if (repos.length === 0) {
-            router.replace('/dashboard/repos/connect');
-          } else {
-            router.replace('/dashboard');
-          }
-        }).catch(() => {
+    if (!code) return;
+
+    // Prevent the auth-check effect from redirecting to login
+    // while the exchange is still in progress
+    exchangeInProgress.current = true;
+
+    exchangeAuthCode(code)
+      .then(() => getRepos())
+      .then(({ repos }) => {
+        if (repos.length === 0) {
+          router.replace('/dashboard/repos/connect');
+        } else {
           router.replace('/dashboard');
-        });
-      }).catch(() => {
+        }
+      })
+      .catch(() => {
+        exchangeInProgress.current = false;
         router.replace('/login');
       });
-    }
   }, [searchParams, router]);
 
-  // Check auth and fetch repos
+  // Check auth and fetch repos (skipped during exchange)
   useEffect(() => {
-    // If an OAuth code is present, let the first effect handle the exchange
-    if (searchParams.get('code')) return;
+    if (searchParams.get('code') || exchangeInProgress.current) return;
 
     if (!isAuthenticated()) {
       router.push('/login');
       return;
     }
 
-    const fetchData = async () => {
-      try {
-        setLoading(true);
-        setError(null);
-
-        const [repoData, userData] = await Promise.all([
-          getRepos(),
-          getUser(),
-        ]);
-
-        setRepos(repoData.repos);
-        setUser(userData);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load data');
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchData();
-  }, [router, searchParams]);
+    fetchDashboardData();
+  }, [router, searchParams, fetchDashboardData]);
 
   return (
     <DashboardLayout user={user}>
