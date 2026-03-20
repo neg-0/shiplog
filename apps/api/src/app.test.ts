@@ -47,42 +47,28 @@ describe('App', () => {
     expect(body).toHaveProperty('status', 'operational');
   });
 
-  it('should support /v1/health', async () => {
-    const res = await app.request('/v1/health');
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body).toHaveProperty('status', 'healthy');
-  });
-
-  it('should support legacy /health with deprecation warning', async () => {
+  it('should return health status on /health', async () => {
     const res = await app.request('/health');
-    expect(res.status).toBe(200);
-    expect(res.headers.get('Warning')).toContain('deprecated');
-    const body = await res.json();
-    expect(body).toHaveProperty('status', 'healthy');
-  });
-
-  it('should support /health with X-API-Version: 1 without warning', async () => {
-    const res = await app.request('/health', {
-      headers: {
-        'X-API-Version': '1',
-      },
-    });
     expect(res.status).toBe(200);
     expect(res.headers.get('Warning')).toBeNull();
     const body = await res.json();
-    expect(body).toHaveProperty('status', 'healthy');
+    expect(body).toHaveProperty('status', 'ok');
   });
 
-  it('should reject unsupported version', async () => {
+  it('should not expose a versioned /v1/health route yet', async () => {
+    const res = await app.request('/v1/health');
+    expect(res.status).toBe(404);
+  });
+
+  it('should ignore unsupported X-API-Version headers for current /health behavior', async () => {
     const res = await app.request('/health', {
       headers: {
         'X-API-Version': '99',
       },
     });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body).toEqual({ error: 'Unsupported API version' });
+    expect(body).toHaveProperty('status', 'ok');
   });
 
   it('should allow both bare and www ShipLog origins when APP_URL is bare domain', () => {
