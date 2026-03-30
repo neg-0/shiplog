@@ -33,7 +33,6 @@ jest.unstable_mockModule('stripe', () => ({
   default: jest.fn(() => ({})),
 }));
 
-// Set APP_URL so CORS includes shiplog.io origins
 process.env.APP_URL = 'https://shiplog.io';
 
 const { app, getAllowedCorsOrigins } = await import('./app.js');
@@ -42,9 +41,34 @@ describe('App', () => {
   it('should return root info', async () => {
     const res = await app.request('/');
     expect(res.status).toBe(200);
+    expect(res.headers.get('Warning')).toBeNull();
     const body = await res.json();
     expect(body).toHaveProperty('name', 'ShipLog API');
     expect(body).toHaveProperty('status', 'operational');
+  });
+
+  it('should return health status on /health', async () => {
+    const res = await app.request('/health');
+    expect(res.status).toBe(200);
+    expect(res.headers.get('Warning')).toBeNull();
+    const body = await res.json();
+    expect(body).toHaveProperty('status', 'ok');
+  });
+
+  it('should not expose a versioned /v1/health route yet', async () => {
+    const res = await app.request('/v1/health');
+    expect(res.status).toBe(404);
+  });
+
+  it('should ignore unsupported X-API-Version headers for current /health behavior', async () => {
+    const res = await app.request('/health', {
+      headers: {
+        'X-API-Version': '99',
+      },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toHaveProperty('status', 'ok');
   });
 
   it('should allow both bare and www ShipLog origins when APP_URL is bare domain', () => {
@@ -89,7 +113,6 @@ describe('App', () => {
       method: 'POST',
       body: '{}',
     });
-    // Should not be 415 (CSRF rejected)
     expect(res.status).not.toBe(415);
   });
 });
