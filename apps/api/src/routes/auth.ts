@@ -25,14 +25,22 @@ const API_URL = process.env.API_URL || 'https://api.shiplog.io';
 const isProduction = process.env.NODE_ENV === 'production';
 const COOKIE_MAX_AGE = 7 * 24 * 60 * 60;
 
+// When the web app (e.g. www.shiplog.io) and this API (e.g. api.shiplog.io) live on
+// different subdomains, auth cookies must be scoped to the shared parent domain so the
+// OAuth state cookie set during /github is still sent on the /github/callback that
+// GitHub delivers straight to the API host. Set COOKIE_DOMAIN=".shiplog.io" in prod.
+// Left unset in local dev (localhost shares cookies across ports), preserving behavior.
+const COOKIE_DOMAIN = process.env.COOKIE_DOMAIN || undefined;
+const COOKIE_DOMAIN_ATTR = COOKIE_DOMAIN ? `; Domain=${COOKIE_DOMAIN}` : '';
+
 function setAuthCookies(c: Context, token: string): void {
-  c.header('Set-Cookie', `shiplog_session=${token}; HttpOnly; Path=/; Max-Age=${COOKIE_MAX_AGE}; SameSite=Lax${isProduction ? '; Secure' : ''}`, { append: true });
-  c.header('Set-Cookie', `shiplog_logged_in=1; Path=/; Max-Age=${COOKIE_MAX_AGE}; SameSite=Lax${isProduction ? '; Secure' : ''}`, { append: true });
+  c.header('Set-Cookie', `shiplog_session=${token}; HttpOnly; Path=/; Max-Age=${COOKIE_MAX_AGE}; SameSite=Lax${COOKIE_DOMAIN_ATTR}${isProduction ? '; Secure' : ''}`, { append: true });
+  c.header('Set-Cookie', `shiplog_logged_in=1; Path=/; Max-Age=${COOKIE_MAX_AGE}; SameSite=Lax${COOKIE_DOMAIN_ATTR}${isProduction ? '; Secure' : ''}`, { append: true });
 }
 
 function clearAuthCookies(c: Context): void {
-  c.header('Set-Cookie', `shiplog_session=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax${isProduction ? '; Secure' : ''}`, { append: true });
-  c.header('Set-Cookie', `shiplog_logged_in=; Path=/; Max-Age=0; SameSite=Lax${isProduction ? '; Secure' : ''}`, { append: true });
+  c.header('Set-Cookie', `shiplog_session=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax${COOKIE_DOMAIN_ATTR}${isProduction ? '; Secure' : ''}`, { append: true });
+  c.header('Set-Cookie', `shiplog_logged_in=; Path=/; Max-Age=0; SameSite=Lax${COOKIE_DOMAIN_ATTR}${isProduction ? '; Secure' : ''}`, { append: true });
 }
 
 // Short-lived exchange codes for secure token delivery
@@ -65,6 +73,7 @@ auth.get('/github', (c) => {
     sameSite: 'Lax',
     maxAge: 60 * 10,
     path: '/',
+    domain: COOKIE_DOMAIN,
   });
 
   const params = new URLSearchParams({
