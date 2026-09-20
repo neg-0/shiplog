@@ -456,6 +456,54 @@ describe('Billing Route', () => {
       expect(mockStripe.checkout.sessions.create).toHaveBeenCalledTimes(1);
     });
 
+    it('reuses another request\'s repaired customer after a delayed stale-customer failure', async () => {
+      let savedUser = { ...newCustomer(), stripeCustomerId: 'cus_deleted' };
+      mockPrisma.user.findUnique.mockImplementation(async () => ({ ...savedUser }));
+      mockPrisma.user.update.mockImplementation(async args => {
+        savedUser = { ...savedUser, ...args.data };
+        return savedUser;
+      });
+
+      // Serialize database transactions like the user-row lock. Both old-customer
+      // failures release that lock before the second response reaches its caller.
+      let releaseDelayedFailure!: () => void;
+      const firstCheckoutCreated = new Promise<void>(resolve => { releaseDelayedFailure = resolve; });
+      let transactionTail = Promise.resolve();
+      let staleFailures = 0;
+      mockPrisma.$transaction.mockImplementation((callback: any) => {
+        const transaction = transactionTail.then(() => callback(mockPrisma));
+        transactionTail = transaction.then(() => undefined, () => undefined);
+        return transaction.catch(async error => {
+          if (error.message.includes('No such customer') && ++staleFailures === 2) await firstCheckoutCreated;
+          throw error;
+        });
+      });
+
+      let customerCount = 0;
+      mockStripe.customers.create.mockImplementation(async () => ({ id: `cus_repaired_${++customerCount}` }));
+      const openSessions = new Map<string, any>();
+      mockStripe.checkout.sessions.list.mockImplementation(async ({ customer }) => {
+        if (customer === 'cus_deleted') throw new Error('No such customer: cus_deleted');
+        return { data: openSessions.has(customer) ? [openSessions.get(customer)] : [] };
+      });
+      mockStripe.checkout.sessions.create.mockImplementation(async ({ customer }) => {
+        const session = { id: `cs_${customer}`, status: 'open', client_reference_id: 'user_123', metadata: { plan: 'PRO' }, url: `https://checkout.stripe.test/${customer}` };
+        openSessions.set(customer, session);
+        releaseDelayedFailure();
+        return session;
+      });
+
+      const responses = await Promise.all([checkoutRequest(), checkoutRequest()]);
+      expect(responses.map(response => response.status)).toEqual([200, 200]);
+      expect(staleFailures).toBe(2);
+      expect(savedUser.stripeCustomerId).toBe('cus_repaired_1');
+      expect(mockStripe.customers.create).toHaveBeenCalledTimes(1);
+      expect(mockStripe.customers.create).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ idempotencyKey: 'shiplog-customer-user_123-cus_deleted' }));
+      expect(mockStripe.checkout.sessions.create).toHaveBeenCalledTimes(1);
+      expect(await responses[1]!.json()).toEqual(await responses[0]!.json());
+      expect(await accountDeletionBillingBlock(savedUser.stripeCustomerId)).toMatchObject({ status: 409 });
+    });
+
     it.each([
       { client_reference_id: 'other_user', metadata: { plan: 'PRO' } },
       { client_reference_id: 'user_123', metadata: { plan: 'TEAM' } },

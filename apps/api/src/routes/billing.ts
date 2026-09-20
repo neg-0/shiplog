@@ -144,13 +144,15 @@ billing.post(
 
     // Commit the customer identity before creating a checkout. If a later
     // transaction fails, deletion can still discover the session in Stripe.
-    const prepareCustomer = async (refresh: boolean) => prisma.$transaction(async (tx) => {
+    const prepareCustomer = async (staleCustomerId?: string) => prisma.$transaction(async (tx) => {
       const dbUser = await readLockedUser(tx);
       if (!dbUser) return c.json({ error: 'User not found' }, 404);
       if (dbUser.stripeSubscriptionId && !['canceled', 'incomplete_expired'].includes(dbUser.subscriptionStatus ?? '')) {
         return c.json({ error: 'You already have a subscription. Please manage it in the billing portal.', redirect: '/dashboard/settings' }, 400);
       }
-      if (dbUser.stripeCustomerId && !refresh) return null;
+      // A competing request may have repaired the failed identity while this
+      // request waited. Its committed customer may already own an open checkout.
+      if (dbUser.stripeCustomerId && dbUser.stripeCustomerId !== staleCustomerId) return null;
 
       // Email is mutable and can be shared; it does not establish account ownership.
       const customer = await stripe.customers.create({
@@ -162,9 +164,11 @@ billing.post(
       return null;
     }, transactionOptions);
 
+    let staleCustomerId: string | undefined;
     for (let attempt = 0; attempt < 2; attempt++) {
-      const preparation = await prepareCustomer(attempt > 0);
+      const preparation = await prepareCustomer(staleCustomerId);
       if (preparation) return preparation;
+      let attemptedCustomerId: string | undefined;
       try {
         return await prisma.$transaction(async (tx) => {
           // Re-read after preparation: deletion may have completed between phases.
@@ -175,6 +179,7 @@ billing.post(
             return c.json({ error: 'You already have a subscription. Please manage it in the billing portal.', redirect: '/dashboard/settings' }, 400);
           }
           if (!dbUser.stripeCustomerId) return c.json({ error: 'Billing account could not be verified. Please try again.' }, 503);
+          attemptedCustomerId = dbUser.stripeCustomerId;
 
           const openSessions = await stripe.checkout.sessions.list(
             { customer: dbUser.stripeCustomerId, status: 'open', limit: 1 }, lifecycleRequestOptions,
@@ -213,7 +218,10 @@ billing.post(
         }, transactionOptions);
       } catch (error) {
         // Recover a deleted/test-mode customer in its own committed preparation phase.
-        if (attempt === 0 && error instanceof Error && error.message.includes('No such customer')) continue;
+        if (attempt === 0 && attemptedCustomerId && error instanceof Error && error.message.includes('No such customer')) {
+          staleCustomerId = attemptedCustomerId;
+          continue;
+        }
         throw error;
       }
     }

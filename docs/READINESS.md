@@ -21,7 +21,7 @@ The cleanup in this branch addresses reliability and presentation problems that 
 
 ## Additional fixes from independent review
 
-- Checkout sends the required JSON request. Billing and account deletion coordinate against Stripe state and preserve customer identity across failed checkout operations.
+- Checkout sends the required JSON request. Billing and account deletion coordinate against Stripe state and preserve customer identity across failed checkout operations. Concurrent recovery of a deleted Stripe customer now preserves the first repaired customer and its open checkout; a regression reproduces the delayed-response race.
 - Stable new changelog slugs and unambiguous legacy resolution support hyphenated GitHub owners. Public pages are uncached so privacy changes apply on the next request.
 - New connections import metadata without calling AI. Generation is an explicit action or automation opt-in, with provider disclosure. Import screens refresh and expose retry controls.
 - Free supports manual generation, editing, and hosted publication. Pro/Team automation and channel access are enforced both at configuration and execution. Existing explicitly listed repositories can retain their previous access without changing a Stripe subscription.
@@ -31,10 +31,10 @@ The cleanup in this branch addresses reliability and presentation problems that 
 
 ## Validation
 
-- Latest full API run: **32 suites / 355 tests passed**, plus TypeScript. The original cleanup also passed a clean standalone install/build/audit on Node 20.20.2 and npm 10.9.9.
+- Latest full API run: **32 suites / 356 tests passed**, plus TypeScript. The original cleanup also passed a clean standalone install/build/audit on Node 20.20.2 and npm 10.9.9.
 - Latest frontend run: **17 suites / 101 tests passed**, plus nonincremental TypeScript.
 - A disposable PostgreSQL journey passed with real OAuth exchange/cookies, Prisma persistence, import, three drafts, editing, hosted publication, private rejection, and public visibility. External GitHub/AI calls are simulated; all unexpected fetch destinations are rejected. It is now included in the standalone API CI job.
-- Historical browser/build evidence: 34 Chromium checks and both production builds passed for the initial cleanup. Final CI must repeat those checks on the release revision.
+- All six CI jobs passed for follow-up revision `5ca5be2`, including browser checks, both production builds, and the disposable PostgreSQL journey. Final CI must repeat those checks on the release revision containing the customer-repair race fix.
 - Synthetic-only live AI generation succeeded. The final sample used 1,799 tokens across the three audiences; see the linked source/output review above. No private repository material was used.
 - Both production dependency audits were clean at the initial cleanup; dependencies and lockfiles have not changed in the follow-up. Final standalone CI repeats its audit.
 - Desktop (1512px) and mobile (390px) repository, settings, and release views were inspected with synthetic fixtures. Audience switching, Free-plan controls, privacy messaging, and private publication worked. Title wrapping was corrected and rechecked; mobile content had no horizontal overflow. The publish dialog was inspected before a small padding adjustment; automatic approval review blocked reopening the Retry delivery control, interpreting it as a possible send, so that action was not retried. These checks do not establish a deployed customer journey or Stripe lifecycle success.
