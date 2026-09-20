@@ -22,7 +22,7 @@ export const connectRepoSchema = z.object({
   owner: z.string().min(1),
   repo: z.string().min(1),
   fullName: z.string().min(1),
-  description: z.string().optional(),
+  description: z.string().nullable().optional(),
 });
 
 export const updateRepoConfigSchema = z.object({

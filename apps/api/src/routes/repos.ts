@@ -5,6 +5,8 @@ import { prisma } from '../lib/db.js';
 import { logger } from '../lib/logger.js';
 import { requireAuth, decrypt } from '../lib/auth.js';
 import { apiLimiter } from '../lib/rate-limit.js';
+import { repoEntitlements } from '../lib/entitlements.js';
+import { validateWebhookUrl } from '../services/distributor.js';
 import { listUserRepos, getRepository, createWebhook, deleteWebhook } from '../services/github.js';
 import { importRepoHistory } from '../services/importer.js';
 import {
@@ -122,6 +124,7 @@ repos.get('/:id', async (c) => {
       ...repoAccess(user.id),
     },
     include: {
+      user: { select: { subscriptionTier: true } },
       config: {
         include: {
           channels: true,
@@ -155,6 +158,7 @@ repos.get('/:id', async (c) => {
     description: repo.description,
     status: repo.status,
     webhookActive: repo.webhookActive,
+    entitlements: repoEntitlements(repo),
     isPublic: repo.isPublic,
     slug: repo.slug,
     publicTitle: repo.publicTitle,
@@ -304,13 +308,15 @@ repos.post(
           fullName: githubRepo.full_name,
           owner: githubRepo.owner.login,
           description: githubRepo.description,
+          // The numeric GitHub identity keeps similarly named owner/repo pairs distinct.
+          slug: `${githubRepo.owner.login}-${githubRepo.name}-${githubRepo.id}`.toLowerCase().replace(/[^a-z0-9-]+/g, '-'),
           isPublic: false,
           webhookId,
           webhookSecret,
           webhookActive: true,
           status: 'ACTIVE',
           userId: user.id,
-          config: { create: {} },
+          config: { create: { autoGenerate: false } },
         },
         include: {
           config: true,
@@ -376,17 +382,22 @@ repos.patch(
           id,
           ...repoAccess(user.id),
         },
-        select: { id: true },
+        select: { id: true, user: { select: { subscriptionTier: true } } },
       });
 
       if (!repo) {
         return c.json({ error: 'Repository not found' }, 404);
       }
 
+      if ((body.autoGenerate === true || body.autoPublish === true) && !repoEntitlements(repo).automation) {
+        return c.json({ error: 'Automatic generation and publishing require Pro or Team.', upgradeRequired: true }, 403);
+      }
+
       const config = await prisma.repoConfig.upsert({
         where: { repoId: id },
         create: {
           repoId: id,
+          autoGenerate: false,
           ...body,
         },
         update: body,
@@ -420,11 +431,15 @@ repos.patch(
           id,
           ...repoAccess(user.id),
         },
-        select: { id: true },
+        select: { id: true, user: { select: { subscriptionTier: true } } },
       });
 
       if (!repo) {
         return c.json({ error: 'Repository not found' }, 404);
+      }
+
+      if ((body.hidePoweredBy === true || body.publicLogoUrl || body.publicAccentColor) && !repoEntitlements(repo).branding) {
+        return c.json({ error: 'Custom branding requires Team.', upgradeRequired: true }, 403);
       }
 
       const updated = await prisma.repo.update({
@@ -470,15 +485,22 @@ repos.post(
 
     const repo = await prisma.repo.findFirst({
       where: { id, ...repoAccess(user.id) },
-      include: { config: true },
+      include: { config: true, user: { select: { subscriptionTier: true } } },
     });
 
     if (!repo) {
       return c.json({ error: 'Repository not found' }, 404);
     }
 
+    if (!repoEntitlements(repo).channels) {
+      return c.json({ error: 'Slack and Discord channels require Pro or Team.', upgradeRequired: true }, 403);
+    }
+
+    try { validateWebhookUrl(body.webhookUrl, body.type.toLowerCase() as 'slack' | 'discord'); }
+    catch (error) { return c.json({ error: (error as Error).message }, 400); }
+
     const config = repo.config || await prisma.repoConfig.create({
-      data: { repoId: repo.id },
+      data: { repoId: repo.id, autoGenerate: false },
     });
 
     const channel = await prisma.channel.create({
@@ -512,6 +534,7 @@ repos.patch(
     // Check repo access
     const repo = await prisma.repo.findFirst({
       where: { id, ...repoAccess(user.id) },
+      include: { user: { select: { subscriptionTier: true } } },
     });
 
     if (!repo) {
@@ -527,6 +550,17 @@ repos.patch(
 
     if (!channel) {
       return c.json({ error: 'Channel not found' }, 404);
+    }
+
+    const disablingOnly = body.enabled === false && Object.keys(body).every(key => key === 'enabled');
+    if (!disablingOnly && !repoEntitlements(repo).channels) {
+      return c.json({ error: 'Slack and Discord channels require Pro or Team. You can still disable or remove this channel.', upgradeRequired: true }, 403);
+    }
+
+    if (body.webhookUrl || body.enabled === true) {
+      if (channel.type !== 'SLACK' && channel.type !== 'DISCORD') return c.json({ error: 'Generic webhooks are not supported.' }, 400);
+      try { validateWebhookUrl(body.webhookUrl ?? channel.webhookUrl, channel.type.toLowerCase() as 'slack' | 'discord'); }
+      catch (error) { return c.json({ error: (error as Error).message }, 400); }
     }
 
     const updated = await prisma.channel.update({

@@ -1,7 +1,9 @@
 import { prisma } from '../lib/db.js';
 import { logger } from '../lib/logger.js';
+import { canUsePaidFeatures } from '../lib/entitlements.js';
 import { listReleases, fetchReleaseData } from './github.js';
 import { generateReleaseNotes } from './generator.js';
+import { claimProcessing, failProcessing, processingWhere, recoverInterruptedProcessing } from './release-processing.js';
 
 /**
  * Import release history for a repository and generate notes if configured.
@@ -23,7 +25,7 @@ export async function importRepoHistory(repoId: string, accessToken: string): Pr
   try {
     const repo = await prisma.repo.findUnique({
       where: { id: repoId },
-      include: { config: true },
+      include: { config: true, user: { select: { subscriptionTier: true } } },
     });
 
     if (!repo) {
@@ -49,7 +51,7 @@ export async function importRepoHistory(repoId: string, accessToken: string): Pr
     for (const ghRelease of releases) {
       // Drafts have no published tag and must remain private on GitHub until released.
       if (ghRelease.draft) continue;
-      const release = await prisma.release.upsert({
+      let release = await prisma.release.upsert({
         where: { githubId: ghRelease.id },
         create: {
           repoId,
@@ -66,21 +68,22 @@ export async function importRepoHistory(repoId: string, accessToken: string): Pr
         update: {},
       });
 
-      // If the release already existed (not PENDING), skip processing
-      if (release.status !== 'PENDING') {
+      const previousState = release.status;
+      release = await recoverInterruptedProcessing(release);
+      const recoveredGeneration = previousState === 'PROCESSING' && release.status === 'FAILED' &&
+        release.error === 'Generation was interrupted. Generate the notes again to retry.';
+      // Only new imports or safely recovered generation may be processed.
+      if (release.status !== 'PENDING' && !recoveredGeneration) {
         logger.info(`Skipping ${ghRelease.tag_name} (already processed)`, { repoId, tagName: ghRelease.tag_name });
         continue;
       }
 
       logger.info(`Importing ${ghRelease.tag_name}`, { repoId, tagName: ghRelease.tag_name });
 
-      if (repo.config?.autoGenerate) {
+      if (repo.config?.autoGenerate === true && canUsePaidFeatures(repo)) {
+        const marker = await claimProcessing(release, 'generation');
+        if (!marker) continue;
         try {
-          await prisma.release.update({
-            where: { id: release.id },
-            data: { status: 'PROCESSING' },
-          });
-
           const data = await fetchReleaseData(repo.owner, repo.name, ghRelease.tag_name, accessToken);
 
           const notes = await generateReleaseNotes({
@@ -100,32 +103,21 @@ export async function importRepoHistory(repoId: string, accessToken: string): Pr
           });
 
           await prisma.release.update({
-            where: { id: release.id },
+            where: processingWhere(release.id, marker),
             data: {
-              status: 'READY',
-              notes: {
-                create: {
-                  customer: notes.customer,
-                  developer: notes.developer,
-                  stakeholder: notes.stakeholder,
-                  tokensUsed: notes.tokensUsed,
-                  model: notes.model,
-                },
-              },
+              status: 'READY', error: null, processedAt: new Date(),
+              notes: { upsert: { create: notes, update: notes } },
             },
           });
 
           logger.info(`Generated notes for ${ghRelease.tag_name}`, { repoId, tagName: ghRelease.tag_name });
         } catch (err) {
           logger.error(`Failed to generate notes for ${ghRelease.tag_name}`, { repoId, tagName: ghRelease.tag_name, error: err });
-          await prisma.release.update({
-            where: { id: release.id },
-            data: { status: 'FAILED' },
-          });
+          await failProcessing(release, marker, err, 'generation');
         }
       } else {
-        await prisma.release.update({
-          where: { id: release.id },
+        await prisma.release.updateMany({
+          where: { id: release.id, status: release.status, error: release.error ?? null, updatedAt: release.updatedAt },
           data: { status: 'SKIPPED' },
         });
       }

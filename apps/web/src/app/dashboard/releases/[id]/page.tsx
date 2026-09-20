@@ -34,6 +34,7 @@ export default function ReleaseDetailPage() {
   const router = useRouter();
   const releaseId = params.id as string;
   const deliveryNeedsReview = release?.error?.startsWith('Delivery outcome needs review.') ?? false;
+  const canNotifyChannels = release?.repo.entitlements?.channels ?? false;
 
   useEffect(() => {
     if (!isAuthenticated()) {
@@ -52,13 +53,13 @@ export default function ReleaseDetailPage() {
         setRelease(data);
         setUser(userData);
         // Pre-select enabled channels
-        if (data.repo?.config?.channels) {
+        if (data.repo?.entitlements?.channels && data.repo.config?.channels) {
           setSelectedChannels(
             data.repo.config.channels
               .filter(c => c.enabled && c.type !== 'WEBHOOK')
               .map(c => c.id)
           );
-        }
+        } else setSelectedChannels([]);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load release');
       } finally {
@@ -105,13 +106,14 @@ export default function ReleaseDetailPage() {
       setPublishing(true);
       setError(null);
       setPublishMessage(null);
-      const result = await publishRelease(releaseId, selectedChannels);
+      const result = await publishRelease(releaseId, canNotifyChannels ? selectedChannels : []);
       const data = await getRelease(releaseId);
       setRelease(data);
       setShowPublishDialog(false);
-      setPublishMessage(result.status === 'partial_success'
+      const message = result.status === 'partial_success'
         ? `The release was published, but ${result.failedCount || 1} delivery failed. Choose Retry delivery to try the failed channels again.`
-        : 'Release notes published successfully.');
+        : 'Release notes published successfully.';
+      setPublishMessage(data.repo.isPublic ? message : `${message} Your hosted changelog remains private. Enable public access in repository settings when you are ready to share.`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to publish release');
     } finally {
@@ -376,6 +378,7 @@ export default function ReleaseDetailPage() {
                     ? 'Notes are being generated...'
                     : 'Click regenerate to generate release notes for this release.'}
                 </p>
+                <p className="mb-4 text-sm text-navy-500">Generating notes sends release text, commits, and pull request descriptions to OpenAI.</p>
                 {release.status !== 'PROCESSING' && (
                   <button
                     onClick={handleRegenerate}
@@ -397,12 +400,15 @@ export default function ReleaseDetailPage() {
             <DialogHeader>
               <DialogTitle>Publish Release Notes</DialogTitle>
               <DialogDescription>
-                Publish this update to your hosted changelog and choose any channels to notify. Previously successful deliveries will not be sent again.
+                Publish this update and choose any channels to notify. Previously successful deliveries will not be sent again.
               </DialogDescription>
             </DialogHeader>
-            <div className="space-y-4 py-4">
-              {error && <p role="alert" className="mx-6 text-sm text-red-700">{error}</p>}
-              {release?.repo.config?.channels?.some(channel => channel.enabled) ? (
+            <div className="space-y-4 px-6 py-4">
+              {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
+              {!release?.repo.isPublic && <p className="text-sm text-navy-700">Your hosted changelog is private. Publishing does not make it public. <Link href={`/dashboard/repos/${release?.repo.id}/settings`} className="text-teal-700 underline">Enable public access in repository settings</Link> when you are ready to share. Selected channels will still receive notifications.</p>}
+              {!canNotifyChannels ? (
+                <p className="text-sm text-navy-600">Slack and Discord delivery requires Pro. <Link href="/dashboard/settings" className="text-teal-700 underline">Upgrade your plan</Link>. You can publish hosted release notes on Free.</p>
+              ) : release?.repo.config?.channels?.some(channel => channel.enabled) ? (
                 <div className="space-y-2">
                   {release.repo.config.channels.filter(channel => channel.enabled).map((channel) => (
                     <div key={channel.id} className="flex items-center gap-3 p-3 rounded-lg border border-navy-100 bg-navy-50/50">
@@ -458,7 +464,7 @@ export default function ReleaseDetailPage() {
                 className="px-4 py-2 text-sm bg-teal-600 text-white rounded-lg hover:bg-teal-500 transition disabled:opacity-50 flex items-center gap-2"
               >
                 {publishing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                {selectedChannels.length === 0 ? 'Publish to changelog' : `Publish and notify ${selectedChannels.length} channel${selectedChannels.length !== 1 ? 's' : ''}`}
+                {!canNotifyChannels || selectedChannels.length === 0 ? (release?.repo.isPublic ? 'Publish to changelog' : 'Publish notes privately') : `Publish and notify ${selectedChannels.length} channel${selectedChannels.length !== 1 ? 's' : ''}`}
               </button>
             </DialogFooter>
           </DialogContent>
@@ -468,7 +474,7 @@ export default function ReleaseDetailPage() {
           onClose={() => setShowRegenerateDialog(false)}
           onConfirm={handleRegenerate}
           title="Regenerate all release notes?"
-          message="This replaces the notes for every audience, including any manual edits."
+          message="This replaces the notes for every audience, including manual edits. Release text, commits, and pull request descriptions are sent to OpenAI."
           confirmText="Regenerate all notes"
         />
       </div>

@@ -22,6 +22,10 @@ jobs:
       - run: npm ci --include=dev
       - run: npm run build
       - run: npm audit --omit=dev
+      - name: Add PostgreSQL tools to PATH
+        run: echo "$(pg_config --bindir)" >> "$GITHUB_PATH"
+      - name: Verify the customer journey with a disposable database
+        run: node scripts/test-local-journey.mjs
 
   build:
     runs-on: ubuntu-latest

@@ -22,6 +22,9 @@ jest.unstable_mockModule('../lib/auth.js', () => ({
   }),
 }));
 
+const billingBlock = jest.fn<any>();
+jest.unstable_mockModule('./billing.js', () => ({ accountDeletionBillingBlock: billingBlock }));
+
 const { user } = await import('./user.js');
 
 describe('User Routes', () => {
@@ -31,6 +34,7 @@ describe('User Routes', () => {
     app = new Hono();
     app.route('/', user);
     jest.clearAllMocks();
+    billingBlock.mockReset().mockResolvedValue(null);
   });
 
   describe('GET /me', () => {
@@ -131,7 +135,7 @@ describe('User Routes', () => {
 
     it('allows deletion once a subscription has finished cancellation', async () => {
       prismaMock.user.findUnique.mockResolvedValue({
-        stripeSubscriptionId: 'sub_canceled', subscriptionStatus: 'canceled',
+        stripeCustomerId: 'cus_canceled', stripeSubscriptionId: 'sub_canceled', subscriptionStatus: 'canceled',
         _count: { ownedOrganizations: 0 },
       } as any);
 
@@ -154,4 +158,50 @@ describe('User Routes', () => {
       expect(prismaMock.organizationInvite.deleteMany).not.toHaveBeenCalled();
     });
   });
+
+  describe('Account deletion verifies provider billing', () => {
+    beforeEach(() => {
+      prismaMock.$transaction.mockImplementation(async (callback: any) => callback(prismaMock));
+      prismaMock.user.findUnique.mockResolvedValue({
+        stripeCustomerId: 'cus_pending', stripeSubscriptionId: null, subscriptionStatus: null,
+        _count: { ownedOrganizations: 0, repos: 0 },
+      } as any);
+    });
+
+    it('refuses deletion when a checkout remains open even without a locally recorded subscription', async () => {
+      billingBlock.mockResolvedValue({ error: 'An unfinished checkout is still open.', status: 409 });
+      const res = await app.request('/me', { method: 'DELETE' });
+      expect(res.status).toBe(409);
+      expect(billingBlock).toHaveBeenCalledWith('cus_pending');
+      expect(prismaMock.user.delete).not.toHaveBeenCalled();
+      expect(prismaMock.organizationInvite.deleteMany).not.toHaveBeenCalled();
+      expect(res.headers.get('Set-Cookie')).toBeNull();
+    });
+
+    it('fails safely when subscription history has lost its customer identity', async () => {
+      prismaMock.user.findUnique.mockResolvedValue({
+        stripeSubscriptionId: 'sub_old', subscriptionStatus: 'canceled', stripeCustomerId: null,
+        _count: { ownedOrganizations: 0, repos: 0 },
+      } as any);
+      const res = await app.request('/me', { method: 'DELETE' });
+      expect(res.status).toBe(503);
+      expect(prismaMock.user.delete).not.toHaveBeenCalled();
+    });
+
+    it('fails safely when Stripe verification is unavailable', async () => {
+      billingBlock.mockResolvedValue({ error: 'Billing verification is temporarily unavailable.', status: 503 });
+      const res = await app.request('/me', { method: 'DELETE' });
+      expect(res.status).toBe(503);
+      expect(prismaMock.user.delete).not.toHaveBeenCalled();
+    });
+
+    it('deletes only after locking the account and verifying billing is closed', async () => {
+      const res = await app.request('/me', { method: 'DELETE' });
+      expect(res.status).toBe(200);
+      expect(prismaMock.$queryRaw).toHaveBeenCalled();
+      expect(prismaMock.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(billingBlock.mock.invocationCallOrder[0]);
+      expect(billingBlock.mock.invocationCallOrder[0]).toBeLessThan(prismaMock.user.delete.mock.invocationCallOrder[0]);
+    });
+  });
+
 });

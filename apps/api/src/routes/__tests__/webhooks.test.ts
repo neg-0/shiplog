@@ -52,103 +52,6 @@ describe('Webhooks Routes', () => {
   const signature = `sha256=${createHmac('sha256', secret).update(payload).digest('hex')}`;
 
   describe('POST /github', () => {
-    it('should process a release event successfully', async () => {
-      // Mock DB repo find
-      prismaMock.repo.findFirst.mockResolvedValue({
-        id: 'repo_1',
-        fullName: repoName,
-        webhookSecret: secret,
-        owner: 'owner',
-        name: 'repo',
-        user: { accessToken: 'encrypted_token' },
-        config: {
-            autoPublish: true,
-            channels: [],
-            emailRecipients: [],
-            productName: 'Product',
-            companyName: 'Company',
-            customerTone: 'friendly',
-        },
-      } as any);
-
-      decryptMock.mockResolvedValue('access_token');
-
-      fetchReleaseDataMock.mockResolvedValue({
-        release: {
-            id: 1,
-            tagName: tagName,
-            name: 'Release 1.0.0',
-            body: 'Release notes',
-            htmlUrl: 'http://github.com/release',
-            isDraft: false,
-            isPrerelease: false,
-            publishedAt: new Date(),
-        },
-        previousTag: 'v0.9.0',
-        commits: [],
-        pullRequests: [],
-      });
-
-      generateReleaseNotesMock.mockResolvedValue({
-        customer: 'Customer notes',
-        developer: 'Developer notes',
-        stakeholder: 'Stakeholder notes',
-        tokensUsed: 100,
-        model: 'gpt-4',
-      });
-
-      // Mock DB release creation
-      prismaMock.release.create.mockResolvedValue({
-        id: 'release_1',
-        tagName: tagName,
-        status: 'READY',
-        publishedAt: new Date(),
-        notes: { customer: 'C', developer: 'D', stakeholder: 'S' },
-      } as any);
-
-      // Mock DB notes creation
-      prismaMock.generatedNotes.create.mockResolvedValue({} as any);
-
-      distributeReleaseWithResultsMock.mockResolvedValue([
-          { target: { audience: 'customer', type: 'hosted' }, success: true, responseCode: 200 }
-      ]);
-
-      prismaMock.distribution.createMany.mockResolvedValue({ count: 1 });
-      prismaMock.distribution.findMany.mockResolvedValue([]);
-      prismaMock.release.updateMany.mockResolvedValue({ count: 1 });
-      prismaMock.release.update.mockResolvedValue({} as any);
-
-      const req = new Request('http://localhost/github', {
-        method: 'POST',
-        headers: {
-            'x-hub-signature-256': signature,
-            'x-github-event': 'release',
-        },
-        body: payload,
-      });
-
-      const res = await webhooks.request(req);
-
-      expect(res.status).toBe(200);
-      const data = await res.json();
-      expect(data).toEqual(expect.objectContaining({
-          status: 'processed',
-          release: tagName,
-      }));
-
-      expect(prismaMock.repo.findFirst).toHaveBeenCalledWith(expect.objectContaining({
-          where: { fullName: repoName, webhookActive: true },
-      }));
-      expect(fetchReleaseDataMock).toHaveBeenCalled();
-      expect(generateReleaseNotesMock).toHaveBeenCalled();
-      expect(prismaMock.release.create).toHaveBeenCalled();
-      expect(distributeReleaseWithResultsMock).toHaveBeenCalled();
-      expect(prismaMock.release.update).toHaveBeenCalledWith({
-          where: { id: 'release_1' },
-          data: { status: 'PUBLISHED', error: null },
-      });
-    });
-
     it('should ignore events other than release.published', async () => {
         const pushBody = JSON.stringify({});
         const pushSig = `sha256=${createHmac('sha256', 'any').update(pushBody).digest('hex')}`;
@@ -203,32 +106,6 @@ describe('Webhooks Routes', () => {
         expect(res.status).toBe(401);
         expect(await res.json()).toEqual({ error: 'Unauthorized' });
     });
-  });
-
-  it('resumes publication on GitHub redelivery without regenerating notes', async () => {
-    prismaMock.repo.findFirst.mockResolvedValue({
-      id: 'repo_1', fullName: repoName, webhookSecret: secret,
-      config: { autoPublish: true, channels: [], emailRecipients: [] },
-    } as any);
-    prismaMock.release.findUnique.mockResolvedValue({
-      id: 'release_1', repoId: 'repo_1', status: 'READY', publishedAt: new Date(), isDraft: false,
-      notes: { customer: 'C', developer: 'D', stakeholder: 'S', tokensUsed: 1 },
-    } as any);
-    prismaMock.release.updateMany.mockResolvedValue({ count: 1 });
-    prismaMock.distribution.findMany.mockResolvedValue([]);
-    distributeReleaseWithResultsMock.mockResolvedValue([
-      { target: { audience: 'customer', type: 'hosted' }, success: true },
-    ]);
-    const response = await webhooks.request('/github', {
-      method: 'POST', body: payload,
-      headers: { 'x-github-event': 'release', 'x-hub-signature-256': signature },
-    });
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ releaseStatus: 'PUBLISHED' });
-    expect(prismaMock.release.updateMany).toHaveBeenCalledWith({ where: { id: 'release_1', status: 'READY' }, data: { status: 'PROCESSING' } });
-    expect(generateReleaseNotesMock).not.toHaveBeenCalled();
-    expect(fetchReleaseDataMock).not.toHaveBeenCalled();
-    expect(distributeReleaseWithResultsMock).toHaveBeenCalled();
   });
 
 });

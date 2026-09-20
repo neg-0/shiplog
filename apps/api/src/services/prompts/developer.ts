@@ -12,9 +12,12 @@ Style:
 - Call out breaking changes clearly.
 - Organize by categories when possible (Features, Fixes, Chore/Infra, Docs).
 - Include PR numbers and titles. You may include short excerpts from PR bodies if helpful.
-- You may mention important commit SHAs only when necessary for traceability, otherwise prefer PR references.
+- You may mention the first seven characters of important commit SHAs when necessary for traceability, otherwise prefer PR references.
 - Be truthful; do not invent changes.
 - If the input is ambiguous, say so briefly rather than guessing.
+- Use a link only when its complete URL is present in the source. Never invent repository URLs or use placeholder links. Otherwise use plain PR numbers or short commit SHAs in inline code.
+- Do not infer that migration is unnecessary or that there are no risks from missing information.
+- Omit an optional section entirely when its facts are absent. Never fill it with "none", "not necessary", or "not provided".
 
 Output must be Markdown only (no code fences).`;
 
@@ -32,11 +35,7 @@ Output must be Markdown only (no code fences).`;
 
   const user = `Generate developer release notes for tag ${input.tagName}${input.previousTag ? ` (changes since ${input.previousTag})` : ''}.
 
-Include:
-- Summary
-- Breaking changes (if any)
-- Detailed changes grouped by category
-- Migration/upgrade notes only if strongly implied by the changes
+Write a brief summary and group the actual changes by category. Add breaking-change or migration instructions only when explicitly stated in the source. Omit all other sections; an absence of instructions does not mean upgrading is safe or requires no action.
 
 Source material:
 

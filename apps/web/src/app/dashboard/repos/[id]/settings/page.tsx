@@ -17,7 +17,7 @@ export default function RepoSettingsPage() {
 
   // Form State
   const [config, setConfig] = useState({
-    autoGenerate: true,
+    autoGenerate: false,
     autoPublish: false,
     excludeFromFeatured: false,
     isPublic: false,
@@ -29,6 +29,7 @@ export default function RepoSettingsPage() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
   const repoId = params.id;
+  const canAutomate = repo?.entitlements?.automation ?? false;
 
   useEffect(() => {
     if (!isAuthenticated()) {
@@ -49,7 +50,7 @@ export default function RepoSettingsPage() {
         
         // Initialize form
         setConfig({
-          autoGenerate: repoData.config?.autoGenerate ?? true,
+          autoGenerate: repoData.config?.autoGenerate ?? false,
           autoPublish: repoData.config?.autoPublish ?? false,
           excludeFromFeatured: repoData.excludeFromFeatured ?? false,
           isPublic: repoData.isPublic ?? false,
@@ -77,8 +78,8 @@ export default function RepoSettingsPage() {
     try {
       await Promise.all([
         updateRepoConfig(repoId, {
-          autoGenerate: config.autoGenerate,
-          autoPublish: config.autoPublish,
+          ...(config.autoGenerate !== (repo.config?.autoGenerate ?? false) ? { autoGenerate: config.autoGenerate } : {}),
+          ...(config.autoPublish !== (repo.config?.autoPublish ?? false) ? { autoPublish: config.autoPublish } : {}),
           customerTone: config.customerTone,
         }),
         updateRepoSettings(repoId, {
@@ -88,6 +89,7 @@ export default function RepoSettingsPage() {
           publicDescription: config.publicDescription,
         })
       ]);
+      setRepo({ ...repo, config: repo.config ? { ...repo.config, autoGenerate: config.autoGenerate, autoPublish: config.autoPublish, customerTone: config.customerTone } : repo.config });
       setSuccess(true);
       setTimeout(() => setSuccess(false), 3000);
     } catch (err) {
@@ -140,12 +142,15 @@ export default function RepoSettingsPage() {
             {/* Automation */}
             <div className="space-y-4">
               <h2 className="text-lg font-semibold text-navy-900 border-b border-navy-100 pb-2">Automation</h2>
+              {!canAutomate && <p className="text-sm text-navy-600">Automatic generation and publishing require Pro. <Link href="/dashboard/settings" className="font-medium text-teal-700 underline">Upgrade your plan</Link>. Manual generation and hosted changelogs are available on Free.</p>}
+              {repo?.entitlements?.grandfathered && <p className="text-sm text-navy-600">Your existing automation access is preserved for this repository.</p>}
               
               <div className="flex items-start gap-3">
                 <input
                   type="checkbox"
                   id="autoGenerate"
                   checked={config.autoGenerate}
+                  disabled={!canAutomate && !config.autoGenerate}
                   onChange={(e) => setConfig({ ...config, autoGenerate: e.target.checked })}
                   className="mt-1 rounded border-navy-300 text-teal-600 focus:ring-teal-500"
                 />
@@ -155,6 +160,7 @@ export default function RepoSettingsPage() {
                   </label>
                   <p className="text-sm text-navy-500">
                     Automatically draft release notes when a new GitHub release is detected.
+                    Release text, commits, and pull request descriptions are sent to OpenAI when generation is enabled.
                   </p>
                 </div>
               </div>
@@ -164,6 +170,7 @@ export default function RepoSettingsPage() {
                   type="checkbox"
                   id="autoPublish"
                   checked={config.autoPublish}
+                  disabled={!canAutomate && !config.autoPublish}
                   onChange={(e) => setConfig({ ...config, autoPublish: e.target.checked })}
                   className="mt-1 rounded border-navy-300 text-teal-600 focus:ring-teal-500"
                 />

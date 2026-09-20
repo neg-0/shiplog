@@ -34,7 +34,7 @@ describe('publishReleaseNotes', () => {
   });
 
   it('sends selected enabled channels and records hosted publication', async () => {
-    const result = await publishReleaseNotes(release, ['slack-1']);
+    const result = await publishReleaseNotes(release, ['slack-1'], 'claim');
     const targets = distribute.mock.calls[0][2];
     expect(targets).toHaveLength(4);
     expect(targets).toContainEqual(expect.objectContaining({ type: 'slack', channelId: 'slack-1' }));
@@ -47,7 +47,7 @@ describe('publishReleaseNotes', () => {
   });
 
   it('publishes only to the hosted changelog for an explicit empty selection', async () => {
-    await publishReleaseNotes(release, []);
+    await publishReleaseNotes(release, [], 'claim');
     expect(distribute.mock.calls[0][2]).toEqual([
       { type: 'hosted', audience: 'customer' },
       { type: 'hosted', audience: 'developer' },
@@ -56,7 +56,7 @@ describe('publishReleaseNotes', () => {
   });
 
   it('autopublish includes enabled email recipients', async () => {
-    await publishReleaseNotes(release);
+    await publishReleaseNotes(release, undefined, 'claim');
     expect(distribute.mock.calls[0][2]).toContainEqual(expect.objectContaining({ type: 'email', emailRecipientId: 'email-1' }));
   });
 
@@ -64,8 +64,8 @@ describe('publishReleaseNotes', () => {
     distribute.mockImplementation(async (_release: unknown, _notes: unknown, targets: any[]) =>
       targets.map(target => ({ target, success: target.type !== 'slack', error: target.type === 'slack' ? 'Channel unavailable' : undefined }))
     );
-    expect(await publishReleaseNotes(release, ['slack-1'])).toEqual({ status: 'PARTIAL_SUCCESS', failedCount: 1, distributedTo: 3 });
-    expect(prisma.release.update).toHaveBeenCalledWith({ where: { id: 'release-1' }, data: { status: 'PARTIAL_SUCCESS', error: null } });
+    expect(await publishReleaseNotes(release, ['slack-1'], 'claim')).toEqual({ status: 'PARTIAL_SUCCESS', failedCount: 1, distributedTo: 3 });
+    expect(prisma.release.update).toHaveBeenCalledWith({ where: { id: 'release-1', status: 'PROCESSING', error: 'claim' }, data: { status: 'PARTIAL_SUCCESS', error: null } });
     expect(prisma.distribution.createMany).toHaveBeenCalledWith({ data: expect.arrayContaining([
       expect.objectContaining({ channelId: 'slack-1', status: 'FAILED', error: 'Channel unavailable' }),
     ]) });
@@ -78,15 +78,24 @@ describe('publishReleaseNotes', () => {
       { audience: 'DEVELOPER', hostedChangelog: true },
       { audience: 'STAKEHOLDER', hostedChangelog: true },
     ] as any);
-    await publishReleaseNotes(release);
+    await publishReleaseNotes(release, undefined, 'claim');
     expect(distribute.mock.calls[0][2]).toEqual([expect.objectContaining({ type: 'email', emailRecipientId: 'email-1' })]);
   });
 
   it('marks an uncertain outcome when sending succeeds but delivery records cannot be saved', async () => {
     prisma.distribution.createMany.mockRejectedValue(new Error('Database unavailable'));
-    await expect(publishReleaseNotes(release, ['slack-1'])).rejects.toMatchObject({
+    await expect(publishReleaseNotes(release, ['slack-1'], 'claim')).rejects.toMatchObject({
       name: 'PublicationOutcomeUnknown', message: expect.stringContaining('Delivery outcome needs review.'),
     });
+    expect(prisma.release.update).not.toHaveBeenCalled();
+  });
+
+  it('requires review after a provider timeout even when its failed attempt is recorded', async () => {
+    distribute.mockResolvedValue([{ target: { type: 'slack', audience: 'customer', channelId: 'slack-1' }, success: false, outcomeUnknown: true, error: 'Timed out' }]);
+    await expect(publishReleaseNotes(release, ['slack-1'], 'claim')).rejects.toMatchObject({
+      name: 'PublicationOutcomeUnknown', message: expect.stringContaining('Delivery outcome needs review.'),
+    });
+    expect(prisma.distribution.createMany).toHaveBeenCalledWith({ data: [expect.objectContaining({ status: 'FAILED', error: 'Timed out' })] });
     expect(prisma.release.update).not.toHaveBeenCalled();
   });
 

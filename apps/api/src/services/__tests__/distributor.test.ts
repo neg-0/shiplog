@@ -161,13 +161,14 @@ describe('distributeRelease', () => {
   it('should handle fetch errors', async () => {
     mockFetch.mockRejectedValue(new Error('Network error'));
     const targets: DistributionTarget[] = [
-      { type: 'slack', audience: 'customer', webhookUrl: 'https://hooks.slack.com/xxx' },
+      { type: 'slack', audience: 'customer', webhookUrl: 'https://hooks.slack.com/services/xxx' },
     ];
 
     const results = await distributeReleaseWithResults(release, notes, targets);
 
     expect(results[0].success).toBe(false);
-    expect(results[0].error).toBe('Network error');
+    expect(results[0].outcomeUnknown).toBe(true);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   }, 60000);
 
   it('should handle API errors (non-200)', async () => {
@@ -179,7 +180,7 @@ describe('distributeRelease', () => {
     });
 
     const targets: DistributionTarget[] = [
-      { type: 'slack', audience: 'customer', webhookUrl: 'https://hooks.slack.com/xxx' },
+      { type: 'slack', audience: 'customer', webhookUrl: 'https://hooks.slack.com/services/xxx' },
     ];
 
     const results = await distributeReleaseWithResults(release, notes, targets);
@@ -187,6 +188,8 @@ describe('distributeRelease', () => {
     expect(results[0].success).toBe(false);
     expect(results[0].responseCode).toBe(500);
     expect(results[0].error).toBe('Internal Server Error');
+    expect(results[0].outcomeUnknown).toBe(true);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   }, 60000);
 
   it('reports legacy generic webhooks as unsupported without making a request', async () => {
@@ -204,6 +207,30 @@ describe('distributeRelease', () => {
     expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;');
     expect(html).not.toContain('<img');
     expect(html).toContain('<strong>Safe title</strong>');
+  });
+
+  it.each([
+    'https://hooks.slack.com.evil.example/services/x',
+    'https://127.0.0.1/services/x',
+    'https://private.railway.internal/services/x',
+    'https://user:password@hooks.slack.com/services/x',
+    'https://hooks.slack.com:8443/services/x',
+  ])('rejects an untrusted webhook destination before sending: %s', async (webhookUrl) => {
+    const results = await distributeReleaseWithResults(release, notes, [{ type: 'slack', audience: 'customer', webhookUrl }]);
+    expect(results[0].success).toBe(false);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('never follows redirects that could send notes to another host', async () => {
+    await distributeReleaseWithResults(release, notes, [{ type: 'discord', audience: 'customer', webhookUrl: 'https://discord.com/api/webhooks/xxx' }]);
+    expect(mockFetch).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ redirect: 'error' }));
+  });
+
+  it('keeps explicit rate-limit rejection retryable without automatic sends', async () => {
+    mockFetch.mockResolvedValue({ ok: false, status: 429, text: async () => 'rate limited' });
+    const results = await distributeReleaseWithResults(release, notes, [{ type: 'slack', audience: 'customer', webhookUrl: 'https://hooks.slack.com/services/xxx' }]);
+    expect(results[0]).toMatchObject({ success: false, outcomeUnknown: false, responseCode: 429 });
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
 });

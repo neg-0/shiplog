@@ -43,7 +43,8 @@ function getClient() {
   if (!apiKey) {
     throw new Error('OPENAI_API_KEY is not set');
   }
-  return new OpenAI({ apiKey });
+  // Four bounded outer attempts finish before the ten-minute processing lease.
+  return new OpenAI({ apiKey, timeout: 60_000, maxRetries: 0 });
 }
 
 async function generateWithRetry<T>(

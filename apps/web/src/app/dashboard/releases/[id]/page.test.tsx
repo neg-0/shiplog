@@ -21,7 +21,7 @@ jest.mock('next/dynamic', () => ({
 const release = {
   id: 'release-1', tagName: 'v1.0', name: 'First release', status: 'READY', publishedAt: null,
   htmlUrl: 'https://github.com/acme/repo/releases/v1.0',
-  repo: { id: 'repo-1', fullName: 'acme/repo', config: { channels: [] } },
+  repo: { id: 'repo-1', fullName: 'acme/repo', isPublic: true, entitlements: { channels: true }, config: { channels: [] } },
   notes: { customer: 'Original customer notes', developer: 'Technical details', stakeholder: 'Summary' },
 };
 
@@ -70,4 +70,29 @@ it('shows partial delivery failures and omits disabled channels from publishing'
   fireEvent.click(screen.getByRole('button', { name: 'Publish and notify 1 channel' }));
   await waitFor(() => expect(api.publishRelease).toHaveBeenCalledWith('release-1', ['enabled']));
   expect(await screen.findByText(/1 delivery failed/)).toBeInTheDocument();
+});
+
+it('keeps a private Free changelog private and excludes previously configured paid channels', async () => {
+  (api.getRelease as jest.Mock).mockResolvedValue({ ...release, repo: { ...release.repo, isPublic: false, entitlements: { channels: false }, config: { channels: [
+    { id: 'enabled', name: 'Announcements', enabled: true, audience: 'CUSTOMER', type: 'SLACK' },
+  ] } } });
+  render(<ReleaseDetailPage />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Publish' }));
+  expect(screen.getByText(/Publishing does not make it public/)).toBeInTheDocument();
+  expect(screen.getByRole('link', { name: 'Enable public access in repository settings' })).toHaveAttribute('href', '/dashboard/repos/repo-1/settings');
+  expect(screen.queryByRole('checkbox', { name: 'Notify Announcements' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Publish notes privately' }));
+  await waitFor(() => expect(api.publishRelease).toHaveBeenCalledWith('release-1', []));
+  expect(await screen.findByText(/Your hosted changelog remains private/)).toBeInTheDocument();
+});
+
+it('fails closed for channel delivery when entitlement data is missing', async () => {
+  (api.getRelease as jest.Mock).mockResolvedValue({ ...release, repo: { ...release.repo, entitlements: undefined, config: { channels: [
+    { id: 'enabled', name: 'Announcements', enabled: true, audience: 'CUSTOMER', type: 'SLACK' },
+  ] } } });
+  render(<ReleaseDetailPage />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Publish' }));
+  expect(screen.queryByRole('checkbox', { name: 'Notify Announcements' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Publish to changelog' }));
+  await waitFor(() => expect(api.publishRelease).toHaveBeenCalledWith('release-1', []));
 });

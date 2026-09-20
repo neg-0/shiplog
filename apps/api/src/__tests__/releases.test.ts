@@ -62,13 +62,14 @@ describe('Releases Routes', () => {
     releases = module.releases;
 
     jest.clearAllMocks();
+    prismaMock.$transaction.mockImplementation(async (callback: any) => callback(prismaMock));
   });
 
   describe('GET /:id', () => {
     it('returns release detail', async () => {
       prismaMock.release.findFirst.mockResolvedValue({
         id: 'rel-1',
-        repo: { userId: 'test-user-id' },
+        repo: { id: 'repo-1', userId: 'test-user-id', isPublic: false, slug: 'repo-123', user: { subscriptionTier: 'FREE' } },
         notes: { customer: 'notes' },
       } as any);
 
@@ -77,6 +78,7 @@ describe('Releases Routes', () => {
       const data = await res.json();
       expect(data.id).toBe('rel-1');
       expect(data.notes.customer).toBe('notes');
+      expect(data.repo).toMatchObject({ isPublic: false, slug: 'repo-123', entitlements: { automation: false, channels: false } });
     });
 
     it('returns 404 if unauthorized (access filter in WHERE clause)', async () => {
@@ -98,12 +100,12 @@ describe('Releases Routes', () => {
     it('regenerates notes', async () => {
       prismaMock.release.findFirst.mockResolvedValue({
         id: 'rel-1',
-        tagName: 'v1.0.0',
+        tagName: 'v1.0.0', status: 'SKIPPED', error: null, updatedAt: new Date(),
         repo: {
           userId: 'test-user-id',
           owner: 'owner',
           name: 'repo',
-          user: { accessToken: 'enc-token' }
+          user: { accessToken: 'enc-token', subscriptionTier: 'FREE' }
         },
       } as any);
 
@@ -156,7 +158,7 @@ describe('Releases Routes', () => {
       });
 
       expect(res.status).toBe(200);
-      expect(publisherService.publishReleaseNotes).toHaveBeenCalledWith(expect.objectContaining({ id: 'rel-1' }), []);
+      expect(publisherService.publishReleaseNotes).toHaveBeenCalledWith(expect.objectContaining({ id: 'rel-1' }), [], expect.stringContaining(':publication:READY:'));
     });
 
     it('fails if no notes', async () => {
@@ -181,10 +183,11 @@ describe('Releases Routes', () => {
       prismaMock.release.findFirst.mockResolvedValue({
         id: 'rel-1',
         repo: { userId: 'test-user-id' },
-        status: 'READY', publishedAt: new Date(), isDraft: false,
+        status: 'READY', error: null, updatedAt: new Date(), publishedAt: new Date(), isDraft: false,
         notes: { id: 'notes-1' },
       } as any);
 
+      prismaMock.release.updateMany.mockResolvedValue({ count: 1 });
       const res = await releases.request('/rel-1/notes', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -248,7 +251,7 @@ describe('Releases Routes', () => {
     githubService.fetchReleaseData.mockRejectedValue(new Error('GitHub temporarily unavailable'));
     const response = await releases.request('/rel-1/regenerate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
     expect(response.status).toBe(500);
-    expect(prismaMock.release.update).toHaveBeenCalledWith({ where: { id: 'rel-1' }, data: { status: 'PUBLISHED', error: 'GitHub temporarily unavailable' } });
+    expect(prismaMock.release.updateMany).toHaveBeenCalledWith({ where: { id: 'rel-1', status: 'PROCESSING', error: expect.stringContaining(':generation:PUBLISHED:') }, data: { status: 'PUBLISHED', error: 'Failed to generate notes. Please try again.' } });
     expect(prismaMock.generatedNotes.upsert).not.toHaveBeenCalled();
   });
 
@@ -276,11 +279,95 @@ describe('Releases Routes', () => {
     const request = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' };
     const response = await releases.request('/rel-1/publish', request);
     expect(response.status).toBe(500);
-    expect(prismaMock.release.update).toHaveBeenCalledWith({ where: { id: 'rel-1' }, data: { status: 'FAILED', error: reviewError } });
+    expect(prismaMock.release.updateMany).toHaveBeenCalledWith({ where: { id: 'rel-1', status: 'PROCESSING', error: expect.stringContaining(':publication:READY:') }, data: { status: 'FAILED', error: reviewError } });
     prismaMock.release.findFirst.mockResolvedValue({ id: 'rel-1', status: 'FAILED', error: reviewError, notes: {} } as any);
     publisherService.publishReleaseNotes.mockClear();
     expect((await releases.request('/rel-1/publish', request)).status).toBe(409);
     expect((await releases.request('/rel-1/regenerate', request)).status).toBe(409);
+    expect(publisherService.publishReleaseNotes).not.toHaveBeenCalled();
+  });
+
+  it('restricts a Free default publication to the hosted changelog', async () => {
+    prismaMock.release.findFirst.mockResolvedValue({
+      id: 'rel-1', status: 'READY', publishedAt: new Date(), notes: {},
+      repo: { id: 'repo-1', user: { subscriptionTier: 'FREE' }, config: { channels: [{ id: 'slack', type: 'SLACK', enabled: true }] } },
+    } as any);
+    prismaMock.release.updateMany.mockResolvedValue({ count: 1 });
+    publisherService.publishReleaseNotes.mockResolvedValue({ status: 'PUBLISHED', failedCount: 0, distributedTo: 3 });
+    expect((await releases.request('/rel-1/publish', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status).toBe(200);
+    expect(publisherService.publishReleaseNotes).toHaveBeenCalledWith(expect.anything(), [], expect.any(String));
+  });
+
+  it('rejects explicit external delivery on Free before claiming or sending', async () => {
+    prismaMock.release.findFirst.mockResolvedValue({
+      id: 'rel-1', status: 'READY', publishedAt: new Date(), notes: {},
+      repo: { id: 'repo-1', user: { subscriptionTier: 'FREE' }, config: { channels: [{ id: 'slack', type: 'SLACK', enabled: true }] } },
+    } as any);
+    const response = await releases.request('/rel-1/publish', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ channels: ['slack'] }) });
+    expect(response.status).toBe(403);
+    expect(prismaMock.release.updateMany).not.toHaveBeenCalled();
+    expect(publisherService.publishReleaseNotes).not.toHaveBeenCalled();
+  });
+
+  it.each(['PRO', 'TEAM', 'grandfathered'])('allows entitled external delivery for %s', async tier => {
+    if (tier === 'grandfathered') process.env.GRANDFATHERED_REPO_IDS = 'repo-1';
+    try {
+      prismaMock.release.findFirst.mockResolvedValue({
+        id: 'rel-1', status: 'READY', publishedAt: new Date(), notes: {},
+        repo: { id: 'repo-1', user: { subscriptionTier: tier === 'grandfathered' ? 'FREE' : tier }, config: { channels: [{ id: 'slack', type: 'SLACK', enabled: true }] } },
+      } as any);
+      prismaMock.release.updateMany.mockResolvedValue({ count: 1 });
+      publisherService.publishReleaseNotes.mockResolvedValue({ status: 'PUBLISHED', failedCount: 0, distributedTo: 4 });
+      expect((await releases.request('/rel-1/publish', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ channels: ['slack'] }) })).status).toBe(200);
+      expect(publisherService.publishReleaseNotes).toHaveBeenCalledWith(expect.anything(), ['slack'], expect.any(String));
+    } finally { delete process.env.GRANDFATHERED_REPO_IDS; }
+  });
+
+  it('exposes a stale generation as retryable while keeping internal claim tokens private', async () => {
+    prismaMock.release.findFirst.mockResolvedValue({
+      id: 'rel-1', status: 'PROCESSING', updatedAt: new Date(0), error: 'shiplog-processing:v1:generation:PENDING:secret-token', repo: { id: 'repo-1' },
+    } as any);
+    prismaMock.release.updateMany.mockResolvedValue({ count: 1 });
+    const response = await releases.request('/rel-1');
+    expect(await response.json()).toMatchObject({ status: 'FAILED', error: null });
+  });
+
+  it.each([
+    { status: 'PROCESSING', error: null },
+    { status: 'PUBLISHED', error: 'Delivery outcome needs review. Contact support.' },
+  ])('rejects edits while processing or awaiting delivery review (%s)', async state => {
+    prismaMock.release.findFirst.mockResolvedValue({ id: 'rel-1', ...state, notes: {}, updatedAt: new Date() } as any);
+    const response = await releases.request('/rel-1/notes', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customer: 'Edited notes' }) });
+    expect(response.status).toBe(409);
+    expect(prismaMock.generatedNotes.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects an edit when generation claimed the observed release first', async () => {
+    prismaMock.release.findFirst.mockResolvedValue({ id: 'rel-1', status: 'READY', error: null, notes: {}, updatedAt: new Date() } as any);
+    prismaMock.release.updateMany.mockResolvedValue({ count: 0 });
+    const response = await releases.request('/rel-1/notes', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customer: 'Edited notes' }) });
+    expect(response.status).toBe(409);
+    expect(prismaMock.generatedNotes.update).not.toHaveBeenCalled();
+  });
+
+  it('a successful edit prevents a stale publication from sending the previous notes', async () => {
+    const observed = {
+      id: 'rel-1', status: 'READY', error: null, updatedAt: new Date(), publishedAt: new Date(), notes: { customer: 'Old notes' },
+      repo: { id: 'repo-1', user: { subscriptionTier: 'FREE' }, config: null },
+    };
+    let state = { ...observed };
+    prismaMock.release.findFirst.mockResolvedValue(observed as any);
+    prismaMock.release.updateMany.mockImplementation(async ({ where, data }: any) => {
+      if (where.updatedAt.getTime() !== state.updatedAt.getTime() || where.status !== state.status || where.error !== state.error) return { count: 0 };
+      state = { ...state, ...data };
+      return { count: 1 };
+    });
+    const edit = await releases.request('/rel-1/notes', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customer: 'Edited notes' }) });
+    expect(edit.status).toBe(200);
+    expect(state.updatedAt.getTime()).toBeGreaterThan(observed.updatedAt.getTime());
+    expect(prismaMock.generatedNotes.update).toHaveBeenCalled();
+    const publish = await releases.request('/rel-1/publish', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    expect(publish.status).toBe(409);
     expect(publisherService.publishReleaseNotes).not.toHaveBeenCalled();
   });
 

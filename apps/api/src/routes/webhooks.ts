@@ -1,4 +1,3 @@
-import type { Release, GeneratedNotes } from '@prisma/client';
 import { Hono } from 'hono';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { prisma } from '../lib/db.js';
@@ -7,7 +6,9 @@ import { fetchReleaseData } from '../services/github.js';
 import { generateReleaseNotes } from '../services/generator.js';
 import { decrypt } from '../lib/auth.js';
 import { publishReleaseNotes } from '../services/publisher.js';
+import { claimProcessing, failProcessing, needsDeliveryReview, processingWhere, recoverInterruptedProcessing } from '../services/release-processing.js';
 import { metrics } from '../lib/metrics.js';
+import { canUsePaidFeatures } from '../lib/entitlements.js';
 
 /**
  * @module webhooks
@@ -62,7 +63,7 @@ webhooks.post('/github', async (c) => {
 
   let payload: {
     action?: string;
-    release?: { id: number; tag_name: string };
+    release?: { id: number; tag_name: string; name?: string; body?: string; html_url?: string; draft?: boolean; prerelease?: boolean; published_at?: string };
     repository?: { full_name: string }
   };
 
@@ -122,124 +123,113 @@ webhooks.post('/github', async (c) => {
         return c.json({ status: 'ignored', reason: 'repository_paused' });
       }
 
-      const publishSavedRelease = async (savedRelease: Release & { notes: GeneratedNotes | null }) => {
-        const claimed = await prisma.release.updateMany({
-          where: { id: savedRelease.id, status: savedRelease.status },
-          data: { status: 'PROCESSING' },
-        });
-        if (!claimed.count) return c.json({ status: 'ignored', reason: 'already_processing' });
+      const paid = canUsePaidFeatures(connectedRepo);
+      const autoGenerate = connectedRepo.config?.autoGenerate === true && paid;
+      const publishedAt = release.published_at ? new Date(release.published_at) : null;
+      if (publishedAt && Number.isNaN(publishedAt.getTime())) {
+        return c.json({ error: 'Invalid release date' }, 400);
+      }
 
-        let result;
-        try {
-          result = await publishReleaseNotes({
-            ...savedRelease,
-            notes: savedRelease.notes!,
-            repo: { fullName: connectedRepo.fullName, config: connectedRepo.config },
-          });
-        } catch (error) {
-          const uncertain = error instanceof Error && error.name === 'PublicationOutcomeUnknown';
-          await prisma.release.update({
-            where: { id: savedRelease.id },
-            data: {
-              status: uncertain && savedRelease.status === 'READY' ? 'FAILED' : savedRelease.status,
-              ...(uncertain ? { error: error.message } : {}),
-            },
-          });
-          throw error;
-        }
-        metrics.releasesProcessed++;
-        metrics.distributionsSent += result.distributedTo;
-        return c.json({
-          status: 'processed', releaseStatus: result.status,
-          release: release.tag_name, repo: repo.full_name, releaseId: savedRelease.id,
-          tokensUsed: savedRelease.notes?.tokensUsed, distributedTo: result.distributedTo, failedCount: result.failedCount,
-        });
-      };
-
-      // Check if release already exists to prevent replay attacks
-      const existingRelease = await prisma.release.findUnique({
+      // Persist signed metadata before acknowledging GitHub. If the process stops before
+      // generation, PENDING remains visible and can be retried from the release page.
+      let savedRelease = await prisma.release.upsert({
         where: { githubId: release.id },
+        create: {
+          repoId: connectedRepo.id, githubId: release.id, tagName: release.tag_name,
+          name: release.name ?? null, body: release.body ?? null,
+          htmlUrl: release.html_url ?? `https://github.com/${connectedRepo.fullName}/releases/tag/${encodeURIComponent(release.tag_name)}`,
+          isDraft: release.draft ?? false, isPrerelease: release.prerelease ?? false,
+          publishedAt, status: autoGenerate ? 'PENDING' : 'SKIPPED',
+        },
+        update: {},
         include: { notes: true },
       });
-
-      if (existingRelease) {
-        if (!existingRelease.error?.startsWith('Delivery outcome needs review.') &&
-            existingRelease.repoId === connectedRepo.id && existingRelease.notes &&
-            !existingRelease.isDraft && existingRelease.publishedAt && connectedRepo.config?.autoPublish &&
-            ['READY', 'PARTIAL_SUCCESS'].includes(existingRelease.status)) {
-          return await publishSavedRelease(existingRelease);
-        }
-        logger.warn(`Release ${release.id} already processed`, { releaseId: release.id });
+      savedRelease = await recoverInterruptedProcessing(savedRelease);
+      if (savedRelease.repoId !== connectedRepo.id || needsDeliveryReview(savedRelease.error)) {
         return c.json({ status: 'ignored', reason: 'already_processed' });
       }
 
-      // Decrypt the user's GitHub token
-      const accessToken = await decrypt(connectedRepo.user.accessToken);
+      const shouldGenerate = autoGenerate && !savedRelease.notes &&
+        ['PENDING', 'FAILED'].includes(savedRelease.status);
+      const shouldPublish = paid && connectedRepo.config?.autoPublish === true &&
+        savedRelease.notes && !savedRelease.isDraft && savedRelease.publishedAt &&
+        ['READY', 'PARTIAL_SUCCESS'].includes(savedRelease.status);
+      if (!shouldGenerate && !shouldPublish) {
+        return c.json(savedRelease.status === 'SKIPPED'
+          ? { status: 'skipped', releaseId: savedRelease.id }
+          : { status: 'ignored', reason: 'already_processed' });
+      }
 
-      // Fetch detailed release data
-      logger.info(`📊 Fetching release data for ${repo.full_name}...`, { repo: repo.full_name });
-      const releaseData = await fetchReleaseData(
-        connectedRepo.owner,
-        connectedRepo.name,
-        release.tag_name,
-        accessToken
-      );
+      const processRelease = async () => {
+        let readyRelease = savedRelease;
+        if (shouldGenerate) {
+          const marker = await claimProcessing(savedRelease, 'generation');
+          if (!marker) return;
+          try {
+            const accessToken = await decrypt(connectedRepo.user.accessToken);
+            const releaseData = await fetchReleaseData(
+              connectedRepo.owner, connectedRepo.name, savedRelease.tagName, accessToken
+            );
+            const start = Date.now();
+            const notes = await generateReleaseNotes({
+              tagName: releaseData.release.tagName,
+              previousTag: releaseData.previousTag ?? undefined,
+              releaseBody: releaseData.release.body ?? undefined,
+              commits: releaseData.commits,
+              pullRequests: releaseData.pullRequests.map(pr => ({ ...pr, body: pr.body ?? undefined })),
+              repoConfig: {
+                productName: connectedRepo.config?.productName ?? connectedRepo.name,
+                companyName: connectedRepo.config?.companyName ?? connectedRepo.owner,
+                customerTone: connectedRepo.config?.customerTone ?? 'friendly',
+              },
+            });
+            metrics.generationTimeTotal += Date.now() - start;
+            metrics.generationCount++;
+            readyRelease = await prisma.release.update({
+              where: processingWhere(savedRelease.id, marker),
+              data: {
+                status: 'READY', error: null, processedAt: new Date(),
+                name: releaseData.release.name, body: releaseData.release.body,
+                htmlUrl: releaseData.release.htmlUrl,
+                isDraft: releaseData.release.isDraft, isPrerelease: releaseData.release.isPrerelease,
+                publishedAt: releaseData.release.publishedAt,
+                notes: { upsert: { create: notes, update: notes } },
+              },
+              include: { notes: true },
+            });
+          } catch (error) {
+            await failProcessing(savedRelease, marker, error, 'generation');
+            throw error;
+          }
+        }
 
-      const releaseRecord = {
-        repoId: connectedRepo.id,
-        githubId: releaseData.release.id,
-        tagName: releaseData.release.tagName,
-        name: releaseData.release.name,
-        body: releaseData.release.body,
-        htmlUrl: releaseData.release.htmlUrl,
-        isDraft: releaseData.release.isDraft,
-        isPrerelease: releaseData.release.isPrerelease,
-        publishedAt: releaseData.release.publishedAt,
+        if (paid && connectedRepo.config?.autoPublish === true && readyRelease.notes &&
+            !readyRelease.isDraft && readyRelease.publishedAt) {
+          const marker = await claimProcessing(readyRelease, 'publication');
+          if (!marker) return;
+          try {
+            const result = await publishReleaseNotes({
+              ...readyRelease, notes: readyRelease.notes,
+              repo: { fullName: connectedRepo.fullName, config: connectedRepo.config },
+            }, undefined, marker);
+            metrics.distributionsSent += result.distributedTo;
+          } catch (error) {
+            await failProcessing(readyRelease, marker, error, 'publication');
+            throw error;
+          }
+        }
+        metrics.releasesProcessed++;
       };
 
-      if (connectedRepo.config?.autoGenerate === false) {
-        const savedRelease = await prisma.release.create({
-          data: { ...releaseRecord, status: 'SKIPPED' },
+      // Railway runs a persistent Node process. The database record, not this
+      // callback, is the recovery mechanism; uncertain publication is never replayed.
+      setImmediate(() => {
+        void processRelease().catch(error => {
+          metrics.errorCounts++;
+          logger.error('Background release processing failed', { releaseId: savedRelease.id, error });
         });
-        return c.json({ status: 'skipped', releaseId: savedRelease.id });
-      }
-
-      const start = Date.now();
-      const notes = await generateReleaseNotes({
-        tagName: releaseData.release.tagName,
-        previousTag: releaseData.previousTag ?? undefined,
-        releaseBody: releaseData.release.body ?? undefined,
-        commits: releaseData.commits,
-        pullRequests: releaseData.pullRequests.map(pr => ({ ...pr, body: pr.body ?? undefined })),
-        repoConfig: {
-          productName: connectedRepo.config?.productName ?? connectedRepo.name,
-          companyName: connectedRepo.config?.companyName ?? connectedRepo.owner,
-          customerTone: connectedRepo.config?.customerTone ?? 'friendly',
-        },
       });
-      metrics.generationTimeTotal += Date.now() - start;
-      metrics.generationCount++;
-
-      // Save the release and its notes atomically so retries cannot find a release without notes.
-      const savedRelease = await prisma.release.create({
-        data: {
-          ...releaseRecord,
-          status: 'READY',
-          processedAt: new Date(),
-          notes: { create: notes },
-        },
-        include: { notes: true },
-      });
-
-      if (!connectedRepo.config?.autoPublish || savedRelease.isDraft || !savedRelease.publishedAt) {
-        metrics.releasesProcessed++;
-        return c.json({
-          status: 'processed', releaseStatus: 'READY', releaseId: savedRelease.id,
-          release: release.tag_name, repo: repo.full_name, tokensUsed: notes.tokensUsed, distributedTo: 0,
-        });
-      }
-
-      return await publishSavedRelease(savedRelease);
+      return c.json({ status: 'queued', releaseId: savedRelease.id }, 202);
 
     } catch (error) {
       metrics.errorCounts++;

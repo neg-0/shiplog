@@ -1,6 +1,7 @@
 import { Ship, Tag, Calendar, ExternalLink, ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import { headers } from 'next/headers';
 import ReactMarkdown from 'react-markdown';
 import { FeedbackWidget } from '@/components/FeedbackWidget';
 
@@ -30,8 +31,12 @@ interface ChangelogData {
 }
 
 async function getChangelog(slug: string): Promise<ChangelogData | null> {
+  // The deployment ingress supplies this header. Keep each visitor's abuse-limit
+  // bucket through the server fetch instead of combining all visitors behind Next.
+  const visitorIp = (await headers()).get('x-forwarded-for')?.split(',')[0]?.trim();
   const res = await fetch(`${API_URL}/public/${encodeURIComponent(slug)}`, {
-    next: { revalidate: 60 }, // Cache for 1 minute
+    cache: 'no-store', // Publication and privacy changes must apply on the next visit.
+    ...(visitorIp ? { headers: { 'X-Forwarded-For': visitorIp } } : {}),
   });
   if (res.status === 404) return null;
   if (!res.ok) throw new Error('Unable to load changelog');

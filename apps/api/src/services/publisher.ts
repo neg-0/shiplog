@@ -1,5 +1,6 @@
 import type { Channel, EmailRecipient, GeneratedNotes, Release } from '@prisma/client';
 import { prisma } from '../lib/db.js';
+import { DELIVERY_REVIEW_PREFIX, processingWhere } from './release-processing.js';
 import { distributeReleaseWithResults, type DistributionTarget } from './distributor.js';
 
 type PublishableRelease = Release & {
@@ -11,7 +12,7 @@ type PublishableRelease = Release & {
 };
 
 /** Publish reviewed notes, recording failures and skipping targets already delivered. */
-export async function publishReleaseNotes(release: PublishableRelease, channelIds?: string[]) {
+export async function publishReleaseNotes(release: PublishableRelease, channelIds: string[] | undefined, marker: string) {
   const targets: DistributionTarget[] = [];
   for (const channel of release.repo.config?.channels ?? []) {
     if (!channel.enabled || (channelIds && !channelIds.includes(channel.id))) continue;
@@ -68,16 +69,21 @@ export async function publishReleaseNotes(release: PublishableRelease, channelId
         })),
       });
     } catch (error) {
-      if (results.some(result => result.success && result.target.type !== 'hosted')) {
-        const uncertain = new Error('Delivery outcome needs review. A destination may have received these notes, but its delivery record could not be saved. Contact support before retrying.');
+      if (results.some(result => result.outcomeUnknown || (result.success && result.target.type !== 'hosted'))) {
+        const uncertain = new Error(`${DELIVERY_REVIEW_PREFIX} A destination may have received these notes, but its delivery record could not be saved. Contact support before retrying.`);
         uncertain.name = 'PublicationOutcomeUnknown';
         throw uncertain;
       }
       throw error;
     }
   }
+  if (results.some(result => result.outcomeUnknown)) {
+    const uncertain = new Error(`${DELIVERY_REVIEW_PREFIX} A destination may have received these notes without confirming delivery. Contact support before retrying.`);
+    uncertain.name = 'PublicationOutcomeUnknown';
+    throw uncertain;
+  }
   const failedCount = results.filter(result => !result.success).length;
   const status = failedCount ? 'PARTIAL_SUCCESS' : 'PUBLISHED';
-  await prisma.release.update({ where: { id: release.id }, data: { status, error: null } });
+  await prisma.release.update({ where: processingWhere(release.id, marker), data: { status, error: null } });
   return { status, failedCount, distributedTo: results.filter(result => result.success).length };
 }

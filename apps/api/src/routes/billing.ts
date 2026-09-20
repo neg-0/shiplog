@@ -40,7 +40,7 @@ const getTierFromPrice = (price?: Stripe.Price | null): SubscriptionTier => {
   if (!price) {
     throw new Error('Subscription price is missing');
   }
-  
+
   const priceId = price.id;
   const lookupKey = price.lookup_key;
 
@@ -63,6 +63,45 @@ const getTierFromPrice = (price?: Stripe.Price | null): SubscriptionTier => {
 const shouldDowngrade = (status?: Stripe.Subscription.Status) => {
   return status === 'canceled' || status === 'unpaid' || status === 'incomplete_expired';
 };
+
+const lifecycleRequestOptions = { timeout: 10_000, maxNetworkRetries: 0 };
+
+async function hasUnfinishedSubscription(customerId: string): Promise<boolean> {
+  let startingAfter: string | undefined;
+  for (let page = 0; page < 20; page++) {
+    const subscriptions = await stripe!.subscriptions.list(
+      { customer: customerId, status: 'all', limit: 100, starting_after: startingAfter }, lifecycleRequestOptions,
+    );
+    if (subscriptions.data.some(subscription => !['canceled', 'incomplete_expired'].includes(subscription.status))) return true;
+    if (!subscriptions.has_more) return false;
+    startingAfter = subscriptions.data.at(-1)?.id;
+    if (!startingAfter) break;
+  }
+  throw new Error('Could not verify all Stripe subscriptions');
+}
+
+/** Refuse deletion until Stripe confirms there is nothing left that can become billable. */
+export async function accountDeletionBillingBlock(customerId: string): Promise<{ error: string; status: 409 | 503 } | null> {
+  if (!stripe) return { error: 'Billing verification is temporarily unavailable. Please try deleting your account later.', status: 503 };
+  try {
+    // Check open sessions first: a session completing during verification must
+    // subsequently be caught by the subscription query, not fall between them.
+    const sessions = await stripe.checkout.sessions.list(
+      { customer: customerId, status: 'open', limit: 1 }, lifecycleRequestOptions,
+    );
+    if (sessions.data.length) {
+      return { error: 'An unfinished checkout is still open. Let it expire or contact support to close it before deleting your account.', status: 409 };
+    }
+
+    if (await hasUnfinishedSubscription(customerId)) {
+      return { error: 'Stripe still has an unfinished subscription. Cancel it in the billing portal before deleting your account.', status: 409 };
+    }
+    return null;
+  } catch (error) {
+    logger.error('Could not verify billing before account deletion', { error });
+  }
+  return { error: 'Billing verification is temporarily unavailable. Please try deleting your account later.', status: 503 };
+}
 
 /**
  * POST /checkout
@@ -90,127 +129,95 @@ billing.post(
       return c.json({ error: 'Invalid plan' }, 400);
     }
 
-    const dbUser = await prisma.user.findUnique({
-      where: { id: user.id },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        login: true,
-        stripeCustomerId: true,
-        githubId: true,
-        subscriptionStatus: true,
-        subscriptionTier: true,
-        stripeSubscriptionId: true,
-      },
-    });
+    const readLockedUser = async (tx: Prisma.TransactionClient) => {
+      await tx.$queryRaw`SELECT id FROM users WHERE id = ${user.id} FOR UPDATE`;
+      return tx.user.findUnique({
+        where: { id: user.id },
+        select: {
+          id: true, email: true, name: true, login: true, githubId: true,
+          stripeCustomerId: true, subscriptionStatus: true, subscriptionTier: true,
+          stripeSubscriptionId: true,
+        },
+      });
+    };
+    const transactionOptions = { maxWait: 10_000, timeout: 60_000 };
 
-    if (!dbUser) {
-      return c.json({ error: 'User not found' }, 404);
-    }
-
-    // Prevent double subscription
-    if (dbUser.stripeSubscriptionId && !['canceled', 'incomplete_expired'].includes(dbUser.subscriptionStatus ?? '')) {
-      return c.json({
-        error: 'You already have a subscription. Please manage it in the billing portal.',
-        redirect: '/dashboard/settings'
-      }, 400);
-    }
-
-    let customerId = dbUser.stripeCustomerId;
-
-    // Helper to create a new Stripe customer (or find existing by email)
-    const createNewCustomer = async () => {
-      // 1. Check if customer already exists in Stripe by email
-      if (dbUser.email) {
-        const existingCustomers = await stripe.customers.list({
-          email: dbUser.email,
-          limit: 1,
-        });
-
-        const existingCustomer = existingCustomers.data[0];
-        if (existingCustomer) {
-          const existingId = existingCustomer.id;
-          logger.info(`♻️ Found existing Stripe customer for user`, { customerId: existingId, email: dbUser.email });
-          
-          await prisma.user.update({
-            where: { id: dbUser.id },
-            data: { stripeCustomerId: existingId },
-          });
-          
-          return existingId;
-        }
+    // Commit the customer identity before creating a checkout. If a later
+    // transaction fails, deletion can still discover the session in Stripe.
+    const prepareCustomer = async (refresh: boolean) => prisma.$transaction(async (tx) => {
+      const dbUser = await readLockedUser(tx);
+      if (!dbUser) return c.json({ error: 'User not found' }, 404);
+      if (dbUser.stripeSubscriptionId && !['canceled', 'incomplete_expired'].includes(dbUser.subscriptionStatus ?? '')) {
+        return c.json({ error: 'You already have a subscription. Please manage it in the billing portal.', redirect: '/dashboard/settings' }, 400);
       }
+      if (dbUser.stripeCustomerId && !refresh) return null;
 
-      // 2. Create new if not found
+      // Email is mutable and can be shared; it does not establish account ownership.
       const customer = await stripe.customers.create({
         email: dbUser.email ?? undefined,
         name: dbUser.name ?? dbUser.login,
-        metadata: {
-          userId: dbUser.id,
-          githubId: dbUser.githubId.toString(), // Add GitHub ID metadata for cross-ref
-        },
-      });
+        metadata: { userId: dbUser.id, githubId: dbUser.githubId.toString() },
+      }, { ...lifecycleRequestOptions, idempotencyKey: `shiplog-customer-${dbUser.id}-${dbUser.stripeCustomerId ?? 'initial'}` });
+      await tx.user.update({ where: { id: dbUser.id }, data: { stripeCustomerId: customer.id } });
+      return null;
+    }, transactionOptions);
 
-      await prisma.user.update({
-        where: { id: dbUser.id },
-        data: { stripeCustomerId: customer.id },
-      });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const preparation = await prepareCustomer(attempt > 0);
+      if (preparation) return preparation;
+      try {
+        return await prisma.$transaction(async (tx) => {
+          // Re-read after preparation: deletion may have completed between phases.
+          // This same lock guards deletion's authoritative Stripe verification.
+          const dbUser = await readLockedUser(tx);
+          if (!dbUser) return c.json({ error: 'User not found' }, 404);
+          if (dbUser.stripeSubscriptionId && !['canceled', 'incomplete_expired'].includes(dbUser.subscriptionStatus ?? '')) {
+            return c.json({ error: 'You already have a subscription. Please manage it in the billing portal.', redirect: '/dashboard/settings' }, 400);
+          }
+          if (!dbUser.stripeCustomerId) return c.json({ error: 'Billing account could not be verified. Please try again.' }, 503);
 
-      return customer.id;
-    };
-
-    if (!customerId) {
-      customerId = await createNewCustomer();
-    }
-
-    // Try to create checkout session, handle stale customer IDs
-    try {
-      const session = await stripe.checkout.sessions.create({
-        mode: 'subscription',
-        customer: customerId,
-        line_items: [{ price: priceId, quantity: 1 }],
-        allow_promotion_codes: true,
-        subscription_data: {
-          trial_period_days: 14,
-        },
-        success_url: `${APP_URL}/dashboard/settings?checkout=success`,
-        cancel_url: `${APP_URL}/dashboard/settings?checkout=cancel`,
-        client_reference_id: dbUser.id,
-        metadata: {
-          userId: dbUser.id,
-          plan: plan.toUpperCase(),
-        },
-      });
-
-      return c.json({ url: session.url });
-    } catch (error: unknown) {
-      // If customer doesn't exist (switched from live to test mode), create new one
-      if (error instanceof Error && error.message.includes('No such customer')) {
-        logger.warn(`⚠️ Stale customer ID ${customerId}, creating new customer...`, { customerId });
-        customerId = await createNewCustomer();
-        
-        const session = await stripe.checkout.sessions.create({
-          mode: 'subscription',
-          customer: customerId,
-          line_items: [{ price: priceId, quantity: 1 }],
-          allow_promotion_codes: true,
-          subscription_data: {
-            trial_period_days: 14,
-          },
-          success_url: `${APP_URL}/dashboard/settings?checkout=success`,
-          cancel_url: `${APP_URL}/dashboard/settings?checkout=cancel`,
-          client_reference_id: dbUser.id,
-          metadata: {
-            userId: dbUser.id,
-            plan: plan.toUpperCase(),
-          },
-        });
-
-        return c.json({ url: session.url });
+          const openSessions = await stripe.checkout.sessions.list(
+            { customer: dbUser.stripeCustomerId, status: 'open', limit: 1 }, lifecycleRequestOptions,
+          );
+          if (await hasUnfinishedSubscription(dbUser.stripeCustomerId)) {
+            return c.json({ error: 'You already have a subscription. Please manage it in the billing portal.', redirect: '/dashboard/settings' }, 409);
+          }
+          const openSession = openSessions.data[0];
+          if (openSession) {
+            if (openSession.client_reference_id === dbUser.id && openSession.metadata?.plan === plan.toUpperCase() && openSession.url) {
+              return c.json({ url: openSession.url });
+            }
+            return c.json({ error: 'An unfinished checkout is already open. Complete it or let it expire before starting another.' }, 409);
+          }
+          // A terminal session advances the key; retries of an uncertain create
+          // retain the same key even when the requested plan changes.
+          const previousSessions = await stripe.checkout.sessions.list(
+            { customer: dbUser.stripeCustomerId, limit: 1 }, lifecycleRequestOptions,
+          );
+          const previousSession = previousSessions.data[0];
+          if (previousSession?.status === 'open') {
+            return c.json({ error: 'A checkout is already open. Please try again to resume it.' }, 409);
+          }
+          const session = await stripe.checkout.sessions.create({
+            mode: 'subscription',
+            customer: dbUser.stripeCustomerId,
+            line_items: [{ price: priceId, quantity: 1 }],
+            allow_promotion_codes: true,
+            subscription_data: { trial_period_days: 14 },
+            success_url: `${APP_URL}/dashboard/settings?checkout=success`,
+            cancel_url: `${APP_URL}/dashboard/settings?checkout=cancel`,
+            client_reference_id: dbUser.id,
+            metadata: { userId: dbUser.id, plan: plan.toUpperCase() },
+          }, { ...lifecycleRequestOptions, idempotencyKey: `shiplog-checkout-${dbUser.stripeCustomerId}-${previousSession?.id ?? 'initial'}` });
+          return c.json({ url: session.url });
+        }, transactionOptions);
+      } catch (error) {
+        // Recover a deleted/test-mode customer in its own committed preparation phase.
+        if (attempt === 0 && error instanceof Error && error.message.includes('No such customer')) continue;
+        throw error;
       }
-      throw error;
     }
+    return c.json({ error: 'Could not prepare checkout. Please try again.' }, 503);
   }
 );
 

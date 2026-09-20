@@ -75,6 +75,7 @@ describe('generateReleaseNotes', () => {
     expect(result.model).toBe('gpt-4o-mini');
 
     expect(mockCreate).toHaveBeenCalledTimes(3);
+    expect(MockOpenAI).toHaveBeenCalledWith({ apiKey: 'test-key', timeout: 60_000, maxRetries: 0 });
   });
 
   it('should use configured model if set', async () => {

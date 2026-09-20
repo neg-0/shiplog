@@ -2,7 +2,7 @@
 
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { ConfirmDialog } from '@/components/Dialog';
-import { AlertCircle, ArrowLeft, Bell, ExternalLink, GitBranch, HelpCircle, Loader2, Plus, Settings, Tag, Trash2, Users, X } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Bell, ExternalLink, GitBranch, HelpCircle, Loader2, Plus, RefreshCw, Settings, Tag, Trash2, Users, X } from 'lucide-react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useEffect, useState, type FormEvent } from 'react';
@@ -28,10 +28,14 @@ export default function RepoDetailPage() {
   const [deleteConfirm, setDeleteConfirm] = useState<{ channelId: string; name: string } | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [showDisconnectConfirm, setShowDisconnectConfirm] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [importPending, setImportPending] = useState(false);
+  const [refreshStopped, setRefreshStopped] = useState(false);
 
   const params = useParams();
   const router = useRouter();
   const repoId = params.id as string;
+  const canUseChannels = repo?.entitlements?.channels ?? false;
 
   useEffect(() => {
     if (!isAuthenticated()) {
@@ -39,26 +43,50 @@ export default function RepoDetailPage() {
       return;
     }
 
-    const fetchData = async () => {
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let attempts = 0;
+    let waitingForImport = new URLSearchParams(window.location.search).get('importing') === '1';
+    setImportPending(waitingForImport);
+    setRefreshStopped(false);
+
+    const fetchData = async (initial: boolean) => {
       try {
-        setLoading(true);
+        if (initial) setLoading(true);
         setError(null);
         const [repoData, userData] = await Promise.all([
           getRepo(repoId),
-          getUser()
+          initial ? getUser() : Promise.resolve(null),
         ]);
+        if (!active) return;
         setRepo(repoData);
-        setChannels(repoData.config?.channels ?? []);
-        setUser(userData);
+        if (initial) setChannels(repoData.config?.channels ?? []);
+        if (userData) setUser(userData);
+        if (repoData.releases.length > 0) waitingForImport = false;
+        setImportPending(waitingForImport);
+        const stillProcessing = repoData.releases.some(release => ['PENDING', 'PROCESSING'].includes(release.status));
+        if (waitingForImport || stillProcessing) {
+          if (attempts < 20) {
+            attempts++;
+            timer = setTimeout(() => fetchData(false), 3000);
+          } else {
+            setImportPending(false);
+            setRefreshStopped(true);
+          }
+        }
       } catch (err) {
+        if (!active) return;
         setError(err instanceof Error ? err.message : 'Failed to load repository');
+        setImportPending(false);
+        setRefreshStopped(true);
       } finally {
-        setLoading(false);
+        if (active) setLoading(false);
       }
     };
 
-    fetchData();
-  }, [repoId, router]);
+    fetchData(true);
+    return () => { active = false; clearTimeout(timer); };
+  }, [repoId, router, reloadKey]);
 
   const handleDisconnect = async () => {
     setShowDisconnectConfirm(true);
@@ -79,6 +107,7 @@ export default function RepoDetailPage() {
 
   const handleAddChannel = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!canUseChannels) return;
     setChannelError(null);
 
     if (!channelForm.webhookUrl || !channelForm.name) {
@@ -151,6 +180,7 @@ export default function RepoDetailPage() {
             <div className="flex-1">
               <h3 className="font-semibold text-red-800">Error</h3>
               <p className="text-red-600 mt-1">{error}</p>
+              <button onClick={() => setReloadKey(value => value + 1)} className="mt-3 text-sm font-medium text-red-800 underline">Try again</button>
             </div>
           </div>
         )}
@@ -160,13 +190,13 @@ export default function RepoDetailPage() {
           <>
             {/* Repo Header */}
             <div className="bg-white rounded-xl p-4 lg:p-6 shadow-sm border border-navy-100 mb-6">
-              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+              <div className="flex flex-col gap-4">
                 <div className="flex items-center gap-4 min-w-0">
                   <div className="w-12 h-12 lg:w-16 lg:h-16 bg-navy-100 rounded-xl flex items-center justify-center flex-shrink-0">
                     <GitBranch className="w-6 h-6 lg:w-8 lg:h-8 text-navy-600" />
                   </div>
-                  <div>
-                    <h1 className="text-xl lg:text-2xl font-bold text-navy-900 break-all">{repo.fullName}</h1>
+                  <div className="min-w-0">
+                    <h1 className="text-xl lg:text-2xl font-bold text-navy-900 break-words">{repo.fullName}</h1>
                     <p className="text-navy-600">{repo.description || 'No description'}</p>
                     <div className="flex items-center gap-2 mt-1">
                       {repo.status === 'ACTIVE' ? (
@@ -194,12 +224,12 @@ export default function RepoDetailPage() {
                     Settings
                   </Link>
                   <Link
-                    href={`/c/${repo.slug || repo.fullName.replace('/', '-')}`}
-                    target="_blank"
+                    href={repo.isPublic ? `/c/${repo.slug || repo.fullName.replace('/', '-')}` : `/dashboard/repos/${repoId}/settings`}
+                    target={repo.isPublic ? '_blank' : undefined}
                     className="px-4 py-2 text-sm text-navy-600 border border-navy-200 rounded-lg hover:bg-navy-50 transition flex items-center justify-center gap-2"
                   >
                     <ExternalLink className="w-4 h-4" />
-                    View Changelog
+                    {repo.isPublic ? 'View Changelog' : 'Enable public changelog'}
                   </Link>
                   <a
                     href={`https://github.com/${repo.fullName}`}
@@ -212,15 +242,17 @@ export default function RepoDetailPage() {
                   </a>
                 </div>
               </div>
+              {!repo.isPublic && <p className="mt-3 text-sm text-navy-600">Your hosted changelog is private. Publish release notes, then enable public access in Settings when you are ready to share.</p>}
             </div>
 
             <div className="grid gap-6 lg:grid-cols-2">
               {/* Releases */}
               <div className="bg-white rounded-xl p-4 lg:p-6 shadow-sm border border-navy-100">
-                <div className="flex items-center gap-3 mb-4">
-                  <Tag className="w-5 h-5 text-navy-600" />
-                  <h2 className="text-lg font-semibold text-navy-900">Recent Releases</h2>
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                  <h2 className="flex items-center gap-3 text-lg font-semibold text-navy-900"><Tag className="w-5 h-5 text-navy-600" />Recent Releases</h2>
+                  <button onClick={() => setReloadKey(value => value + 1)} className="inline-flex items-center gap-1 text-sm font-medium text-teal-700 hover:underline"><RefreshCw className="w-4 h-4" />Refresh</button>
                 </div>
+                {refreshStopped && <p role="status" className="mb-3 text-sm text-navy-600">Automatic refresh has stopped. Import or generation may still be running. Use Refresh to check again.</p>}
                 {repo.releases && repo.releases.length > 0 ? (
                   <div className="space-y-3">
                     {repo.releases.map((release) => (
@@ -246,8 +278,10 @@ export default function RepoDetailPage() {
                       </Link>
                     ))}
                   </div>
+                ) : importPending ? (
+                  <p role="status" className="flex items-center gap-2 text-navy-600"><Loader2 className="h-4 w-4 animate-spin" />Importing recent GitHub releases…</p>
                 ) : (
-                  <p className="text-navy-500">No releases yet. Create a GitHub release to see it here.</p>
+                  <p className="text-navy-500">No releases have appeared yet. Refresh to check the import, or publish a release on GitHub.</p>
                 )}
               </div>
 
@@ -306,12 +340,16 @@ export default function RepoDetailPage() {
                     {channelError}
                   </div>
                 )}
+                {!canUseChannels && <p className="mb-4 text-sm text-navy-600">Slack and Discord delivery requires Pro. <Link href="/dashboard/settings" className="font-medium text-teal-700 underline">Upgrade your plan</Link>. You can still pause or remove existing channels.</p>}
+                {repo.entitlements?.grandfathered && <p className="mb-4 text-sm text-navy-600">Your existing automation and channel access is preserved for this repository.</p>}
 
                 <form onSubmit={handleAddChannel} className="space-y-3">
+                  <fieldset disabled={!canUseChannels || channelSaving} className="space-y-3 disabled:opacity-60">
                   <div className="grid gap-3 md:grid-cols-2">
                     <div>
-                      <label className="text-xs font-medium text-navy-500">Type</label>
+                      <label htmlFor="channel-type" className="text-xs font-medium text-navy-500">Type</label>
                       <select
+                        id="channel-type"
                         value={channelForm.type}
                         onChange={(event) =>
                           setChannelForm((prev) => ({
@@ -326,8 +364,9 @@ export default function RepoDetailPage() {
                       </select>
                     </div>
                     <div>
-                      <label className="text-xs font-medium text-navy-500">Audience</label>
+                      <label htmlFor="channel-audience" className="text-xs font-medium text-navy-500">Audience</label>
                       <select
+                        id="channel-audience"
                         value={channelForm.audience}
                         onChange={(event) =>
                           setChannelForm((prev) => ({
@@ -345,8 +384,9 @@ export default function RepoDetailPage() {
                   </div>
                   <div className="grid gap-3 md:grid-cols-2 items-end">
                     <div>
-                      <label className="text-xs font-medium text-navy-500">Channel Name</label>
+                      <label htmlFor="channel-name" className="text-xs font-medium text-navy-500">Channel Name</label>
                       <input
+                        id="channel-name"
                         value={channelForm.name}
                         onChange={(event) => setChannelForm((prev) => ({ ...prev, name: event.target.value }))}
                         placeholder="#announcements"
@@ -355,7 +395,7 @@ export default function RepoDetailPage() {
                     </div>
                     <div>
                       <div className="flex items-center gap-1">
-                        <label className="text-xs font-medium text-navy-500">Webhook URL</label>
+                        <label htmlFor="channel-webhook" className="text-xs font-medium text-navy-500">Webhook URL</label>
                         <button
                           type="button"
                           onClick={() => setShowWebhookHelp(true)}
@@ -366,6 +406,7 @@ export default function RepoDetailPage() {
                         </button>
                       </div>
                       <input
+                        id="channel-webhook"
                         value={channelForm.webhookUrl}
                         onChange={(event) => setChannelForm((prev) => ({ ...prev, webhookUrl: event.target.value }))}
                         placeholder={channelForm.type === 'SLACK' ? 'https://hooks.slack.com/services/...' : 'https://discord.com/api/webhooks/...'}
@@ -380,6 +421,7 @@ export default function RepoDetailPage() {
                   >
                     {channelSaving ? 'Saving...' : 'Add Channel'}
                   </button>
+                  </fieldset>
                 </form>
 
                 <div className="mt-6 space-y-3">
@@ -406,6 +448,7 @@ export default function RepoDetailPage() {
                             <div className="flex flex-col items-end gap-1.5">
                               <button
                                 onClick={() => handleUpdateChannel(channel.id, { enabled: !channel.enabled })}
+                                disabled={!canUseChannels && !channel.enabled}
                                 className={`px-2.5 py-1 rounded-full text-xs font-medium transition ${channel.enabled
                                   ? 'bg-teal-100 text-teal-700 hover:bg-teal-200'
                                   : 'bg-navy-100 text-navy-500 hover:bg-navy-200'
@@ -414,6 +457,8 @@ export default function RepoDetailPage() {
                                 {channel.enabled ? '● Active' : '○ Paused'}
                               </button>
                               <select
+                                disabled={!canUseChannels}
+                                aria-label={`Audience for ${channel.name}`}
                                 value={channel.audience}
                                 onChange={(e) => handleUpdateChannel(channel.id, { audience: e.target.value as Channel['audience'] })}
                                 className={`text-xs px-2 py-1 rounded-full border-0 cursor-pointer font-medium ${channel.audience === 'CUSTOMER' ? 'bg-blue-100 text-blue-700' :

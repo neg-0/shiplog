@@ -12,6 +12,7 @@ const stripeMock = {
   checkout: {
     sessions: {
       create: jest.fn(),
+      list: jest.fn(),
     },
   },
   billingPortal: {
@@ -21,6 +22,7 @@ const stripeMock = {
   },
   subscriptions: {
     retrieve: jest.fn(),
+    list: jest.fn(),
   },
   webhooks: {
     constructEvent: jest.fn(),
@@ -69,6 +71,8 @@ describe('Billing Routes', () => {
     jest.clearAllMocks();
     prismaMock.$transaction.mockImplementation(async (callback: any) => callback(prismaMock));
     prismaMock.user.updateMany.mockResolvedValue({ count: 1 });
+    (stripeMock.checkout.sessions.list as jest.Mock).mockResolvedValue({ data: [], has_more: false } as any);
+    (stripeMock.subscriptions.list as jest.Mock).mockResolvedValue({ data: [], has_more: false } as any);
   });
 
   describe('POST /checkout', () => {
@@ -96,6 +100,15 @@ describe('Billing Routes', () => {
       (stripeMock.checkout.sessions.create as jest.Mock).mockResolvedValue({
         url: 'https://checkout.stripe.com/session',
       } as any);
+
+      prismaMock.user.update.mockImplementationOnce(async () => {
+        prismaMock.user.findUnique.mockResolvedValue({
+          id: 'user_1', email: 'test@example.com', name: 'Test User', login: 'testuser',
+          stripeCustomerId: 'cus_new', githubId: 12345,
+          subscriptionStatus: null, subscriptionTier: 'FREE', stripeSubscriptionId: null,
+        } as any);
+        return { id: 'user_1', stripeCustomerId: 'cus_new' } as any;
+      });
 
       const req = new Request('http://localhost/checkout', {
         method: 'POST',
@@ -148,7 +161,8 @@ describe('Billing Routes', () => {
       expect(stripeMock.checkout.sessions.create).toHaveBeenCalledWith(
         expect.objectContaining({
           customer: 'cus_existing',
-        })
+        }),
+        expect.objectContaining({ timeout: 10_000, maxNetworkRetries: 0 }),
       );
     });
 

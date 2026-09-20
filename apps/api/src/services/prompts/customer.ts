@@ -17,6 +17,8 @@ Style:
 - Use short sections and bullet points.
 - Be truthful: do not invent features.
 - If information is missing, omit it rather than guessing.
+- Start with concrete changes; omit generic excitement, thank-you paragraphs, and empty sections.
+- Use links only when their complete URLs appear in the source. Never invent links, metrics, or measured benefits.
 Tone: ${tone}.
 Signer: ${companyName}.`;
 

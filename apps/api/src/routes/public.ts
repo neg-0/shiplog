@@ -18,6 +18,30 @@ const publishedReleaseFilter = {
   publishedAt: { not: null },
 };
 
+/** Stored slugs take precedence; legacy owner-repo links must identify one repo. */
+async function resolvePublicRepoId(slug: string): Promise<string | null> {
+  const exact = await prisma.repo.findUnique({
+    where: { slug },
+    select: { id: true, isPublic: true },
+  });
+  if (exact) return exact.isPublic ? exact.id : null;
+
+  // Both GitHub owners and repository names can contain hyphens. Consider each
+  // split instead of treating the first hyphen as the owner/repository boundary.
+  const fullNames: string[] = [];
+  for (let index = 1; index < slug.length - 1; index++) {
+    if (slug[index] === '-') fullNames.push(`${slug.slice(0, index)}/${slug.slice(index + 1)}`);
+  }
+  if (!fullNames.length) return null;
+  const matches = await prisma.repo.findMany({
+    where: { isPublic: true, fullName: { in: fullNames } },
+    select: { id: true },
+    take: 2,
+  });
+  // Never return another project's notes when a legacy link is ambiguous.
+  return matches.length === 1 ? matches[0]!.id : null;
+}
+
 const publicLimit = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   limit: 100,
@@ -80,13 +104,12 @@ publicChangelog.post('/feedback', feedbackLimit as any, zValidator('json', feedb
  */
 publicChangelog.get('/:slug', async (c) => {
   const slug = c.req.param('slug');
+  const repoId = await resolvePublicRepoId(slug);
+  if (!repoId) return c.json({ error: 'Changelog not found' }, 404);
   
   const repo = await prisma.repo.findFirst({
     where: {
-      OR: [
-        { slug },
-        { fullName: slug.replace(/^([^-]+)-(.+)$/, '$1/$2') }, // Fallback to fullName
-      ],
+      id: repoId,
       isPublic: true,
     },
     select: {
@@ -168,10 +191,12 @@ const listReleasesSchema = z.object({
 publicChangelog.get('/:slug/releases', zValidator('query', listReleasesSchema as any), async (c) => {
   const slug = c.req.param('slug');
   const { page, limit } = c.req.valid('query');
+  const repoId = await resolvePublicRepoId(slug);
+  if (!repoId) return c.json({ error: 'Changelog not found' }, 404);
 
   const repo = await prisma.repo.findFirst({
     where: {
-      OR: [{ slug }, { fullName: slug.replace(/^([^-]+)-(.+)$/, '$1/$2') }],
+      id: repoId,
       isPublic: true,
     },
     select: { id: true },
@@ -219,10 +244,12 @@ publicChangelog.get('/:slug/releases', zValidator('query', listReleasesSchema as
 publicChangelog.get('/:slug/releases/:version', async (c) => {
   const slug = c.req.param('slug');
   const version = c.req.param('version');
+  const repoId = await resolvePublicRepoId(slug);
+  if (!repoId) return c.json({ error: 'Changelog not found' }, 404);
 
   const repo = await prisma.repo.findFirst({
     where: {
-      OR: [{ slug }, { fullName: slug.replace(/^([^-]+)-(.+)$/, '$1/$2') }],
+      id: repoId,
       isPublic: true,
     },
     select: {

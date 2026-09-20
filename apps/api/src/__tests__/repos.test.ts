@@ -147,12 +147,15 @@ describe('Repos Routes', () => {
           owner: 'owner',
           repo: 'new-repo',
           fullName: 'owner/new-repo',
+          description: null,
         }),
       });
 
       expect(res.status).toBe(200);
       expect(githubService.createWebhook).toHaveBeenCalled();
-      expect(prismaMock.repo.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ isPublic: false, config: { create: {} } }) }));
+      expect(prismaMock.repo.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({
+        slug: 'owner-new-repo-103', isPublic: false, config: { create: { autoGenerate: false } },
+      }) }));
       expect(importerService.importRepoHistory).toHaveBeenCalled();
     });
 
@@ -183,7 +186,7 @@ describe('Repos Routes', () => {
 
   describe('PATCH /:id/config', () => {
     it('updates repo config', async () => {
-      prismaMock.repo.findFirst.mockResolvedValue({ id: 'repo-1' } as any);
+      prismaMock.repo.findFirst.mockResolvedValue({ id: 'repo-1', user: { subscriptionTier: 'PRO' } } as any);
       prismaMock.repoConfig.upsert.mockResolvedValue({
         repoId: 'repo-1',
         autoGenerate: true,
@@ -299,6 +302,55 @@ describe('Repos Routes', () => {
     const response = await repos.request('/repo-1', { method: 'DELETE' });
     expect(response.status).toBe(502);
     expect(prismaMock.repo.delete).not.toHaveBeenCalled();
+  });
+
+  describe('paid feature enforcement', () => {
+    const request = (path: string, method: string, body: object) => repos.request(path, {
+      method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    it('refuses Free automation before changing configuration', async () => {
+      prismaMock.repo.findFirst.mockResolvedValue({ id: 'repo-1', user: { subscriptionTier: 'FREE' } } as any);
+      const response = await request('/repo-1/config', 'PATCH', { autoGenerate: true });
+      expect(response.status).toBe(403);
+      expect(prismaMock.repoConfig.upsert).not.toHaveBeenCalled();
+    });
+    it('lets Free accounts disable automation and edit generation preferences', async () => {
+      prismaMock.repo.findFirst.mockResolvedValue({ id: 'repo-1', user: { subscriptionTier: 'FREE' } } as any);
+      prismaMock.repoConfig.upsert.mockResolvedValue({} as any);
+      expect((await request('/repo-1/config', 'PATCH', { autoGenerate: false, productName: 'Widget' })).status).toBe(200);
+      expect(prismaMock.repoConfig.upsert).toHaveBeenCalledWith(expect.objectContaining({
+        create: expect.objectContaining({ autoGenerate: false }),
+      }));
+    });
+    it('preserves explicitly grandfathered repository automation', async () => {
+      process.env.GRANDFATHERED_REPO_IDS = 'repo-legacy';
+      try {
+        prismaMock.repo.findFirst.mockResolvedValue({ id: 'repo-legacy', user: { subscriptionTier: 'FREE' } } as any);
+        prismaMock.repoConfig.upsert.mockResolvedValue({} as any);
+        expect((await request('/repo-legacy/config', 'PATCH', { autoGenerate: true })).status).toBe(200);
+      } finally { delete process.env.GRANDFATHERED_REPO_IDS; }
+    });
+    it('refuses Free channel creation before writing a channel', async () => {
+      prismaMock.repo.findFirst.mockResolvedValue({ id: 'repo-1', user: { subscriptionTier: 'FREE' }, config: { id: 'config-1' } } as any);
+      const response = await request('/repo-1/channels', 'POST', {
+        name: 'Releases', type: 'SLACK', audience: 'CUSTOMER', webhookUrl: 'https://hooks.slack.com/services/test-only',
+      });
+      expect(response.status).toBe(403);
+      expect(prismaMock.channel.create).not.toHaveBeenCalled();
+    });
+    it('allows Free channel disabling but refuses re-enabling', async () => {
+      prismaMock.repo.findFirst.mockResolvedValue({ id: 'repo-1', user: { subscriptionTier: 'FREE' } } as any);
+      prismaMock.channel.findFirst.mockResolvedValue({ id: 'channel-1' } as any);
+      prismaMock.channel.update.mockResolvedValue({ id: 'channel-1', enabled: false } as any);
+      expect((await request('/repo-1/channels/channel-1', 'PATCH', { enabled: false })).status).toBe(200);
+      expect((await request('/repo-1/channels/channel-1', 'PATCH', { enabled: true })).status).toBe(403);
+      expect(prismaMock.channel.update).toHaveBeenCalledTimes(1);
+    });
+    it('requires Team for branding', async () => {
+      prismaMock.repo.findFirst.mockResolvedValue({ id: 'repo-1', user: { subscriptionTier: 'FREE' } } as any);
+      expect((await request('/repo-1/settings', 'PATCH', { hidePoweredBy: true })).status).toBe(403);
+      expect(prismaMock.repo.update).not.toHaveBeenCalled();
+    });
   });
 
   it('rejects unsupported generic webhook channel creation', async () => {

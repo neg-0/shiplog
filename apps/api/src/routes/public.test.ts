@@ -41,6 +41,8 @@ describe('Public Routes', () => {
     app.route('/', publicChangelog);
     jest.clearAllMocks();
     mockFetch.mockReset();
+    prismaMock.repo.findUnique.mockResolvedValue({ id: 'repo-1', isPublic: true } as any);
+    prismaMock.repo.findMany.mockResolvedValue([]);
   });
 
   describe('POST /feedback', () => {
@@ -403,6 +405,48 @@ describe('Public Routes', () => {
     prismaMock.release.findFirst.mockResolvedValue({ id: 'release-1', notes: null } as any);
     const response = await app.request('/repo/releases/v1.0');
     expect(await response.json()).toMatchObject({ showPoweredBy: false });
+  });
+
+  describe('slug resolution across every public endpoint', () => {
+    const paths = ['/neg-0-shiplog', '/neg-0-shiplog/releases', '/neg-0-shiplog/releases/v1.0'];
+
+    beforeEach(() => {
+      prismaMock.repo.findFirst.mockResolvedValue({ id: 'repo-1', name: 'shiplog', releases: [], user: { subscriptionTier: 'FREE' } } as any);
+      prismaMock.release.findMany.mockResolvedValue([]);
+      prismaMock.release.count.mockResolvedValue(0);
+      prismaMock.release.findFirst.mockResolvedValue({ id: 'release-1', notes: null } as any);
+    });
+
+    it.each(paths)('resolves a legacy hyphenated owner without guessing the first split: %s', async path => {
+      prismaMock.repo.findUnique.mockResolvedValue(null);
+      prismaMock.repo.findMany.mockResolvedValue([{ id: 'repo-1' }] as any);
+      const response = await app.request(path);
+      expect(response.status).toBe(200);
+      expect(prismaMock.repo.findMany).toHaveBeenCalledWith({
+        where: { isPublic: true, fullName: { in: ['neg/0-shiplog', 'neg-0/shiplog'] } },
+        select: { id: true }, take: 2,
+      });
+      expect(prismaMock.repo.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'repo-1', isPublic: true } }));
+    });
+
+    it.each(paths)('does not choose a repository when a legacy link is ambiguous: %s', async path => {
+      prismaMock.repo.findUnique.mockResolvedValue(null);
+      prismaMock.repo.findMany.mockResolvedValue([{ id: 'repo-1' }, { id: 'repo-2' }] as any);
+      expect((await app.request(path)).status).toBe(404);
+      expect(prismaMock.repo.findFirst).not.toHaveBeenCalled();
+    });
+
+    it.each(paths)('gives an exact stored slug precedence over legacy matches: %s', async path => {
+      expect((await app.request(path)).status).toBe(200);
+      expect(prismaMock.repo.findMany).not.toHaveBeenCalled();
+    });
+
+    it.each(paths)('does not replace a private stored slug with another public repository: %s', async path => {
+      prismaMock.repo.findUnique.mockResolvedValue({ id: 'private-repo', isPublic: false } as any);
+      expect((await app.request(path)).status).toBe(404);
+      expect(prismaMock.repo.findMany).not.toHaveBeenCalled();
+      expect(prismaMock.repo.findFirst).not.toHaveBeenCalled();
+    });
   });
 
 });

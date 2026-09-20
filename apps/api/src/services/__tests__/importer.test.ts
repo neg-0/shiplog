@@ -34,6 +34,7 @@ const { importRepoHistory } = await import('../importer.js');
 describe('importRepoHistory', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockPrisma.release.updateMany.mockResolvedValue({ count: 1 });
   });
 
   it('should return early if repo not found', async () => {
@@ -48,6 +49,7 @@ describe('importRepoHistory', () => {
       owner: 'owner',
       name: 'repo',
       fullName: 'owner/repo',
+      user: { subscriptionTier: 'PRO' },
       config: { autoGenerate: true },
     } as any);
 
@@ -70,6 +72,7 @@ describe('importRepoHistory', () => {
       owner: 'owner',
       name: 'repo',
       fullName: 'owner/repo',
+      user: { subscriptionTier: 'PRO' },
       config: { autoGenerate: true, companyName: 'Acme' },
     } as any);
 
@@ -98,21 +101,20 @@ describe('importRepoHistory', () => {
     await importRepoHistory('repo-1', 'token');
 
     // Status update to PROCESSING
-    expect(mockPrisma.release.update).toHaveBeenCalledWith({
-      where: { id: 'rel-1' },
-      data: { status: 'PROCESSING' },
-    });
+    expect(mockPrisma.release.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: 'rel-1', status: 'PENDING', error: null }),
+      data: { status: 'PROCESSING', error: expect.stringContaining(':generation:PENDING:') },
+    }));
 
     // Status update to READY with notes
     expect(mockPrisma.release.update).toHaveBeenCalledWith({
-      where: { id: 'rel-1' },
+      where: { id: 'rel-1', status: 'PROCESSING', error: expect.stringContaining(':generation:PENDING:') },
       data: {
-        status: 'READY',
-        notes: {
-          create: {
-            customer: 'C', developer: 'D', stakeholder: 'S', tokensUsed: 10, model: 'gpt',
-          },
-        },
+        status: 'READY', error: null, processedAt: expect.any(Date),
+        notes: { upsert: {
+          create: { customer: 'C', developer: 'D', stakeholder: 'S', tokensUsed: 10, model: 'gpt' },
+          update: { customer: 'C', developer: 'D', stakeholder: 'S', tokensUsed: 10, model: 'gpt' },
+        } },
       },
     });
   });
@@ -120,6 +122,7 @@ describe('importRepoHistory', () => {
   it('should skip generation if autoGenerate is false', async () => {
     mockPrisma.repo.findUnique.mockResolvedValue({
       id: 'repo-1',
+      user: { subscriptionTier: 'PRO' },
       config: { autoGenerate: false },
       owner: 'owner', name: 'repo', fullName: 'owner/repo'
     } as any);
@@ -133,15 +136,16 @@ describe('importRepoHistory', () => {
     await importRepoHistory('repo-1', 'token');
 
     expect(mockGenerateReleaseNotes).not.toHaveBeenCalled();
-    expect(mockPrisma.release.update).toHaveBeenCalledWith({
-      where: { id: 'rel-1' },
+    expect(mockPrisma.release.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: 'rel-1', status: 'PENDING' }),
       data: { status: 'SKIPPED' },
-    });
+    }));
   });
 
   it('should handle generation failure', async () => {
     mockPrisma.repo.findUnique.mockResolvedValue({
       id: 'repo-1',
+      user: { subscriptionTier: 'PRO' },
       config: { autoGenerate: true },
       owner: 'owner', name: 'repo', fullName: 'owner/repo'
     } as any);
@@ -157,17 +161,37 @@ describe('importRepoHistory', () => {
 
     await importRepoHistory('repo-1', 'token');
 
-    expect(mockPrisma.release.update).toHaveBeenCalledWith({
-      where: { id: 'rel-1' },
-      data: { status: 'FAILED' },
+    expect(mockPrisma.release.updateMany).toHaveBeenCalledWith({
+      where: { id: 'rel-1', status: 'PROCESSING', error: expect.stringContaining(':generation:PENDING:') },
+      data: { status: 'FAILED', error: 'Failed to generate notes. Please try again.' },
     });
   });
 
   it('never imports or generates notes for unpublished GitHub drafts', async () => {
-    mockPrisma.repo.findUnique.mockResolvedValue({ id: 'repo-1', owner: 'owner', name: 'repo', config: { autoGenerate: true } } as any);
+    mockPrisma.repo.findUnique.mockResolvedValue({ id: 'repo-1', owner: 'owner', name: 'repo', user: { subscriptionTier: 'PRO' },
+      config: { autoGenerate: true } } as any);
     mockListReleases.mockResolvedValue([{ id: 101, tag_name: 'secret-beta', draft: true, published_at: null }]);
     await importRepoHistory('repo-1', 'token');
     expect(mockPrisma.release.upsert).not.toHaveBeenCalled();
+    expect(mockGenerateReleaseNotes).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, null, { autoGenerate: false }, { autoGenerate: true }])('imports metadata without provider calls when config or entitlement is absent (%s)', async config => {
+    mockPrisma.repo.findUnique.mockResolvedValue({ id: 'repo-1', owner: 'owner', name: 'repo', user: { subscriptionTier: 'FREE' }, config } as any);
+    mockListReleases.mockResolvedValue([{ id: 100, tag_name: 'v1.0', draft: false }]);
+    mockPrisma.release.upsert.mockResolvedValue({ id: 'rel-1', status: 'PENDING', error: null, updatedAt: new Date() } as any);
+    await importRepoHistory('repo-1', 'token');
+    expect(mockPrisma.release.upsert).toHaveBeenCalled();
+    expect(mockFetchReleaseData).not.toHaveBeenCalled();
+    expect(mockGenerateReleaseNotes).not.toHaveBeenCalled();
+    expect(mockPrisma.release.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: { status: 'SKIPPED' } }));
+  });
+
+  it('requires explicit autoGenerate opt-in even for paid accounts', async () => {
+    mockPrisma.repo.findUnique.mockResolvedValue({ id: 'repo-1', owner: 'owner', name: 'repo', user: { subscriptionTier: 'PRO' }, config: null } as any);
+    mockListReleases.mockResolvedValue([{ id: 100, tag_name: 'v1.0', draft: false }]);
+    mockPrisma.release.upsert.mockResolvedValue({ id: 'rel-1', status: 'PENDING', error: null, updatedAt: new Date() } as any);
+    await importRepoHistory('repo-1', 'token');
     expect(mockGenerateReleaseNotes).not.toHaveBeenCalled();
   });
 

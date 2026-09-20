@@ -6,7 +6,6 @@
 import type { Release } from '@prisma/client';
 import type { GeneratedNotes } from './generator.js';
 import { logError, logInfo } from '../lib/logger.js';
-import { logger } from '../lib/logger.js';
 
 export interface DistributionTarget {
   type: 'slack' | 'discord' | 'email' | 'hosted' | 'webhook';
@@ -34,6 +33,7 @@ export interface DistributionResult {
   success: boolean;
   error?: string;
   responseCode?: number;
+  outcomeUnknown?: boolean;
 }
 
 // ============================================
@@ -48,32 +48,13 @@ function escapeHtml(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
-function isPrivateHostname(hostname: string): boolean {
-  if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') {
-    return true;
-  }
-  if (hostname.startsWith('10.')) return true;
-  if (hostname.startsWith('192.168.')) return true;
-  if (hostname.startsWith('169.254.')) return true;
-
-  // Check 172.16.0.0 - 172.31.255.255
-  if (hostname.startsWith('172.')) {
-    const secondOctet = parseInt(hostname.split('.')[1] ?? '', 10);
-    if (secondOctet >= 16 && secondOctet <= 31) return true;
-  }
-
-  return false;
-}
-
-function validateWebhookUrl(url: string): void {
+export function validateWebhookUrl(url: string, provider: 'slack' | 'discord'): void {
   const parsed = new URL(url);
-
-  if (parsed.protocol !== 'https:') {
-    throw new Error(`Webhook URL must use HTTPS, got ${parsed.protocol}`);
-  }
-
-  if (isPrivateHostname(parsed.hostname)) {
-    throw new Error('Webhook URL must not point to a private/internal address');
+  const hosts = provider === 'slack' ? ['hooks.slack.com', 'hooks.slack-gov.com'] : ['discord.com', 'discordapp.com'];
+  const pathValid = provider === 'slack' ? parsed.pathname.startsWith('/services/') : /^\/api\/(?:v\d+\/)?webhooks\//.test(parsed.pathname);
+  if (parsed.protocol !== 'https:' || !hosts.includes(parsed.hostname) ||
+      !pathValid || parsed.username || parsed.password || (parsed.port && parsed.port !== '443')) {
+    throw new Error(`Use an official ${provider === 'slack' ? 'Slack' : 'Discord'} HTTPS webhook URL.`);
   }
 }
 
@@ -171,7 +152,7 @@ async function distributeToTarget(
         return { target, success: false, error: 'Unknown target type' };
     }
   } catch (error) {
-    logError('Error distributing to target', { target: sanitizeTarget(target), payload }, error);
+    logError('Error distributing to target', { target: sanitizeTarget(target) }, error);
     return {
       target,
       success: false,
@@ -206,45 +187,17 @@ function getNotesForAudience(
   }
 }
 
-async function fetchWithRetry(
-  url: string,
-  options: RequestInit,
-  retries = 3,
-  backoff = 1000
-): Promise<Response> {
-  const safeUrl = url.includes('hooks.slack.com') || url.includes('discord.com')
-    ? url.split('/').slice(0, 3).join('/') + '/...'
-    : url;
-
+// A POST may have been accepted even when its response is lost. Never retry it
+// automatically, and never follow a webhook redirect to another destination.
+async function sendOnce(url: string, options: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10000);
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
-    try {
-      const response = await fetch(url, { ...options, signal: controller.signal });
-
-      if (response.ok) return response;
-
-      // Retry on 5xx or 429
-      if (retries > 0 && (response.status === 429 || response.status >= 500)) {
-        logger.warn(`Retrying request to ${safeUrl} (status ${response.status})`, { retriesLeft: retries });
-        await new Promise((resolve) => setTimeout(resolve, backoff));
-        return fetchWithRetry(url, options, retries - 1, backoff * 2);
-      }
-
-      return response;
-    } finally {
-      clearTimeout(timeoutId);
-    }
-  } catch (error) {
-     if (retries > 0) {
-       logger.warn(`Retrying request to ${safeUrl} (network error)`, { retriesLeft: retries, error });
-       await new Promise((resolve) => setTimeout(resolve, backoff));
-       return fetchWithRetry(url, options, retries - 1, backoff * 2);
-     }
-     throw error;
+    return await fetch(url, { ...options, redirect: 'error', signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
-
 
 // ============================================
 // SLACK
@@ -259,7 +212,7 @@ async function sendToSlack(
     return { target, success: false, error: 'Missing webhookUrl' };
   }
 
-  validateWebhookUrl(target.webhookUrl);
+  validateWebhookUrl(target.webhookUrl, 'slack');
 
   const slackPayload = {
     text: `New Release: ${payload.repoFullName} ${payload.tagName}`,
@@ -292,7 +245,7 @@ async function sendToSlack(
   };
 
   try {
-    const response = await fetchWithRetry(target.webhookUrl, {
+    const response = await sendOnce(target.webhookUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(slackPayload),
@@ -302,13 +255,15 @@ async function sendToSlack(
       target,
       success: response.ok,
       responseCode: response.status,
+      outcomeUnknown: response.status >= 500,
       error: response.ok ? undefined : await response.text(),
     };
   } catch (error) {
     return {
       target,
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown network error',
+      outcomeUnknown: true,
+      error: 'Delivery outcome is unknown after a network failure. Contact support before retrying.',
     };
   }
 }
@@ -331,7 +286,7 @@ async function sendToDiscord(
     return { target, success: false, error: 'Missing webhookUrl' };
   }
 
-  validateWebhookUrl(target.webhookUrl);
+  validateWebhookUrl(target.webhookUrl, 'discord');
 
   const discordPayload = {
     content: `${payload.repoFullName} ${payload.tagName} released`,
@@ -350,7 +305,7 @@ async function sendToDiscord(
   };
 
   try {
-    const response = await fetchWithRetry(target.webhookUrl, {
+    const response = await sendOnce(target.webhookUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(discordPayload),
@@ -360,13 +315,15 @@ async function sendToDiscord(
       target,
       success: response.ok,
       responseCode: response.status,
+      outcomeUnknown: response.status >= 500,
       error: response.ok ? undefined : await response.text(),
     };
   } catch (error) {
     return {
       target,
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown network error',
+      outcomeUnknown: true,
+      error: 'Delivery outcome is unknown after a network failure. Contact support before retrying.',
     };
   }
 }
@@ -428,7 +385,7 @@ async function sendEmail(
       ],
     };
 
-    const response = await fetchWithRetry('https://api.sendgrid.com/v3/mail/send', {
+    const response = await sendOnce('https://api.sendgrid.com/v3/mail/send', {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${sendGridApiKey}`,
@@ -444,13 +401,15 @@ async function sendEmail(
       target,
       success: response.ok,
       responseCode: response.status,
+      outcomeUnknown: response.status >= 500,
       error: response.ok ? undefined : (responseData ? JSON.stringify(responseData) : 'SendGrid API error'),
     };
   } catch (error) {
     return {
       target,
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown network error',
+      outcomeUnknown: true,
+      error: 'Delivery outcome is unknown after a network failure. Contact support before retrying.',
     };
   }
 }

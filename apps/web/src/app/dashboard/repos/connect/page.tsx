@@ -68,7 +68,7 @@ export default function ConnectRepoPage() {
       setConnecting(repo.githubId);
       const result = await connectRepo(repo);
       setConnected(prev => new Set(prev).add(repo.githubId));
-      router.push(`/dashboard/repos/${result.id}`);
+      router.push(`/dashboard/repos/${result.id}?importing=1`);
     } catch (err) {
       const errorObj = err as Error & { status?: number; data?: { upgradeRequired?: boolean; requiredTier?: 'PRO' | 'TEAM' } };
       if (errorObj.status === 403 && errorObj.data?.upgradeRequired) {

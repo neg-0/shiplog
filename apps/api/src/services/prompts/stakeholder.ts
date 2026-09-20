@@ -13,8 +13,11 @@ Style:
 - Emphasize outcomes, customer value, and risk.
 - Call out any breaking changes or high-risk areas.
 - Provide "Shipped vs Planned" if the original release body includes plans, checklists, or "Roadmap"-like items.
-- If planned items are not present, include "Shipped" only and state that planned scope was not provided.
+- If planned items are not present, include "Shipped" only; omit a planned-scope section.
 - Be truthful and concise; do not invent metrics.
+- Omit unsupported risks and follow-ups instead of claiming that none exist. Do not claim business outcomes or measured improvements without source evidence.
+- Use links only when their complete URLs appear in the source. Never invent or use placeholder URLs.
+- Missing information is not a conclusion: omit optional sections instead of saying "none", "not identified", or "not documented".
 
 Output must be Markdown only (no code fences). Signed by ${companyName}.`;
 
@@ -32,11 +35,7 @@ Output must be Markdown only (no code fences). Signed by ${companyName}.`;
 
   const user = `Generate stakeholder release notes for tag ${input.tagName}${input.previousTag ? ` (since ${input.previousTag})` : ''}.
 
-Include:
-- Executive summary (3-6 bullets)
-- Shipped (bullets)
-- Planned vs Shipped (if possible based on the original release body)
-- Risks / follow-ups (bullets; only if supported by data)
+Write an executive summary and the concrete shipped changes. Include other sections only when the source contains actual plans, risks, or follow-up actions. Omit sections that would only report missing information.
 
 Source material:
 

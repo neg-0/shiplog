@@ -5,6 +5,7 @@ import { prisma } from '../lib/db.js';
 import { requireAuth } from '../lib/auth.js';
 import { updateUserSchema } from '../lib/schemas.js';
 import { apiLimiter } from '../lib/rate-limit.js';
+import { accountDeletionBillingBlock } from './billing.js';
 
 /**
  * @module user
@@ -91,10 +92,13 @@ user.delete('/me', requireAuth, apiLimiter, async (c) => {
   const authUser = c.get('user');
 
   const result = await prisma.$transaction(async (tx) => {
+    // Serialize deletion with checkout creation for this account.
+    await tx.$queryRaw`SELECT id FROM users WHERE id = ${authUser.id} FOR UPDATE`;
     const dbUser = await tx.user.findUnique({
       where: { id: authUser.id },
       select: {
         stripeSubscriptionId: true,
+        stripeCustomerId: true,
         subscriptionStatus: true,
         _count: { select: { ownedOrganizations: true, repos: true } },
       },
@@ -123,12 +127,20 @@ user.delete('/me', requireAuth, apiLimiter, async (c) => {
       };
     }
 
+    if (dbUser.stripeSubscriptionId && !dbUser.stripeCustomerId) {
+      return { error: 'Your billing account could not be verified. Contact support before deleting your account.', status: 503 as const };
+    }
+    if (dbUser.stripeCustomerId) {
+      const billingBlock = await accountDeletionBillingBlock(dbUser.stripeCustomerId);
+      if (billingBlock) return billingBlock;
+    }
+
     // Pending invitations reference their sender without a cascade. Remove them
     // with the account, while memberships and personal repositories cascade.
     await tx.organizationInvite.deleteMany({ where: { invitedById: authUser.id } });
     await tx.user.delete({ where: { id: authUser.id } });
     return null;
-  });
+  }, { maxWait: 10_000, timeout: 60_000 });
 
   if (result) return c.json({ error: result.error }, result.status);
 

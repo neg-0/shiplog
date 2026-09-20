@@ -50,10 +50,20 @@ pnpm audit --prod
 
 Unit tests mock providers. Browser tests target a local API and verify public navigation, mobile layout, returning-visitor hydration, and the interactive example; they do not exercise live OAuth, generation, payment, or external delivery.
 
+With PostgreSQL tools (`initdb`, `pg_ctl`, `createdb`) available on PATH, run the full API journey against a disposable local database:
+
+```sh
+node apps/api/scripts/test-local-journey.mjs
+```
+
+This exercises real authentication, cookies, persistence, importing, editing, publication, and privacy. GitHub and AI are simulated; unexpected provider requests fail the test. The runner creates and removes its own loopback database and does not load project environment files. CI runs the same check.
+
 ## Deployment configuration
 
 The workspace uses `pnpm-lock.yaml`. Railway's API root is `apps/api`, so it uses its own checked-in `package-lock.json` with `npm ci`. When changing API dependencies, refresh both locks; generate the npm lock in a clean directory to avoid recording pnpm symlinks.
 
 Stripe price variable names are `STRIPE_PRICE_PRO` and `STRIPE_PRICE_TEAM`. For production OAuth across web/API subdomains, set `COOKIE_DOMAIN=.shiplog.io`, `APP_URL` to the canonical web origin, and `API_URL` to the API origin. Authentication session cookies remain host-only.
+
+Free includes one repository, manual generation/review, and a hosted changelog. Pro includes five repositories, automation, and Slack/Discord channels; Team includes unlimited repositories. `GRANDFATHERED_REPO_IDS` is an explicit compatibility list for repositories already using automation/channels before enforcement. Audit existing accounts before changing this list; it does not alter Stripe subscriptions or grant new Free repositories paid access.
 
 The checked-in Railway command runs `prisma db push --skip-generate` before startup, without accepting data loss. There is no Prisma migration history yet. Review any schema drift before deploying; do not add a data-loss waiver to get a deployment through.

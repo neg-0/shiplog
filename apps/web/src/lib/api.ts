@@ -97,8 +97,9 @@ export async function deleteUser(): Promise<{ success: true }> {
 // ============================================
 
 export async function createCheckoutSession(plan: 'pro' | 'team'): Promise<{ url: string | null }> {
-  return fetchApi(`/billing/checkout?plan=${plan}`, {
+  return fetchApi('/billing/checkout', {
     method: 'POST',
+    body: JSON.stringify({ plan }),
   });
 }
 
@@ -140,7 +141,15 @@ export interface Channel {
   enabled: boolean;
 }
 
+export interface RepoEntitlements {
+  automation: boolean;
+  channels: boolean;
+  branding: boolean;
+  grandfathered: boolean;
+}
+
 export interface RepoDetail extends Repo {
+  entitlements?: RepoEntitlements;
   owner: string;
   webhookActive: boolean;
   isPublic?: boolean;
@@ -288,6 +297,9 @@ export interface Release {
   repo: {
     id: string;
     fullName: string;
+    isPublic?: boolean;
+    slug?: string | null;
+    entitlements?: RepoEntitlements;
     config?: {
       channels?: Pick<Channel, 'id' | 'type' | 'name' | 'audience' | 'enabled'>[];
     };

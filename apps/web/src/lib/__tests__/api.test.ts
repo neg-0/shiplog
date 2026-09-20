@@ -1,4 +1,4 @@
-import { isAuthenticated, getUser, getRepos, getRelease } from '../api';
+import { isAuthenticated, getUser, getRepos, getRelease, createCheckoutSession } from '../api';
 
 const mockFetch = jest.fn() as jest.Mock;
 global.fetch = mockFetch;
@@ -76,6 +76,14 @@ describe('api', () => {
   });
 
   describe('API Functions', () => {
+    it.each(['pro', 'team'] as const)('sends the %s checkout plan in the API JSON body', async plan => {
+      await createCheckoutSession(plan);
+      expect(mockFetch).toHaveBeenCalledWith('/api/billing/checkout', expect.objectContaining({
+        method: 'POST', body: JSON.stringify({ plan }),
+        headers: expect.objectContaining({ 'Content-Type': 'application/json' }),
+      }));
+    });
+
     it('getRepos calls /repos', async () => {
       await getRepos();
       expect(mockFetch).toHaveBeenCalledWith('/api/repos', expect.anything());
