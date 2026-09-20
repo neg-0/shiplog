@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { deleteCookie } from 'hono/cookie';
 import { zValidator } from '@hono/zod-validator';
 import { prisma } from '../lib/db.js';
 import { requireAuth } from '../lib/auth.js';
@@ -88,11 +89,52 @@ user.patch(
  */
 user.delete('/me', requireAuth, apiLimiter, async (c) => {
   const authUser = c.get('user');
-  
-  // This will cascade delete repos, configs, releases, etc.
-  await prisma.user.delete({
-    where: { id: authUser.id },
+
+  const result = await prisma.$transaction(async (tx) => {
+    const dbUser = await tx.user.findUnique({
+      where: { id: authUser.id },
+      select: {
+        stripeSubscriptionId: true,
+        subscriptionStatus: true,
+        _count: { select: { ownedOrganizations: true, repos: true } },
+      },
+    });
+
+    if (!dbUser) return { error: 'User not found', status: 404 as const };
+
+    if (dbUser.stripeSubscriptionId && !['canceled', 'incomplete_expired'].includes(dbUser.subscriptionStatus ?? '')) {
+      return {
+        error: 'Your subscription must be fully canceled before deleting your account. Manage your subscription in the billing portal first.',
+        status: 409 as const,
+      };
+    }
+
+    if (dbUser._count.ownedOrganizations > 0) {
+      return {
+        error: 'You own an organization. Contact support to transfer or remove it before deleting your account.',
+        status: 409 as const,
+      };
+    }
+
+    if (dbUser._count.repos > 0) {
+      return {
+        error: 'Disconnect your repositories before deleting your account so their GitHub webhooks can be removed safely.',
+        status: 409 as const,
+      };
+    }
+
+    // Pending invitations reference their sender without a cascade. Remove them
+    // with the account, while memberships and personal repositories cascade.
+    await tx.organizationInvite.deleteMany({ where: { invitedById: authUser.id } });
+    await tx.user.delete({ where: { id: authUser.id } });
+    return null;
   });
-  
+
+  if (result) return c.json({ error: result.error }, result.status);
+
+  const cookieOptions = { path: '/', secure: process.env.NODE_ENV === 'production', sameSite: 'Lax' as const };
+  deleteCookie(c, 'shiplog_session', { ...cookieOptions, httpOnly: true });
+  deleteCookie(c, 'shiplog_logged_in', cookieOptions);
+
   return c.json({ success: true });
 });

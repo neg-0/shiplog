@@ -2,14 +2,13 @@
 
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { ConfirmDialog } from '@/components/Dialog';
-import { AlertCircle, ArrowLeft, Building2, Crown, Loader2, Mail, Plus, Settings, Shield, Trash2, User, Users } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Building2, Crown, Loader2, Settings, Shield, Trash2, User, Users } from 'lucide-react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import {
   getOrganization,
   getUser,
-  inviteOrganizationMember,
   isAuthenticated,
   removeOrganizationMember,
   updateOrganization,
@@ -41,7 +40,6 @@ export default function OrganizationDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [org, setOrg] = useState<OrgDetail | null>(null);
-  const [showInviteModal, setShowInviteModal] = useState(false);
   const [removeMemberTarget, setRemoveMemberTarget] = useState<{ userId: string; name: string } | null>(null);
   const [activeTab, setActiveTab] = useState<'members' | 'settings'>('members');
   const [user, setUser] = useState<UserType | null>(null);
@@ -183,7 +181,7 @@ export default function OrganizationDetailPage() {
           <>
             {/* Header */}
             <div className="bg-white rounded-xl p-6 shadow-sm border border-navy-100 mb-6">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col sm:flex-row gap-4 sm:items-center justify-between">
                 <div className="flex items-center gap-4">
                   <div className="w-16 h-16 bg-navy-100 rounded-xl flex items-center justify-center">
                     <Building2 className="w-8 h-8 text-navy-600" />
@@ -200,11 +198,11 @@ export default function OrganizationDetailPage() {
                 </div>
                 {canManageMembers && (
                   <button
-                    onClick={() => setShowInviteModal(true)}
-                    className="px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-500 transition flex items-center gap-2"
+                    disabled
+                    title="Team invitations are not available yet"
+                    className="px-4 py-2 bg-navy-100 text-navy-500 rounded-lg cursor-not-allowed"
                   >
-                    <Plus className="w-4 h-4" />
-                    Invite Member
+                    Invitations coming soon
                   </button>
                 )}
               </div>
@@ -313,18 +311,6 @@ export default function OrganizationDetailPage() {
       </div>
 
 
-      {/* Invite Modal */}
-      {showInviteModal && (
-        <InviteMemberModal
-          onClose={() => setShowInviteModal(false)}
-          onInvited={async () => {
-            setShowInviteModal(false);
-            await refreshOrg();
-          }}
-          orgId={orgId}
-        />
-      )}
-
       {/* Remove Member Confirmation */}
       <ConfirmDialog
         isOpen={removeMemberTarget !== null}
@@ -336,105 +322,5 @@ export default function OrganizationDetailPage() {
         variant="danger"
       />
     </DashboardLayout >
-  );
-}
-
-function InviteMemberModal({ onClose, onInvited, orgId }: { onClose: () => void; onInvited: () => void; orgId: string }) {
-  const [email, setEmail] = useState('');
-  const [role, setRole] = useState<'ADMIN' | 'MEMBER'>('MEMBER');
-  const [inviting, setInviting] = useState(false);
-  const [inviteError, setInviteError] = useState<string | null>(null);
-
-  const handleInvite = async () => {
-    if (!email.trim()) return;
-
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      setInviteError('Please enter a valid email address.');
-      return;
-    }
-
-    setInviting(true);
-    setInviteError(null);
-    try {
-      await inviteOrganizationMember(orgId, { email, role });
-      onInvited();
-    } catch (err) {
-      setInviteError(err instanceof Error ? err.message : 'Failed to send invite');
-    } finally {
-      setInviting(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div
-        className="bg-white rounded-xl max-w-md w-full shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="p-6 border-b border-navy-100">
-          <h2 className="text-xl font-bold text-navy-900">Invite Team Member</h2>
-          <p className="text-navy-600 text-sm mt-1">
-            They&apos;ll receive an email invitation to join your organization
-          </p>
-        </div>
-
-        <div className="p-6 space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-navy-700 mb-1">
-              Email Address
-            </label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="colleague@company.com"
-              className="w-full px-4 py-2 border border-navy-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-navy-700 mb-1">
-              Role
-            </label>
-            <select
-              value={role}
-              onChange={(e) => setRole(e.target.value as 'ADMIN' | 'MEMBER')}
-              className="w-full px-4 py-2 border border-navy-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500"
-            >
-              <option value="MEMBER">Member — Can view and edit releases</option>
-              <option value="ADMIN">Admin — Can also manage members</option>
-            </select>
-          </div>
-
-          {inviteError && (
-            <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-2">
-              <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
-              <p className="text-sm text-red-600">{inviteError}</p>
-            </div>
-          )}
-        </div>
-
-        <div className="p-6 border-t border-navy-100 flex gap-3">
-          <button
-            onClick={onClose}
-            className="flex-1 px-4 py-2 border border-navy-200 text-navy-600 rounded-lg font-medium hover:bg-navy-50 transition"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleInvite}
-            disabled={inviting || !email.trim()}
-            className="flex-1 px-4 py-2 bg-teal-600 text-white rounded-lg font-medium hover:bg-teal-500 transition disabled:opacity-50 flex items-center justify-center gap-2"
-          >
-            {inviting ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Mail className="w-4 h-4" />
-            )}
-            Send Invite
-          </button>
-        </div>
-      </div>
-    </div>
   );
 }

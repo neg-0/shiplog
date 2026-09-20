@@ -34,6 +34,12 @@ describe('Organizations Routes', () => {
   });
 
   describe('POST /', () => {
+    beforeEach(() => {
+      prismaMock.user.findUnique.mockResolvedValue({
+        subscriptionTier: 'TEAM', stripeSubscriptionId: 'sub_team',
+      } as any);
+    });
+
     it('should create an organization', async () => {
       const payload = {
         name: 'Test Org',
@@ -73,6 +79,43 @@ describe('Organizations Routes', () => {
       expect(res.status).toBe(201);
       const data = await res.json();
       expect(data.name).toBe(payload.name);
+    });
+
+    it('gives a newly created organization its existing TEAM subscription', async () => {
+      prismaMock.organization.findUnique.mockResolvedValue(null);
+      prismaMock.user.findUnique.mockResolvedValue({
+        subscriptionTier: 'TEAM', stripeSubscriptionId: 'sub_team',
+      } as any);
+      prismaMock.$transaction.mockImplementation(async (callback: any) => callback(prismaMock));
+      prismaMock.organization.create.mockResolvedValue({ id: 'new-org', name: 'Team Org' } as any);
+
+      const response = await app.request('/', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Team Org', slug: 'team-org' }),
+      });
+
+      expect(response.status).toBe(201);
+      expect(prismaMock.organization.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ ownerId: mockUser.id, subscriptionId: 'sub_team' }),
+      });
+    });
+
+    it.each(['FREE', 'PRO'])('rejects organization creation for a %s account before creating membership', async (tier) => {
+      prismaMock.organization.findUnique.mockResolvedValue(null);
+      prismaMock.user.findUnique.mockResolvedValue({
+        subscriptionTier: tier, stripeSubscriptionId: tier === 'PRO' ? 'sub_pro' : null,
+      } as any);
+      prismaMock.$transaction.mockImplementation(async (callback: any) => callback(prismaMock));
+
+      const response = await app.request('/', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Team Org', slug: 'team-org' }),
+      });
+
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({ error: 'Organization creation requires a Team plan.' });
+      expect(prismaMock.organization.create).not.toHaveBeenCalled();
+      expect(prismaMock.organizationMember.create).not.toHaveBeenCalled();
     });
 
     it('should return error if slug exists', async () => {

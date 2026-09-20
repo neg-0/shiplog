@@ -2,8 +2,9 @@
 
 import Link from 'next/link';
 import { Ship, GitBranch, Users, Mail, Slack, Zap, ArrowRight, Check, LayoutDashboard } from 'lucide-react';
-import { useState } from 'react';
-import { createCheckoutSession, isAuthenticated } from '../lib/api';
+import { useEffect, useState } from 'react';
+import ReleaseExample from '../components/ReleaseExample';
+import { isAuthenticated } from '../lib/api';
 
 const colorMap: Record<string, { bg: string; text: string }> = {
   teal: { bg: 'bg-teal-100', text: 'text-teal-600' },
@@ -15,25 +16,8 @@ const colorMap: Record<string, { bg: string; text: string }> = {
 };
 
 export default function Home() {
-  const loggedIn = isAuthenticated();
-  const [checkoutError, setCheckoutError] = useState<string | null>(null);
-
-  const handleCheckout = async (plan: 'pro' | 'team') => {
-    if (!loggedIn) {
-      window.location.href = '/login';
-      return;
-    }
-
-    try {
-      setCheckoutError(null);
-      const session = await createCheckoutSession(plan);
-      if (session.url) {
-        window.location.href = session.url;
-      }
-    } catch (err) {
-      setCheckoutError(err instanceof Error ? err.message : 'Failed to start checkout');
-    }
-  };
+  const [loggedIn, setLoggedIn] = useState(false);
+  useEffect(() => { setLoggedIn(isAuthenticated()); }, []);
 
   return (
     <div className="min-h-screen">
@@ -45,24 +29,24 @@ export default function Home() {
               <Ship className="w-8 h-8 text-teal-600" />
               <span className="text-xl font-bold text-navy-900">ShipLog</span>
             </div>
-            <div className="flex items-center gap-6">
-              <Link href="#features" className="text-navy-600 hover:text-navy-900 transition">
+            <div className="flex items-center gap-3 sm:gap-6 text-sm sm:text-base">
+              <Link href="#features" className="hidden sm:inline text-navy-600 hover:text-navy-900 transition">
                 Features
               </Link>
               <Link href="#pricing" className="text-navy-600 hover:text-navy-900 transition">
                 Pricing
               </Link>
               {loggedIn ? (
-                <Link 
-                  href="/dashboard" 
+                <Link
+                  href="/dashboard"
                   className="bg-teal-600 text-white px-4 py-2 rounded-lg hover:bg-teal-500 transition flex items-center gap-2"
                 >
                   <LayoutDashboard className="w-4 h-4" />
                   Dashboard
                 </Link>
               ) : (
-                <Link 
-                  href="/login" 
+                <Link
+                  href="/login"
                   className="bg-navy-900 text-white px-4 py-2 rounded-lg hover:bg-navy-800 transition flex items-center gap-2"
                 >
                   <GitBranch className="w-4 h-4" />
@@ -86,12 +70,12 @@ export default function Home() {
             <span className="text-teal-600">ship themselves</span>
           </h1>
           <p className="text-xl text-navy-600 mb-8 max-w-2xl mx-auto">
-            One commit. Three audiences. Zero friction.
+            One release. Three audiences. Ready to share.
             <br />
-            ShipLog automatically generates AI-written changelogs tailored for customers, developers, and stakeholders.
+            Turn GitHub releases into clear updates for customers, developers, and stakeholders. Review once, then share where your team works.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Link 
+            <Link
               href={loggedIn ? "/dashboard" : "/login"}
               className="bg-navy-900 text-white px-8 py-4 rounded-xl text-lg font-semibold hover:bg-navy-800 transition flex items-center justify-center gap-2 shadow-lg shadow-navy-900/20"
             >
@@ -107,8 +91,8 @@ export default function Home() {
                 </>
               )}
             </Link>
-            <Link 
-              href="#features"
+            <Link
+              href="#example"
               className="bg-white text-navy-900 px-8 py-4 rounded-xl text-lg font-semibold hover:bg-navy-50 transition border-2 border-navy-200 flex items-center justify-center gap-2"
             >
               See it in action
@@ -117,6 +101,8 @@ export default function Home() {
           </div>
         </div>
       </section>
+
+      <ReleaseExample />
 
       {/* How It Works */}
       <section className="py-20 bg-navy-950 text-white">
@@ -130,17 +116,17 @@ export default function Home() {
               {
                 step: '1',
                 title: 'Connect GitHub',
-                description: 'One-click OAuth. Select your repos. Done in under 2 minutes.',
+                description: 'Sign in with GitHub and choose a repository you administer.',
               },
               {
                 step: '2',
                 title: 'Publish a release',
-                description: 'Tag your release like normal. We detect it automatically.',
+                description: 'Connect a repository with existing releases, or publish your next release on GitHub.',
               },
               {
                 step: '3',
                 title: 'Notes ship everywhere',
-                description: 'Customer, dev, and exec versions land in Slack, Discord, Email, and your changelog page.',
+                description: 'Review your three drafts, then publish to your changelog and configured delivery channels.',
               },
             ].map((item) => (
               <div key={item.step} className="text-center">
@@ -171,25 +157,25 @@ export default function Home() {
                 title: 'Customer Changelog',
                 color: 'teal',
                 description: 'Benefit-driven, jargon-free updates your users will actually read.',
-                example: '"You can now export reports to PDF in one click"',
+                example: 'You can now export reports to PDF in one click',
               },
               {
                 icon: GitBranch,
                 title: 'Developer Changelog',
                 color: 'navy',
                 description: 'Technical details, breaking changes, migration notes.',
-                example: '"BREAKING: API v1 deprecated. See migration guide."',
+                example: 'Added PDF report export; existing export formats are unchanged.',
               },
               {
                 icon: Mail,
                 title: 'Stakeholder Brief',
                 color: 'amber',
-                description: 'Executive summary with shipped vs planned and business impact.',
-                example: '"Q1 goal 80% complete. Key feature shipped ahead of schedule."',
+                description: 'A concise summary of what shipped and why it matters.',
+                example: 'PDF export makes reports easier to share outside the product.',
               },
             ].map((item) => (
-              <div 
-                key={item.title} 
+              <div
+                key={item.title}
                 className="bg-white rounded-2xl p-6 shadow-lg border border-navy-100 hover:shadow-xl transition"
               >
                 <div className={`w-12 h-12 ${colorMap[item.color]?.bg ?? 'bg-gray-100'} rounded-xl flex items-center justify-center mb-4`}>
@@ -197,7 +183,7 @@ export default function Home() {
                 </div>
                 <h3 className="text-xl font-semibold text-navy-900 mb-2">{item.title}</h3>
                 <p className="text-navy-600 mb-4">{item.description}</p>
-                <p className="text-sm text-navy-400 italic">"{item.example}"</p>
+                <p className="text-sm text-navy-400 italic">&ldquo;{item.example}&rdquo;</p>
               </div>
             ))}
           </div>
@@ -217,10 +203,9 @@ export default function Home() {
             {[
               { name: 'Slack', icon: Slack },
               { name: 'Discord', icon: Users },
-              { name: 'Email', icon: Mail },
               { name: 'Hosted Page', icon: Ship },
             ].map((channel) => (
-              <div 
+              <div
                 key={channel.name}
                 className="bg-white px-8 py-6 rounded-xl shadow-md flex items-center gap-4 border border-navy-100"
               >
@@ -241,11 +226,6 @@ export default function Home() {
           <p className="text-navy-600 text-center mb-12">
             Start free. Upgrade when you need more.
           </p>
-          {checkoutError && (
-            <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-6 text-red-700 text-center">
-              {checkoutError}
-            </div>
-          )}
           <div className="grid md:grid-cols-3 gap-6">
             {[
               {
@@ -262,7 +242,7 @@ export default function Home() {
                 period: '/mo',
                 description: 'For growing teams',
                 trial: '14-day free trial',
-                features: ['5 repos', 'Auto-trigger on release', 'Slack + Discord', 'Email digests', 'Edit before publish'],
+                features: ['5 repos', 'Auto-trigger on release', 'Slack + Discord', 'Edit before publish'],
                 cta: 'Start Free Trial',
                 highlighted: true,
               },
@@ -271,16 +251,16 @@ export default function Home() {
                 price: '$79',
                 period: '/mo',
                 description: 'For scaling orgs',
-                features: ['Unlimited repos', 'Everything in Pro', 'Custom branding', 'API access', 'Priority support'],
+                features: ['Unlimited repos', 'Everything in Pro', 'Branding options by request'],
                 cta: 'Contact Us',
                 highlighted: false,
               },
             ].map((plan) => (
-              <div 
+              <div
                 key={plan.name}
                 className={`rounded-2xl p-6 ${
-                  plan.highlighted 
-                    ? 'bg-navy-900 text-white ring-4 ring-teal-500 scale-105' 
+                  plan.highlighted
+                    ? 'bg-navy-900 text-white ring-4 ring-teal-500 md:scale-105'
                     : 'bg-white border border-navy-200'
                 }`}
               >
@@ -308,22 +288,22 @@ export default function Home() {
                   ))}
                 </ul>
                 {plan.name === 'Pro' ? (
-                  <button
-                    onClick={() => handleCheckout('pro')}
-                    className={`w-full py-3 rounded-lg font-semibold transition ${
-                      plan.highlighted 
-                        ? 'bg-teal-500 text-white hover:bg-teal-400' 
+                  <Link
+                    href={loggedIn ? '/dashboard/settings' : '/login'}
+                    className={`block text-center w-full py-3 rounded-lg font-semibold transition ${
+                      plan.highlighted
+                        ? 'bg-teal-500 text-white hover:bg-teal-400'
                         : 'bg-navy-100 text-navy-900 hover:bg-navy-200'
                     }`}
                   >
                     {plan.cta}
-                  </button>
+                  </Link>
                 ) : plan.name === 'Team' ? (
                   <a
                     href="mailto:hello@shiplog.io"
                     className={`block text-center w-full py-3 rounded-lg font-semibold transition ${
-                      plan.highlighted 
-                        ? 'bg-teal-500 text-white hover:bg-teal-400' 
+                      plan.highlighted
+                        ? 'bg-teal-500 text-white hover:bg-teal-400'
                         : 'bg-navy-100 text-navy-900 hover:bg-navy-200'
                     }`}
                   >
@@ -333,8 +313,8 @@ export default function Home() {
                   <Link
                     href="/login"
                     className={`block text-center w-full py-3 rounded-lg font-semibold transition ${
-                      plan.highlighted 
-                        ? 'bg-teal-500 text-white hover:bg-teal-400' 
+                      plan.highlighted
+                        ? 'bg-teal-500 text-white hover:bg-teal-400'
                         : 'bg-navy-100 text-navy-900 hover:bg-navy-200'
                     }`}
                   >
@@ -355,12 +335,12 @@ export default function Home() {
             {loggedIn ? 'Your releases are waiting' : 'Ready to ship your release notes?'}
           </h2>
           <p className="text-navy-300 mb-8 max-w-xl mx-auto">
-            {loggedIn 
+            {loggedIn
               ? 'Head to your dashboard to connect more repos or view your changelogs.'
-              : 'Connect your GitHub repo in under 2 minutes. Your next release will write itself.'
+              : 'Connect one repository for free and turn an existing release into your first changelog.'
             }
           </p>
-          <Link 
+          <Link
             href={loggedIn ? "/dashboard" : "/login"}
             className="inline-flex items-center gap-2 bg-teal-500 text-white px-8 py-4 rounded-xl text-lg font-semibold hover:bg-teal-400 transition shadow-lg"
           >

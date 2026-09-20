@@ -47,6 +47,8 @@ export async function importRepoHistory(repoId: string, accessToken: string): Pr
     logger.info(`Found ${releases.length} releases`, { repoId, count: releases.length });
 
     for (const ghRelease of releases) {
+      // Drafts have no published tag and must remain private on GitHub until released.
+      if (ghRelease.draft) continue;
       const release = await prisma.release.upsert({
         where: { githubId: ghRelease.id },
         create: {
@@ -58,9 +60,7 @@ export async function importRepoHistory(repoId: string, accessToken: string): Pr
           htmlUrl: ghRelease.html_url,
           isDraft: ghRelease.draft,
           isPrerelease: ghRelease.prerelease,
-          publishedAt: ghRelease.draft
-            ? new Date(ghRelease.created_at)
-            : (ghRelease.published_at ? new Date(ghRelease.published_at) : null),
+          publishedAt: ghRelease.published_at ? new Date(ghRelease.published_at) : null,
           status: 'PENDING',
         },
         update: {},

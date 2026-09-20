@@ -79,6 +79,14 @@ describe('User Routes', () => {
   });
 
   describe('DELETE /me', () => {
+    beforeEach(() => {
+      prismaMock.$transaction.mockImplementation(async (callback: any) => callback(prismaMock));
+      prismaMock.user.findUnique.mockResolvedValue({
+        stripeSubscriptionId: null, subscriptionStatus: null,
+        _count: { ownedOrganizations: 0, repos: 0 },
+      } as any);
+    });
+
     it('should delete user account', async () => {
       prismaMock.user.delete.mockResolvedValue({ id: mockUser.id } as any);
 
@@ -88,6 +96,62 @@ describe('User Routes', () => {
       expect(prismaMock.user.delete).toHaveBeenCalledWith({
         where: { id: mockUser.id }
       });
+      expect(prismaMock.organizationInvite.deleteMany).toHaveBeenCalledWith({
+        where: { invitedById: mockUser.id },
+      });
+      expect(res.headers.get('Set-Cookie')).toContain('shiplog_session=');
+      expect(res.headers.get('Set-Cookie')).toContain('shiplog_logged_in=');
+      expect(res.headers.get('Set-Cookie')).toContain('Max-Age=0');
+    });
+
+    it('requires repository disconnection before deleting webhook custody', async () => {
+      prismaMock.user.findUnique.mockResolvedValue({
+        stripeSubscriptionId: null, subscriptionStatus: null,
+        _count: { ownedOrganizations: 0, repos: 1 },
+      } as any);
+      const res = await app.request('/me', { method: 'DELETE' });
+      expect(res.status).toBe(409);
+      expect((await res.json()).error).toContain('Disconnect your repositories');
+      expect(prismaMock.user.delete).not.toHaveBeenCalled();
+    });
+
+    it.each(['active', 'trialing', 'past_due', 'unpaid', 'paused', 'incomplete'])('refuses to orphan a %s subscription', async (status) => {
+      prismaMock.user.findUnique.mockResolvedValue({
+        stripeSubscriptionId: 'sub_live', subscriptionStatus: status,
+        _count: { ownedOrganizations: 0 },
+      } as any);
+
+      const res = await app.request('/me', { method: 'DELETE' });
+
+      expect(res.status).toBe(409);
+      expect((await res.json()).error).toContain('billing portal');
+      expect(prismaMock.user.delete).not.toHaveBeenCalled();
+      expect(prismaMock.organizationInvite.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it('allows deletion once a subscription has finished cancellation', async () => {
+      prismaMock.user.findUnique.mockResolvedValue({
+        stripeSubscriptionId: 'sub_canceled', subscriptionStatus: 'canceled',
+        _count: { ownedOrganizations: 0 },
+      } as any);
+
+      const res = await app.request('/me', { method: 'DELETE' });
+      expect(res.status).toBe(200);
+      expect(prismaMock.user.delete).toHaveBeenCalled();
+    });
+
+    it('explains how an organization owner can resolve blocked deletion', async () => {
+      prismaMock.user.findUnique.mockResolvedValue({
+        stripeSubscriptionId: null, subscriptionStatus: null,
+        _count: { ownedOrganizations: 1 },
+      } as any);
+
+      const res = await app.request('/me', { method: 'DELETE' });
+
+      expect(res.status).toBe(409);
+      expect((await res.json()).error).toContain('organization');
+      expect(prismaMock.user.delete).not.toHaveBeenCalled();
+      expect(prismaMock.organizationInvite.deleteMany).not.toHaveBeenCalled();
     });
   });
 });

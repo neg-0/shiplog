@@ -4,7 +4,7 @@ import { notFound } from 'next/navigation';
 import ReactMarkdown from 'react-markdown';
 import { FeedbackWidget } from '@/components/FeedbackWidget';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.shiplog.io';
+const API_URL = process.env.API_URL || process.env.NEXT_PUBLIC_API_URL || (process.env.NODE_ENV === 'production' ? 'https://api.shiplog.io' : 'http://127.0.0.1:3001');
 
 interface Release {
   id: string;
@@ -30,19 +30,17 @@ interface ChangelogData {
 }
 
 async function getChangelog(slug: string): Promise<ChangelogData | null> {
-  try {
-    const res = await fetch(`${API_URL}/public/${slug}`, {
-      next: { revalidate: 60 }, // Cache for 1 minute
-    });
-    if (!res.ok) return null;
-    return res.json();
-  } catch {
-    return null;
-  }
+  const res = await fetch(`${API_URL}/public/${encodeURIComponent(slug)}`, {
+    next: { revalidate: 60 }, // Cache for 1 minute
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error('Unable to load changelog');
+  return res.json();
 }
 
-export async function generateMetadata({ params }: { params: { slug: string } }) {
-  const data = await getChangelog(params.slug);
+export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  const data = await getChangelog(slug);
   if (!data) return { title: 'Changelog Not Found' };
   
   return {
@@ -55,8 +53,9 @@ export async function generateMetadata({ params }: { params: { slug: string } })
   };
 }
 
-export default async function PublicChangelogPage({ params }: { params: { slug: string } }) {
-  const data = await getChangelog(params.slug);
+export default async function PublicChangelogPage({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  const data = await getChangelog(slug);
   
   if (!data) {
     notFound();
@@ -101,7 +100,7 @@ export default async function PublicChangelogPage({ params }: { params: { slug: 
           <div className="space-y-8">
             {data.releases.map((release) => (
               <article key={release.id} className="border-b border-gray-100 pb-8 last:border-0">
-                <div className="flex items-center gap-3 mb-4">
+                <div className="flex flex-wrap items-center gap-3 mb-4">
                   <span 
                     className="px-3 py-1 rounded-full text-sm font-semibold"
                     style={{ backgroundColor: `${accentColor}20`, color: accentColor }}
@@ -132,7 +131,7 @@ export default async function PublicChangelogPage({ params }: { params: { slug: 
                 )}
 
                 <Link
-                  href={`/c/${params.slug}/${release.version}`}
+                  href={`/c/${encodeURIComponent(slug)}/${encodeURIComponent(release.version)}`}
                   className="inline-flex items-center gap-1 mt-4 text-sm font-medium hover:underline"
                   style={{ color: accentColor }}
                 >

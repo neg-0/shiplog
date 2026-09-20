@@ -3,16 +3,17 @@ import ReactMarkdown from 'react-markdown';
 import Link from 'next/link';
 
 async function getPreview(slug: string) {
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://api.shiplog.io';
-  const res = await fetch(`${apiUrl}/preview/${slug}`, {
+  const apiUrl = process.env.API_URL || process.env.NEXT_PUBLIC_API_URL || (process.env.NODE_ENV === 'production' ? 'https://api.shiplog.io' : 'http://127.0.0.1:3001');
+  const res = await fetch(`${apiUrl}/preview/${encodeURIComponent(slug)}`, {
     cache: 'no-store'
   });
   if (!res.ok) return null;
   return res.json();
 }
 
-export default async function PreviewPage({ params }: { params: { slug: string } }) {
-  const data = await getPreview(params.slug);
+export default async function PreviewPage({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  const data = await getPreview(slug);
   
   if (!data) notFound();
 

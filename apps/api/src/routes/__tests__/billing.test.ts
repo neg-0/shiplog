@@ -67,6 +67,8 @@ const { billing } = await import('../billing');
 describe('Billing Routes', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    prismaMock.$transaction.mockImplementation(async (callback: any) => callback(prismaMock));
+    prismaMock.user.updateMany.mockResolvedValue({ count: 1 });
   });
 
   describe('POST /checkout', () => {

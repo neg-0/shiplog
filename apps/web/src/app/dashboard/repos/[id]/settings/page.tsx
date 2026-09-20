@@ -3,11 +3,11 @@
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { ArrowLeft, Save, Loader2, AlertCircle, Check } from 'lucide-react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { getRepo, getUser, isAuthenticated, updateRepoConfig, updateRepoSettings, type RepoDetail, type User } from '../../../../../lib/api';
 
-export default function RepoSettingsPage({ params }: { params: { id: string } }) {
+export default function RepoSettingsPage() {
   const [repo, setRepo] = useState<RepoDetail | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
@@ -20,12 +20,14 @@ export default function RepoSettingsPage({ params }: { params: { id: string } })
     autoGenerate: true,
     autoPublish: false,
     excludeFromFeatured: false,
+    isPublic: false,
     publicTitle: '',
     publicDescription: '',
     customerTone: 'friendly',
   });
 
   const router = useRouter();
+  const params = useParams<{ id: string }>();
   const repoId = params.id;
 
   useEffect(() => {
@@ -50,6 +52,7 @@ export default function RepoSettingsPage({ params }: { params: { id: string } })
           autoGenerate: repoData.config?.autoGenerate ?? true,
           autoPublish: repoData.config?.autoPublish ?? false,
           excludeFromFeatured: repoData.excludeFromFeatured ?? false,
+          isPublic: repoData.isPublic ?? false,
           publicTitle: repoData.publicTitle ?? '',
           publicDescription: repoData.publicDescription ?? '',
           customerTone: repoData.config?.customerTone ?? 'friendly',
@@ -66,6 +69,7 @@ export default function RepoSettingsPage({ params }: { params: { id: string } })
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!repo || saving) return;
     setSaving(true);
     setError(null);
     setSuccess(false);
@@ -79,6 +83,7 @@ export default function RepoSettingsPage({ params }: { params: { id: string } })
         }),
         updateRepoSettings(repoId, {
           excludeFromFeatured: config.excludeFromFeatured,
+          isPublic: config.isPublic,
           publicTitle: config.publicTitle,
           publicDescription: config.publicDescription,
         })
@@ -131,6 +136,7 @@ export default function RepoSettingsPage({ params }: { params: { id: string } })
           )}
 
           <form onSubmit={handleSave} className="space-y-8">
+            <fieldset disabled={!repo || saving} className="space-y-8 disabled:opacity-60">
             {/* Automation */}
             <div className="space-y-4">
               <h2 className="text-lg font-semibold text-navy-900 border-b border-navy-100 pb-2">Automation</h2>
@@ -163,10 +169,10 @@ export default function RepoSettingsPage({ params }: { params: { id: string } })
                 />
                 <div>
                   <label htmlFor="autoPublish" className="block text-sm font-medium text-navy-900">
-                    Auto-publish to channels (Global)
+                    Auto-publish releases
                   </label>
                   <p className="text-sm text-navy-500">
-                    If enabled, releases will be sent to "Auto-Publish" channels immediately. 
+                    If enabled, generated releases will be published and sent to enabled channels immediately.
                     Disable this to review drafts first.
                   </p>
                 </div>
@@ -178,12 +184,26 @@ export default function RepoSettingsPage({ params }: { params: { id: string } })
               <h2 className="text-lg font-semibold text-navy-900 border-b border-navy-100 pb-2">Hosted Page</h2>
               
               <div className="grid gap-4">
+                <div className="flex items-start gap-3">
+                  <input
+                    type="checkbox"
+                    id="isPublic"
+                    checked={config.isPublic}
+                    onChange={(e) => setConfig({ ...config, isPublic: e.target.checked })}
+                    className="mt-1 rounded border-navy-300 text-teal-600 focus:ring-teal-500"
+                  />
+                  <div>
+                    <label htmlFor="isPublic" className="block text-sm font-medium text-navy-900">Public changelog</label>
+                    <p className="text-sm text-navy-500">Allow anyone with your changelog link to read published release notes. Turn this off to keep the hosted page private.</p>
+                  </div>
+                </div>
                 <div>
-                  <label className="block text-sm font-medium text-navy-700 mb-1">
+                  <label htmlFor="publicTitle" className="block text-sm font-medium text-navy-700 mb-1">
                     Public Title
                   </label>
                   <input
                     type="text"
+                    id="publicTitle"
                     value={config.publicTitle}
                     onChange={(e) => setConfig({ ...config, publicTitle: e.target.value })}
                     placeholder="e.g. Acme Changelog"
@@ -192,10 +212,11 @@ export default function RepoSettingsPage({ params }: { params: { id: string } })
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-navy-700 mb-1">
+                  <label htmlFor="publicDescription" className="block text-sm font-medium text-navy-700 mb-1">
                     Public Description
                   </label>
                   <textarea
+                    id="publicDescription"
                     value={config.publicDescription}
                     onChange={(e) => setConfig({ ...config, publicDescription: e.target.value })}
                     placeholder="What is this project about?"
@@ -214,10 +235,10 @@ export default function RepoSettingsPage({ params }: { params: { id: string } })
                   />
                   <div>
                     <label htmlFor="excludeFromFeatured" className="block text-sm font-medium text-navy-900">
-                      Hide from Index / Featured
+                      Hide from featured changelogs
                     </label>
                     <p className="text-sm text-navy-500">
-                      Prevent this changelog from appearing in public directories or search results.
+                      Exclude this changelog from ShipLog&apos;s featured list. This does not make the page private or prevent search engines from finding it.
                     </p>
                   </div>
                 </div>
@@ -229,10 +250,11 @@ export default function RepoSettingsPage({ params }: { params: { id: string } })
               <h2 className="text-lg font-semibold text-navy-900 border-b border-navy-100 pb-2">AI Personality</h2>
               
               <div>
-                <label className="block text-sm font-medium text-navy-700 mb-1">
+                <label htmlFor="customerTone" className="block text-sm font-medium text-navy-700 mb-1">
                   Customer Tone
                 </label>
                 <select
+                  id="customerTone"
                   value={config.customerTone}
                   onChange={(e) => setConfig({ ...config, customerTone: e.target.value })}
                   className="w-full rounded-lg border border-navy-200 px-3 py-2 text-sm focus:border-teal-500 focus:ring-1 focus:ring-teal-500 outline-none transition"
@@ -255,6 +277,7 @@ export default function RepoSettingsPage({ params }: { params: { id: string } })
                 Save Settings
               </button>
             </div>
+            </fieldset>
           </form>
         </div>
       </div>

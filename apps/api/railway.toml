@@ -2,6 +2,8 @@
 builder = "nixpacks"
 
 [deploy]
+# Fail deployment on destructive schema drift instead of accepting data loss.
+preDeployCommand = "npx prisma db push --skip-generate"
 healthcheckPath = "/health"
 healthcheckTimeout = 100
 restartPolicyType = "on_failure"

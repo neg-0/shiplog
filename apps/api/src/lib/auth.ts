@@ -6,6 +6,7 @@
  */
 
 import type { Context, Next } from 'hono';
+import { getCookie } from 'hono/cookie';
 import { verifyToken } from './jwt.js';
 import { prisma } from './db.js';
 import { setLoggerContext } from './logger.js';
@@ -166,11 +167,8 @@ export async function decrypt(encrypted: string): Promise<string> {
  * Prefers cookie-based auth; falls back to Bearer token for API clients.
  */
 function getSessionToken(c: Context): string | null {
-  const cookieHeader = c.req.header('Cookie');
-  if (cookieHeader) {
-    const match = cookieHeader.match(/shiplog_session=([^;]+)/);
-    if (match) return match[1];
-  }
+  const session = getCookie(c, 'shiplog_session');
+  if (session) return session;
 
   const authHeader = c.req.header('Authorization');
   if (authHeader?.startsWith('Bearer ')) {

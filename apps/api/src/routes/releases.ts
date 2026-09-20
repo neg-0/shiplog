@@ -6,6 +6,7 @@ import { requireAuth, decrypt } from '../lib/auth.js';
 import { apiLimiter } from '../lib/rate-limit.js';
 import { fetchReleaseData } from '../services/github.js';
 import { generateReleaseNotes } from '../services/generator.js';
+import { publishReleaseNotes } from '../services/publisher.js';
 import { sanitizeHtml } from '../lib/sanitize.js';
 import { rateLimit } from '../lib/rate-limit.js';
 import {
@@ -60,6 +61,13 @@ releases.get('/:id', async (c) => {
           userId: true,
           owner: true,
           name: true,
+          config: {
+            select: {
+              channels: {
+                select: { id: true, name: true, type: true, audience: true, enabled: true },
+              },
+            },
+          },
         },
       },
     },
@@ -78,9 +86,11 @@ releases.get('/:id', async (c) => {
     publishedAt: release.publishedAt,
     status: release.status,
     processedAt: release.processedAt,
+    error: release.error?.startsWith('Delivery outcome needs review.') ? release.error : null,
     repo: {
       id: release.repo.id,
       fullName: release.repo.fullName,
+      config: release.repo.config,
     },
     notes: release.notes ? {
       customer: release.notes.customer,
@@ -141,14 +151,21 @@ releases.post(
       return c.json({ error: 'Release not found' }, 404);
     }
 
+    if (release.status === 'PROCESSING') {
+      return c.json({ error: 'Release is already being processed' }, 409);
+    }
+    if (release.error?.startsWith('Delivery outcome needs review.')) {
+      return c.json({ error: release.error }, 409);
+    }
+
     logger.info(`🔄 Regenerating notes for release ${id}`, { releaseId: id });
 
     try {
-      // Update status
-      await prisma.release.update({
-        where: { id },
+      const claimed = await prisma.release.updateMany({
+        where: { id, status: release.status },
         data: { status: 'PROCESSING' },
       });
+      if (!claimed.count) return c.json({ error: 'Release is already being processed' }, 409);
 
       // Decrypt token and fetch release data
       const accessToken = await decrypt(release.repo.user.accessToken);
@@ -176,32 +193,25 @@ releases.post(
         },
       });
 
-      // Upsert notes
-      await prisma.generatedNotes.upsert({
-        where: { releaseId: id },
-        create: {
-          releaseId: id,
-          customer: notes.customer,
-          developer: notes.developer,
-          stakeholder: notes.stakeholder,
-          tokensUsed: notes.tokensUsed,
-          model: notes.model,
-        },
-        update: {
-          customer: notes.customer,
-          developer: notes.developer,
-          stakeholder: notes.stakeholder,
-          tokensUsed: notes.tokensUsed,
-          model: notes.model,
-          customerEdited: false,
-          developerEdited: false,
-          stakeholderEdited: false,
-        },
-      });
-
+      // Commit the replacement notes and review state together.
       await prisma.release.update({
         where: { id },
-        data: { status: 'READY', processedAt: new Date() },
+        data: {
+          status: 'READY', processedAt: new Date(), error: null,
+          isDraft: releaseData.release.isDraft,
+          publishedAt: releaseData.release.publishedAt,
+          notes: {
+            upsert: {
+              create: notes,
+              update: {
+                ...notes,
+                customerEdited: false,
+                developerEdited: false,
+                stakeholderEdited: false,
+              },
+            },
+          },
+        },
       });
 
       logger.info(`✅ Regenerated notes for ${release.tagName}`, { releaseId: id, tagName: release.tagName });
@@ -218,7 +228,7 @@ releases.post(
       await prisma.release.update({
         where: { id },
         data: { 
-          status: 'FAILED',
+          status: ['PUBLISHED', 'PARTIAL_SUCCESS'].includes(release.status) ? release.status : 'FAILED',
           error: error instanceof Error ? error.message : 'Unknown error',
         },
       });
@@ -252,7 +262,11 @@ releases.post(
       include: {
         notes: true,
         repo: {
-          select: { userId: true, fullName: true },
+          select: {
+            userId: true,
+            fullName: true,
+            config: { include: { channels: true, emailRecipients: true } },
+          },
         },
       },
     });
@@ -264,30 +278,56 @@ releases.post(
     if (!release.notes) {
       return c.json({ error: 'No generated notes to publish' }, 400);
     }
+    if (release.error?.startsWith('Delivery outcome needs review.')) {
+      return c.json({ error: release.error }, 409);
+    }
+
+    if (release.isDraft || !release.publishedAt) {
+      return c.json({ error: 'Publish the release on GitHub before publishing its notes' }, 400);
+    }
+
+    if (!['READY', 'PARTIAL_SUCCESS', 'PUBLISHED'].includes(release.status)) {
+      return c.json({ error: 'Release is not ready to publish' }, 409);
+    }
+
+    if (body.channels?.some((id: string) => !release.repo.config?.channels.some(channel => channel.id === id && channel.enabled))) {
+      return c.json({ error: 'One or more selected channels are unavailable' }, 400);
+    }
+    if (body.channels?.some((id: string) => release.repo.config?.channels.some(channel => channel.id === id && channel.type === 'WEBHOOK'))) {
+      return c.json({ error: 'Generic webhooks are not supported. Choose Slack or Discord.' }, 400);
+    }
 
     logger.info(`📤 Publishing release ${id} to channels`, { releaseId: id, channels: body.channels });
 
-    // Mark as published
-    await prisma.release.update({
-      where: { id },
-      data: { status: 'PUBLISHED' },
+    // Only one request may deliver this release at a time.
+    const claimed = await prisma.release.updateMany({
+      where: { id, status: release.status },
+      data: { status: 'PROCESSING' },
     });
+    if (!claimed.count) return c.json({ error: 'Release is already being processed' }, 409);
 
-    // Create distribution records for hosted changelog
-    await prisma.distribution.createMany({
-      data: [
-        { releaseId: id, audience: 'CUSTOMER', hostedChangelog: true, status: 'SENT', sentAt: new Date() },
-        { releaseId: id, audience: 'DEVELOPER', hostedChangelog: true, status: 'SENT', sentAt: new Date() },
-        { releaseId: id, audience: 'STAKEHOLDER', hostedChangelog: true, status: 'SENT', sentAt: new Date() },
-      ],
-    });
-
-    return c.json({
-      id,
-      status: 'published',
-      repo: release.repo.fullName,
-      tagName: release.tagName,
-    });
+    try {
+      const result = await publishReleaseNotes({ ...release, notes: release.notes }, body.channels);
+      return c.json({
+        id,
+        status: result.status.toLowerCase(),
+        repo: release.repo.fullName,
+        tagName: release.tagName,
+        failedCount: result.failedCount,
+        distributedTo: result.distributedTo,
+      });
+    } catch (error) {
+      logger.error('Failed to publish release', { releaseId: id, error });
+      const uncertain = error instanceof Error && error.name === 'PublicationOutcomeUnknown';
+      await prisma.release.update({
+        where: { id },
+        data: {
+          status: uncertain && release.status === 'READY' ? 'FAILED' : release.status,
+          ...(uncertain ? { error: error.message } : {}),
+        },
+      });
+      return c.json({ error: 'Failed to publish release' }, 500);
+    }
   }
 );
 

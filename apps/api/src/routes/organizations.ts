@@ -47,6 +47,12 @@ organizations.post('/', validate(createOrgSchema), async (c) => {
   }
 
   const org = await prisma.$transaction(async (tx: any) => {
+    const owner = await tx.user.findUnique({
+      where: { id: user.id },
+      select: { subscriptionTier: true, stripeSubscriptionId: true },
+    });
+    if (owner?.subscriptionTier !== 'TEAM') return null;
+
     const created = await tx.organization.create({
       data: {
         name: body.name,
@@ -54,6 +60,7 @@ organizations.post('/', validate(createOrgSchema), async (c) => {
         githubOrgId: body.githubOrgId ?? null,
         githubOrgLogin: body.githubOrgLogin ?? null,
         ownerId: user.id,
+        subscriptionId: owner?.subscriptionTier === 'TEAM' ? owner.stripeSubscriptionId : null,
       },
     });
 
@@ -67,6 +74,10 @@ organizations.post('/', validate(createOrgSchema), async (c) => {
 
     return created;
   });
+
+  if (!org) {
+    return c.json({ error: 'Organization creation requires a Team plan.' }, 403);
+  }
 
   return c.json(org, 201);
 });

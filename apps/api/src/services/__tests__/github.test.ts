@@ -177,4 +177,31 @@ describe('github service', () => {
       expect(repos[0].name).toBe('repo1');
     });
   });
+
+  it('never compares an old tag against the newest release when absent from the recent list', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ id: 1, tag_name: 'v0.1.0' }) });
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => [{ tag_name: 'v3.0.0' }, { tag_name: 'v2.0.0' }] });
+    const data = await fetchReleaseData('owner', 'repo', 'v0.1.0', 'token');
+    expect(data.previousTag).toBeNull();
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports GitHub release-list errors instead of treating the error body as an array', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ id: 1, tag_name: 'v1.0' }) });
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 403 });
+    await expect(fetchReleaseData('owner', 'repo', 'v1.0', 'token')).rejects.toThrow('Failed to list releases: 403');
+  });
+
+  it('encodes tags containing slashes and ignores draft predecessors', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ id: 1, tag_name: 'app/v2.0' }) });
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => [
+      { tag_name: 'app/v2.0' }, { tag_name: 'unreleased', draft: true }, { tag_name: 'app/v1.0' },
+    ] });
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ commits: [] }) });
+    const data = await fetchReleaseData('owner', 'repo', 'app/v2.0', 'token');
+    expect(data.previousTag).toBe('app/v1.0');
+    expect(mockFetch).toHaveBeenNthCalledWith(1, expect.stringContaining('/tags/app%2Fv2.0'), expect.anything());
+    expect(mockFetch).toHaveBeenNthCalledWith(3, expect.stringContaining('/compare/app%2Fv1.0...app%2Fv2.0'), expect.anything());
+  });
+
 });

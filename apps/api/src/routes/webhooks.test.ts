@@ -244,4 +244,69 @@ describe('Webhooks', () => {
     expect(distributorMock.distributeReleaseWithResults).not.toHaveBeenCalled();
     expect(prismaMock.release.create).not.toHaveBeenCalled();
   });
+
+  test.each([false, undefined])('retains generated notes for review when autoPublish is %s', async autoPublish => {
+    prismaMock.release.findUnique.mockResolvedValue(null);
+    prismaMock.repo.findFirst.mockResolvedValue({
+      id: 'repo-1', fullName: 'owner/repo', owner: 'owner', name: 'repo', webhookSecret: secret,
+      user: { accessToken: 'encrypted-token' }, config: { autoGenerate: true, autoPublish },
+    });
+    githubMock.fetchReleaseData.mockResolvedValue({
+      release: { id: 12345, tagName: 'v1.0.0', isDraft: false, publishedAt: new Date() }, commits: [], pullRequests: [],
+    });
+    generatorMock.generateReleaseNotes.mockResolvedValue({ customer: 'C', developer: 'D', stakeholder: 'S', model: 'test', tokensUsed: 1 });
+    prismaMock.release.create.mockResolvedValue({ id: 'release-1', isDraft: false, publishedAt: new Date() });
+    const response = await webhooks.request('/github', {
+      method: 'POST', body: JSON.stringify(validPayload),
+      headers: { 'x-github-event': 'release', 'x-hub-signature-256': generateSignature(validPayload, secret) },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ releaseStatus: 'READY', distributedTo: 0 });
+    expect(distributorMock.distributeReleaseWithResults).not.toHaveBeenCalled();
+    expect(prismaMock.distribution.createMany).not.toHaveBeenCalled();
+    expect(prismaMock.release.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: 'READY', notes: { create: expect.objectContaining({ customer: 'C' }) } }),
+    }));
+    expect(prismaMock.generatedNotes.create).not.toHaveBeenCalled();
+  });
+
+  test('does not call AI or publish when automatic generation is disabled', async () => {
+    prismaMock.release.findUnique.mockResolvedValue(null);
+    prismaMock.repo.findFirst.mockResolvedValue({
+      id: 'repo-1', fullName: 'owner/repo', owner: 'owner', name: 'repo', webhookSecret: secret,
+      user: { accessToken: 'encrypted-token' }, config: { autoGenerate: false, autoPublish: true },
+    });
+    githubMock.fetchReleaseData.mockResolvedValue({
+      release: { id: 12345, tagName: 'v1.0.0', isDraft: false, publishedAt: new Date() }, commits: [], pullRequests: [],
+    });
+    prismaMock.release.create.mockResolvedValue({ id: 'release-1' });
+    const response = await webhooks.request('/github', {
+      method: 'POST', body: JSON.stringify(validPayload),
+      headers: { 'x-github-event': 'release', 'x-hub-signature-256': generateSignature(validPayload, secret) },
+    });
+    expect(await response.json()).toMatchObject({ status: 'skipped' });
+    expect(generatorMock.generateReleaseNotes).not.toHaveBeenCalled();
+    expect(distributorMock.distributeReleaseWithResults).not.toHaveBeenCalled();
+  });
+
+  test('does not process a paused repository', async () => {
+    prismaMock.repo.findFirst.mockResolvedValue({ webhookSecret: secret, status: 'PAUSED' });
+    const response = await webhooks.request('/github', {
+      method: 'POST', body: JSON.stringify(validPayload),
+      headers: { 'x-github-event': 'release', 'x-hub-signature-256': generateSignature(validPayload, secret) },
+    });
+    expect(await response.json()).toMatchObject({ status: 'ignored', reason: 'repository_paused' });
+    expect(githubMock.fetchReleaseData).not.toHaveBeenCalled();
+    expect(generatorMock.generateReleaseNotes).not.toHaveBeenCalled();
+  });
+
+  test('returns 400 for a malformed release event instead of crashing', async () => {
+    const response = await webhooks.request('/github', {
+      method: 'POST', body: JSON.stringify({ action: 'published' }),
+      headers: { 'x-github-event': 'release', 'x-hub-signature-256': 'sha256=invalid' },
+    });
+    expect(response.status).toBe(400);
+    expect(prismaMock.repo.findFirst).not.toHaveBeenCalled();
+  });
+
 });

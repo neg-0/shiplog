@@ -2,7 +2,7 @@
 
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { ConfirmDialog } from '@/components/Dialog';
-import { AlertCircle, ArrowLeft, Bell, ExternalLink, GitBranch, HelpCircle, Loader2, Lock, Plus, Settings, Tag, Trash2, Users, X, Zap } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Bell, ExternalLink, GitBranch, HelpCircle, Loader2, Plus, Settings, Tag, Trash2, Users, X } from 'lucide-react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useEffect, useState, type FormEvent } from 'react';
@@ -26,16 +26,12 @@ export default function RepoDetailPage() {
   });
   const [showWebhookHelp, setShowWebhookHelp] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<{ channelId: string; name: string } | null>(null);
-  const [showAudienceModal, setShowAudienceModal] = useState(false);
-  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [showDisconnectConfirm, setShowDisconnectConfirm] = useState(false);
 
   const params = useParams();
   const router = useRouter();
   const repoId = params.id as string;
-
-  const isPro = user?.subscriptionTier === 'PRO' || user?.subscriptionTier === 'TEAM';
 
   useEffect(() => {
     if (!isAuthenticated()) {
@@ -165,12 +161,12 @@ export default function RepoDetailPage() {
             {/* Repo Header */}
             <div className="bg-white rounded-xl p-4 lg:p-6 shadow-sm border border-navy-100 mb-6">
               <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                <div className="flex items-center gap-4">
+                <div className="flex items-center gap-4 min-w-0">
                   <div className="w-12 h-12 lg:w-16 lg:h-16 bg-navy-100 rounded-xl flex items-center justify-center flex-shrink-0">
                     <GitBranch className="w-6 h-6 lg:w-8 lg:h-8 text-navy-600" />
                   </div>
                   <div>
-                    <h1 className="text-xl lg:text-2xl font-bold text-navy-900">{repo.fullName}</h1>
+                    <h1 className="text-xl lg:text-2xl font-bold text-navy-900 break-all">{repo.fullName}</h1>
                     <p className="text-navy-600">{repo.description || 'No description'}</p>
                     <div className="flex items-center gap-2 mt-1">
                       {repo.status === 'ACTIVE' ? (
@@ -231,7 +227,7 @@ export default function RepoDetailPage() {
                       <Link
                         key={release.id}
                         href={`/dashboard/releases/${release.id}`}
-                        className="flex items-center justify-between py-2 px-3 -mx-3 rounded-lg border-b border-navy-100 last:border-0 hover:bg-navy-50 transition"
+                        className="flex flex-wrap gap-2 items-center justify-between py-2 px-3 -mx-3 rounded-lg border-b border-navy-100 last:border-0 hover:bg-navy-50 transition"
                       >
                         <div>
                           <p className="font-medium text-navy-900">{release.tagName}</p>
@@ -278,23 +274,22 @@ export default function RepoDetailPage() {
                         Stakeholders
                       </div>
                     )}
-                    <button
-                      onClick={() => isPro ? setShowAudienceModal(true) : setShowUpgradeModal(true)}
-                      className="w-full px-3 py-2 border border-dashed border-navy-300 rounded-lg text-navy-500 hover:border-teal-400 hover:text-teal-600 transition flex items-center justify-center gap-2"
+                    <Link
+                      href={`/dashboard/repos/${repoId}/settings`}
+                      className="block px-3 py-2 text-sm text-teal-700 hover:underline"
                     >
-                      {isPro ? <Plus className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
-                      Add Custom Audience
-                    </button>
+                      Edit tone and automation
+                    </Link>
                   </div>
                 ) : (
                   <div>
                     <p className="text-navy-500 mb-4">No configuration yet.</p>
-                    <button
-                      onClick={() => isPro ? setShowAudienceModal(true) : setShowUpgradeModal(true)}
-                      className="px-4 py-2 text-sm bg-navy-900 text-white rounded-lg hover:bg-navy-800 transition"
+                    <Link
+                      href={`/dashboard/repos/${repoId}/settings`}
+                      className="inline-block px-4 py-2 text-sm bg-navy-900 text-white rounded-lg hover:bg-navy-800 transition"
                     >
-                      Configure Audiences
-                    </button>
+                      Configure Repository
+                    </Link>
                   </div>
                 )}
               </div>
@@ -563,64 +558,6 @@ export default function RepoDetailPage() {
         </div>
       )}
 
-      {/* Upgrade Modal */}
-      {showUpgradeModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setShowUpgradeModal(false)}>
-          <div
-            className="bg-white rounded-xl max-w-md w-full shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="p-8 text-center">
-              <div className="w-16 h-16 bg-gradient-to-br from-teal-400 to-teal-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg">
-                <Zap className="w-8 h-8 text-white" />
-              </div>
-              <h2 className="text-2xl font-bold text-navy-900 mb-2">Unlock Custom Audiences</h2>
-              <p className="text-navy-600 mb-6">
-                Create unlimited custom audiences with tailored AI prompts. Perfect for different stakeholder groups, regions, or product lines.
-              </p>
-
-              <div className="bg-navy-50 rounded-lg p-4 mb-6 text-left">
-                <h3 className="font-semibold text-navy-900 mb-2">Pro includes:</h3>
-                <ul className="text-sm text-navy-600 space-y-1.5">
-                  <li className="flex items-center gap-2">
-                    <span className="text-teal-600">✓</span>
-                    Unlimited custom audiences
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <span className="text-teal-600">✓</span>
-                    Custom AI prompts per audience
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <span className="text-teal-600">✓</span>
-                    Preview before publishing
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <span className="text-teal-600">✓</span>
-                    Priority support
-                  </li>
-                </ul>
-              </div>
-
-              <div className="flex gap-3">
-                <button
-                  onClick={() => setShowUpgradeModal(false)}
-                  className="flex-1 px-4 py-3 border border-navy-200 text-navy-600 rounded-lg font-medium hover:bg-navy-50 transition"
-                >
-                  Maybe Later
-                </button>
-                <Link
-                  href="/dashboard/settings"
-                  onClick={() => setShowUpgradeModal(false)}
-                  className="flex-1 px-4 py-3 bg-teal-600 text-white rounded-lg font-medium hover:bg-teal-500 transition flex items-center justify-center gap-2"
-                >
-                  <Zap className="w-4 h-4" />
-                  Upgrade to Pro
-                </Link>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </DashboardLayout>
   );
 }

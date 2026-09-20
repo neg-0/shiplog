@@ -21,7 +21,7 @@ export function DashboardFeedbackWidget() {
     setSending(true);
     setFeedbackError(null);
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/feedback`, {
+      const res = await fetch('/api/feedback', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -53,11 +53,12 @@ export function DashboardFeedbackWidget() {
 
   if (isOpen) {
     return (
-      <div className="fixed bottom-4 right-4 z-50 w-80 bg-white dark:bg-zinc-900 rounded-lg shadow-xl border border-gray-200 dark:border-zinc-800 p-4 animate-in fade-in slide-in-from-bottom-4 duration-300">
+      <div className="fixed bottom-4 right-4 z-50 w-80 max-w-[calc(100vw-2rem)] max-h-[calc(100dvh-2rem)] overflow-y-auto bg-white dark:bg-zinc-900 rounded-lg shadow-xl border border-gray-200 dark:border-zinc-800 p-4 animate-in fade-in slide-in-from-bottom-4 duration-300">
         <div className="flex justify-between items-center mb-4">
           <h3 className="font-semibold text-gray-900 dark:text-gray-100">Send Feedback</h3>
           <button 
             onClick={() => setIsOpen(false)}
+            aria-label="Close feedback"
             className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 p-1"
           >
             <X className="w-4 h-4" />
@@ -105,6 +106,8 @@ export function DashboardFeedbackWidget() {
 
             <div>
               <textarea
+                aria-label="Your feedback"
+                maxLength={2000}
                 required
                 className="w-full rounded-md border-gray-300 dark:border-zinc-700 dark:bg-zinc-950 shadow-sm focus:border-teal-500 focus:ring-teal-500 text-sm p-2 border"
                 rows={3}
@@ -117,6 +120,7 @@ export function DashboardFeedbackWidget() {
             <div>
               <input
                 type="email"
+                aria-label="Email (optional)"
                 className="w-full rounded-md border-gray-300 dark:border-zinc-700 dark:bg-zinc-950 shadow-sm focus:border-teal-500 focus:ring-teal-500 text-sm p-2 border"
                 placeholder="Email (optional)"
                 value={email}

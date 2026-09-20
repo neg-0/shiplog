@@ -42,3 +42,44 @@ html {
 ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
 }
+
+/* Release notes use Markdown throughout the product. Tailwind's reset removes
+   native heading/list styles, so keep their reading styles explicit here. */
+@layer components {
+  .prose {
+    color: #334e68;
+    line-height: 1.75;
+    overflow-wrap: anywhere;
+  }
+
+  .prose :where(h1, h2, h3, h4) {
+    color: #102a43;
+    font-weight: 600;
+    line-height: 1.3;
+    margin-top: 1.5em;
+    margin-bottom: 0.6em;
+  }
+
+  .prose h1 { font-size: 1.875rem; }
+  .prose h2 { font-size: 1.5rem; }
+  .prose h3 { font-size: 1.25rem; }
+  .prose h4 { font-size: 1.125rem; }
+  .prose > :first-child { margin-top: 0; }
+  .prose :where(p, ul, ol, blockquote, pre, table) { margin-block: 1em; }
+  .prose ul { list-style-type: disc; padding-left: 1.5em; }
+  .prose ol { list-style-type: decimal; padding-left: 1.5em; }
+  .prose li { margin-block: 0.35em; }
+  .prose li :where(ul, ol) { margin-block: 0.35em; }
+  .prose a { color: #147d64; text-decoration: underline; text-underline-offset: 2px; }
+  .prose strong { font-weight: 600; }
+  .prose blockquote { border-left: 3px solid #bcccdc; padding-left: 1em; color: #486581; }
+  .prose :not(pre) > code { border-radius: 0.25rem; background: #f0f4f8; padding: 0.15em 0.35em; font-size: 0.875em; }
+  .prose pre { overflow-x: auto; border-radius: 0.5rem; background: #102a43; padding: 1rem; color: #f0f4f8; font-size: 0.875em; }
+  .prose pre code { background: transparent; padding: 0; color: inherit; }
+  .prose img { max-width: 100%; height: auto; border-radius: 0.5rem; }
+  .prose hr { margin-block: 2em; border-color: #d9e2ec; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+}

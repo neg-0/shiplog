@@ -23,6 +23,10 @@ jest.unstable_mockModule('../services/generator.js', () => ({
   generateReleaseNotes: jest.fn(),
 }));
 
+jest.unstable_mockModule('../services/publisher.js', () => ({
+  publishReleaseNotes: jest.fn(),
+}));
+
 jest.unstable_mockModule('isomorphic-dompurify', () => ({
   __esModule: true,
   default: { sanitize: (s: string) => s },
@@ -42,6 +46,7 @@ describe('Releases Routes', () => {
   let prismaMock: DeepMockProxy<PrismaClient>;
   let githubService: any;
   let generatorService: any;
+  let publisherService: any;
 
   beforeEach(async () => {
     jest.resetModules();
@@ -51,6 +56,7 @@ describe('Releases Routes', () => {
 
     githubService = await import('../services/github.js');
     generatorService = await import('../services/generator.js');
+    publisherService = await import('../services/publisher.js');
 
     const module = await import('../routes/releases.js');
     releases = module.releases;
@@ -115,6 +121,7 @@ describe('Releases Routes', () => {
 
       prismaMock.release.update.mockResolvedValue({} as any);
       prismaMock.generatedNotes.upsert.mockResolvedValue({} as any);
+      prismaMock.release.updateMany.mockResolvedValue({ count: 1 });
 
       const res = await releases.request('/rel-1/regenerate', {
         method: 'POST',
@@ -125,7 +132,7 @@ describe('Releases Routes', () => {
       expect(res.status).toBe(200);
       expect(githubService.fetchReleaseData).toHaveBeenCalled();
       expect(generatorService.generateReleaseNotes).toHaveBeenCalled();
-      expect(prismaMock.generatedNotes.upsert).toHaveBeenCalled();
+      expect(prismaMock.release.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: 'READY', notes: { upsert: expect.anything() } }) }));
     });
   });
 
@@ -134,11 +141,13 @@ describe('Releases Routes', () => {
       prismaMock.release.findFirst.mockResolvedValue({
         id: 'rel-1',
         repo: { userId: 'test-user-id', fullName: 'owner/repo' },
+        status: 'READY', publishedAt: new Date(), isDraft: false,
         notes: { id: 'notes-1' },
       } as any);
 
       prismaMock.release.update.mockResolvedValue({} as any);
-      prismaMock.distribution.createMany.mockResolvedValue({} as any);
+      prismaMock.release.updateMany.mockResolvedValue({ count: 1 });
+      publisherService.publishReleaseNotes.mockResolvedValue({ status: 'PUBLISHED', failedCount: 0, distributedTo: 3 });
 
       const res = await releases.request('/rel-1/publish', {
         method: 'POST',
@@ -147,9 +156,7 @@ describe('Releases Routes', () => {
       });
 
       expect(res.status).toBe(200);
-      expect(prismaMock.release.update).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { id: 'rel-1' }, data: { status: 'PUBLISHED' } })
-      );
+      expect(publisherService.publishReleaseNotes).toHaveBeenCalledWith(expect.objectContaining({ id: 'rel-1' }), []);
     });
 
     it('fails if no notes', async () => {
@@ -174,6 +181,7 @@ describe('Releases Routes', () => {
       prismaMock.release.findFirst.mockResolvedValue({
         id: 'rel-1',
         repo: { userId: 'test-user-id' },
+        status: 'READY', publishedAt: new Date(), isDraft: false,
         notes: { id: 'notes-1' },
       } as any);
 
@@ -192,4 +200,88 @@ describe('Releases Routes', () => {
       );
     });
   });
+
+  it('rejects a draft even when generated notes exist', async () => {
+    prismaMock.release.findFirst.mockResolvedValue({
+      id: 'rel-1', isDraft: true, publishedAt: null, status: 'READY', notes: { customer: 'Draft' }, repo: { config: null },
+    } as any);
+    const response = await releases.request('/rel-1/publish', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    expect(response.status).toBe(400);
+    expect(publisherService.publishReleaseNotes).not.toHaveBeenCalled();
+  });
+
+  it('rejects channels belonging to another repository without sending', async () => {
+    prismaMock.release.findFirst.mockResolvedValue({
+      id: 'rel-1', isDraft: false, publishedAt: new Date(), status: 'READY', notes: {}, repo: { config: { channels: [] } },
+    } as any);
+    const response = await releases.request('/rel-1/publish', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ channels: ['other-channel'] }) });
+    expect(response.status).toBe(400);
+    expect(publisherService.publishReleaseNotes).not.toHaveBeenCalled();
+  });
+
+  it('does not send if another publish request has already claimed the release', async () => {
+    prismaMock.release.findFirst.mockResolvedValue({
+      id: 'rel-1', isDraft: false, publishedAt: new Date(), status: 'READY', notes: {}, repo: { config: null },
+    } as any);
+    prismaMock.release.updateMany.mockResolvedValue({ count: 0 });
+    const response = await releases.request('/rel-1/publish', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    expect(response.status).toBe(409);
+    expect(publisherService.publishReleaseNotes).not.toHaveBeenCalled();
+  });
+
+  it('returns partial delivery failures to the client', async () => {
+    prismaMock.release.findFirst.mockResolvedValue({
+      id: 'rel-1', isDraft: false, publishedAt: new Date(), status: 'READY', notes: {}, repo: { config: null },
+    } as any);
+    prismaMock.release.updateMany.mockResolvedValue({ count: 1 });
+    publisherService.publishReleaseNotes.mockResolvedValue({ status: 'PARTIAL_SUCCESS', failedCount: 1, distributedTo: 3 });
+    const response = await releases.request('/rel-1/publish', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    expect(await response.json()).toMatchObject({ status: 'partial_success', failedCount: 1, distributedTo: 3 });
+  });
+
+
+  it('keeps previously published notes public when regeneration fails', async () => {
+    prismaMock.release.findFirst.mockResolvedValue({
+      id: 'rel-1', status: 'PUBLISHED', tagName: 'v1.0', repo: { owner: 'owner', name: 'repo', user: { accessToken: 'encrypted' } },
+    } as any);
+    prismaMock.release.updateMany.mockResolvedValue({ count: 1 });
+    githubService.fetchReleaseData.mockRejectedValue(new Error('GitHub temporarily unavailable'));
+    const response = await releases.request('/rel-1/regenerate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    expect(response.status).toBe(500);
+    expect(prismaMock.release.update).toHaveBeenCalledWith({ where: { id: 'rel-1' }, data: { status: 'PUBLISHED', error: 'GitHub temporarily unavailable' } });
+    expect(prismaMock.generatedNotes.upsert).not.toHaveBeenCalled();
+  });
+
+  it('rejects unsupported generic webhook delivery with a clear error', async () => {
+    prismaMock.release.findFirst.mockResolvedValue({
+      id: 'rel-1', status: 'READY', publishedAt: new Date(), notes: {},
+      repo: { config: { channels: [{ id: 'generic', type: 'WEBHOOK', enabled: true }] } },
+    } as any);
+    const response = await releases.request('/rel-1/publish', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ channels: ['generic'] }),
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: 'Generic webhooks are not supported. Choose Slack or Discord.' });
+    expect(publisherService.publishReleaseNotes).not.toHaveBeenCalled();
+  });
+
+
+  it('blocks silent retries when successful delivery could not be recorded', async () => {
+    const reviewError = 'Delivery outcome needs review. Contact support before retrying.';
+    prismaMock.release.findFirst.mockResolvedValue({
+      id: 'rel-1', status: 'READY', publishedAt: new Date(), notes: {}, repo: { config: null },
+    } as any);
+    prismaMock.release.updateMany.mockResolvedValue({ count: 1 });
+    publisherService.publishReleaseNotes.mockRejectedValue(Object.assign(new Error(reviewError), { name: 'PublicationOutcomeUnknown' }));
+    const request = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' };
+    const response = await releases.request('/rel-1/publish', request);
+    expect(response.status).toBe(500);
+    expect(prismaMock.release.update).toHaveBeenCalledWith({ where: { id: 'rel-1' }, data: { status: 'FAILED', error: reviewError } });
+    prismaMock.release.findFirst.mockResolvedValue({ id: 'rel-1', status: 'FAILED', error: reviewError, notes: {} } as any);
+    publisherService.publishReleaseNotes.mockClear();
+    expect((await releases.request('/rel-1/publish', request)).status).toBe(409);
+    expect((await releases.request('/rel-1/regenerate', request)).status).toBe(409);
+    expect(publisherService.publishReleaseNotes).not.toHaveBeenCalled();
+  });
+
 });

@@ -2,7 +2,7 @@ type SubscriptionTier = "FREE" | "PRO" | "TEAM";
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import Stripe from 'stripe';
-import { z } from 'zod';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '../lib/db.js';
 import { logger } from '../lib/logger.js';
 import { requireAuth } from '../lib/auth.js';
@@ -26,9 +26,9 @@ if (!stripeSecret) {
   logger.warn('STRIPE_SECRET_KEY is not set');
 }
 
-const stripe = new Stripe(stripeSecret || '', {
+const stripe = stripeSecret ? new Stripe(stripeSecret, {
   apiVersion: '2024-04-10',
-});
+}) : null;
 
 const getPriceId = (plan: string | null | undefined) => {
   if (plan === 'pro') return pricePro;
@@ -38,8 +38,7 @@ const getPriceId = (plan: string | null | undefined) => {
 
 const getTierFromPrice = (price?: Stripe.Price | null): SubscriptionTier => {
   if (!price) {
-    logger.warn('[Billing] No price object provided to resolver. Defaulting to FREE.');
-    return 'FREE';
+    throw new Error('Subscription price is missing');
   }
   
   const priceId = price.id;
@@ -55,8 +54,10 @@ const getTierFromPrice = (price?: Stripe.Price | null): SubscriptionTier => {
   if (lookupKey?.startsWith('pro_')) return 'PRO';
   if (lookupKey?.startsWith('team_')) return 'TEAM';
 
-  logger.warn(`[Billing] Price mismatch. Defaulting to FREE.`, { priceId, lookupKey });
-  return 'FREE';
+  // A configuration mismatch must not remove a paying customer's access.
+  // Fail the webhook so Stripe retries once the price mapping has been corrected.
+  logger.error('[Billing] Unrecognized subscription price', { priceId, lookupKey });
+  throw new Error('Unrecognized subscription price');
 };
 
 const shouldDowngrade = (status?: Stripe.Subscription.Status) => {
@@ -77,7 +78,7 @@ billing.post(
   apiLimiter,
   zValidator('json', checkoutSchema),
   async (c) => {
-    if (!stripeSecret) {
+    if (!stripe) {
       return c.json({ error: 'Stripe not configured' }, 500);
     }
 
@@ -109,9 +110,9 @@ billing.post(
     }
 
     // Prevent double subscription
-    if (dbUser.stripeSubscriptionId && dbUser.subscriptionStatus === 'active' && dbUser.subscriptionTier !== 'FREE') {
+    if (dbUser.stripeSubscriptionId && !['canceled', 'incomplete_expired'].includes(dbUser.subscriptionStatus ?? '')) {
       return c.json({
-        error: 'You already have an active subscription. Please manage it in the billing portal.',
+        error: 'You already have a subscription. Please manage it in the billing portal.',
         redirect: '/dashboard/settings'
       }, 400);
     }
@@ -220,7 +221,7 @@ billing.post(
  * @throws 400 if user has no Stripe customer ID.
  */
 billing.post('/portal', requireAuth, apiLimiter, async (c) => {
-  if (!stripeSecret) {
+  if (!stripe) {
     return c.json({ error: 'Stripe not configured' }, 500);
   }
 
@@ -275,7 +276,7 @@ billing.get('/status', requireAuth, apiLimiter, async (c) => {
  * @throws 400 if signature is invalid.
  */
 billing.post('/webhook', async (c) => {
-  if (!stripeSecret || !stripeWebhookSecret) {
+  if (!stripe || !stripeWebhookSecret) {
     return c.json({ error: 'Stripe not configured' }, 500);
   }
 
@@ -295,51 +296,47 @@ billing.post('/webhook', async (c) => {
     return c.json({ error: 'Invalid signature' }, 400);
   }
 
-  const syncOrganizations = async (userId: string | undefined, tier: SubscriptionTier, subscriptionId: string) => {
-    if (!userId) return;
-    try {
-      const orgs = await prisma.organization.findMany({
-        where: { ownerId: userId },
+  const updateUserSubscription = async (
+    where: Prisma.UserWhereInput,
+    data: Prisma.UserUpdateManyMutationInput,
+    tier: SubscriptionTier,
+    subscriptionId: string,
+    userId: string,
+  ) => {
+    // Keep the timestamp and organization entitlement in the same transaction.
+    // A stale event must not touch organizations, and failed org sync must be retryable.
+    await prisma.$transaction(async (tx) => {
+      const updated = await tx.user.updateMany({
+        where: {
+          ...where,
+          OR: [
+            { stripeLastEventTimestamp: { lt: event.created } },
+            { stripeLastEventTimestamp: null },
+          ],
+        },
+        data: { ...data, stripeLastEventTimestamp: event.created },
       });
 
-      logger.info(`[Billing] Syncing organizations for user ${userId}. Found ${orgs.length} orgs. Tier: ${tier}`);
+      if (updated.count === 0) return;
 
-      for (const org of orgs) {
-        await prisma.organization.update({
-          where: { id: org.id },
-          data: {
-            subscriptionId: tier === 'TEAM' ? subscriptionId : null,
-          },
-        });
-      }
-    } catch (error) {
-      logger.error(`[Billing] Failed to sync organizations for user ${userId}:`, { error: error instanceof Error ? error.message : String(error) });
-    }
+      await tx.organization.updateMany({
+        where: { ownerId: userId },
+        data: { subscriptionId: tier === 'TEAM' ? subscriptionId : null },
+      });
+    });
   };
 
-  const updateByCustomer = async (customerId: string, data: Record<string, any>, tier: SubscriptionTier, subscriptionId: string) => {
-    // Find users first to sync organizations
+  const updateByCustomer = async (customerId: string, data: Prisma.UserUpdateManyMutationInput, tier: SubscriptionTier, subscriptionId: string) => {
     const users = await prisma.user.findMany({
       where: { stripeCustomerId: customerId },
       select: { id: true },
     });
 
-    await prisma.user.updateMany({
-      where: {
-        stripeCustomerId: customerId,
-        OR: [
-          { stripeLastEventTimestamp: { lt: event.created } },
-          { stripeLastEventTimestamp: null },
-        ],
-      },
-      data: {
-        ...data,
-        stripeLastEventTimestamp: event.created,
-      },
-    });
-
     for (const user of users) {
-      await syncOrganizations(user.id, tier, subscriptionId);
+      await updateUserSubscription(
+        { id: user.id, stripeCustomerId: customerId },
+        data, tier, subscriptionId, user.id,
+      );
     }
   };
 
@@ -356,7 +353,7 @@ billing.post('/webhook', async (c) => {
             expand: ['items.data.price'],
           });
           const price = subscription.items.data[0]?.price;
-          const tier = getTierFromPrice(price);
+          const tier = shouldDowngrade(subscription.status) ? 'FREE' : getTierFromPrice(price);
           const trialEndsAt = subscription.trial_end ? new Date(subscription.trial_end * 1000) : null;
 
           const data = {
@@ -368,20 +365,7 @@ billing.post('/webhook', async (c) => {
           };
 
           if (userId) {
-            await prisma.user.updateMany({
-              where: {
-                id: userId,
-                OR: [
-                  { stripeLastEventTimestamp: { lt: event.created } },
-                  { stripeLastEventTimestamp: null },
-                ],
-              },
-              data: {
-                ...data,
-                stripeLastEventTimestamp: event.created,
-              },
-            });
-            await syncOrganizations(userId, tier, subscriptionId);
+            await updateUserSubscription({ id: userId }, data, tier, subscriptionId, userId);
           } else {
             await updateByCustomer(customerId, data, tier, subscriptionId);
           }

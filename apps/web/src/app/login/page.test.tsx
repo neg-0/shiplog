@@ -60,7 +60,7 @@ describe('LoginPage', () => {
     render(<LoginPage />);
 
     expect(screen.getByText("What we'll access:")).toBeInTheDocument();
-    expect(screen.getByText('Read access to your repositories')).toBeInTheDocument();
+    expect(screen.getByText(/Repository access.*includes write access/)).toBeInTheDocument();
     expect(screen.getByText('Webhook creation for release events')).toBeInTheDocument();
     expect(screen.getByText('Your GitHub profile (name, email)')).toBeInTheDocument();
   });

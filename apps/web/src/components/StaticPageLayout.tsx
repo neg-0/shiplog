@@ -8,19 +8,19 @@ export default function StaticPageLayout({ children }: { children: ReactNode }) 
       {/* Header */}
       <header className="fixed top-0 w-full bg-white/80 backdrop-blur-md border-b border-navy-100 z-50">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
+          <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2 py-3 sm:py-0 sm:h-16">
             <Link href="/" className="flex items-center gap-2">
               <Ship className="w-7 h-7 text-teal-600" />
               <span className="text-lg font-bold text-navy-900">ShipLog</span>
             </Link>
-            <nav className="flex items-center gap-6">
+            <nav aria-label="Main navigation" className="flex items-center justify-between sm:justify-start gap-3 sm:gap-6">
               <Link href="/docs" className="text-navy-600 hover:text-navy-900 transition text-sm">
                 Docs
               </Link>
               <Link href="/changelog" className="text-navy-600 hover:text-navy-900 transition text-sm">
                 Changelog
               </Link>
-              <Link href="/#pricing" className="text-navy-600 hover:text-navy-900 transition text-sm">
+              <Link href="/pricing" className="text-navy-600 hover:text-navy-900 transition text-sm">
                 Pricing
               </Link>
               <Link 
@@ -35,7 +35,7 @@ export default function StaticPageLayout({ children }: { children: ReactNode }) 
       </header>
 
       {/* Content */}
-      <main className="pt-24 pb-16">
+      <main className="pt-32 sm:pt-24 pb-16">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
           {children}
         </div>
@@ -49,7 +49,7 @@ export default function StaticPageLayout({ children }: { children: ReactNode }) 
               <Ship className="w-5 h-5 text-teal-600" />
               <span className="font-semibold text-navy-900">ShipLog</span>
             </div>
-            <nav className="flex flex-wrap gap-6 text-sm">
+            <nav aria-label="Footer navigation" className="flex flex-wrap justify-center gap-4 sm:gap-6 text-sm">
               <Link href="/docs" className="text-navy-600 hover:text-navy-900">Docs</Link>
               <Link href="/changelog" className="text-navy-600 hover:text-navy-900">Changelog</Link>
               <Link href="/terms" className="text-navy-600 hover:text-navy-900">Terms</Link>

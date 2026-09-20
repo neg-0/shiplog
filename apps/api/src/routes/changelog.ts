@@ -7,6 +7,12 @@ import { prisma } from '../lib/db.js';
  */
 export const changelog = new Hono();
 
+const publishedReleaseFilter = {
+  status: { in: ['PUBLISHED', 'PARTIAL_SUCCESS'] as ('PUBLISHED' | 'PARTIAL_SUCCESS')[] },
+  isDraft: false,
+  publishedAt: { not: null },
+};
+
 /**
  * GET /:org/:repo
  * @description Get the public changelog for a specific repository.
@@ -22,7 +28,11 @@ changelog.get('/:org/:repo', async (c) => {
   const repo = c.req.param('repo');
   const fullName = `${org}/${repo}`;
   const audience = (c.req.query('audience') || 'customer').toLowerCase();
-  const limit = Math.min(parseInt(c.req.query('limit') || '20'), 50);
+  const requestedLimit = Number(c.req.query('limit') || '20');
+  if (!Number.isInteger(requestedLimit) || requestedLimit < 1) {
+    return c.json({ error: 'Limit must be a positive integer' }, 400);
+  }
+  const limit = Math.min(requestedLimit, 50);
 
   // Find the repo
   const connectedRepo = await prisma.repo.findFirst({
@@ -54,7 +64,7 @@ changelog.get('/:org/:repo', async (c) => {
   const releases = await prisma.release.findMany({
     where: {
       repoId: connectedRepo.id,
-      status: 'PUBLISHED',
+      ...publishedReleaseFilter,
     },
     include: {
       notes: true,
@@ -97,7 +107,7 @@ changelog.get('/', async (c) => {
       excludeFromFeatured: false,
       releases: {
         some: {
-          status: 'PUBLISHED',
+          ...publishedReleaseFilter,
         },
       },
     },
@@ -105,7 +115,7 @@ changelog.get('/', async (c) => {
       fullName: true,
       description: true,
       _count: {
-        select: { releases: true },
+        select: { releases: { where: publishedReleaseFilter } },
       },
     },
     orderBy: { updatedAt: 'desc' },

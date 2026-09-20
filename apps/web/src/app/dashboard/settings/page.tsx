@@ -5,7 +5,7 @@ import { AlertDialog } from '@/components/Dialog';
 import { AlertTriangle, CreditCard, Key, User as UserIcon } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { createCheckoutSession, createPortalSession, deleteUser, getUser, isAuthenticated, logout, updateUser, type User } from '../../../lib/api';
+import { createCheckoutSession, createPortalSession, deleteUser, getUser, isAuthenticated, updateUser, type User } from '../../../lib/api';
 
 export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
@@ -18,6 +18,7 @@ export default function SettingsPage() {
   // Edit Profile State
   const [displayName, setDisplayName] = useState('');
   const [savingProfile, setSavingProfile] = useState(false);
+  const [billingBusy, setBillingBusy] = useState(false);
 
   // Delete Account State
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -25,6 +26,7 @@ export default function SettingsPage() {
   const [isDeleting, setIsDeleting] = useState(false);
 
   const router = useRouter();
+  const hasSubscription = Boolean(user?.subscriptionStatus && !['canceled', 'incomplete_expired'].includes(user.subscriptionStatus));
 
   useEffect(() => {
     if (!isAuthenticated()) {
@@ -52,24 +54,32 @@ export default function SettingsPage() {
 
 
   const handleUpgrade = async (plan: 'pro' | 'team') => {
+    if (billingBusy) return;
+    setBillingBusy(true);
+    setError(null);
     try {
-      const session = await createCheckoutSession(plan);
-      if (session.url) {
-        window.location.href = session.url;
-      }
+      const session = hasSubscription ? await createPortalSession() : await createCheckoutSession(plan);
+      if (!session.url) throw new Error('Billing is temporarily unavailable. Please try again.');
+      window.location.href = session.url;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start checkout');
+    } finally {
+      setBillingBusy(false);
     }
   };
 
   const handleManage = async () => {
+    if (billingBusy) return;
+    setBillingBusy(true);
+    setError(null);
     try {
       const session = await createPortalSession();
-      if (session.url) {
-        window.location.href = session.url;
-      }
+      if (!session.url) throw new Error('Billing is temporarily unavailable. Please try again.');
+      window.location.href = session.url;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to open billing portal');
+    } finally {
+      setBillingBusy(false);
     }
   };
 
@@ -95,11 +105,11 @@ export default function SettingsPage() {
     setIsDeleting(true);
     try {
       await deleteUser();
-      await logout();
       router.push('/');
     } catch (err) {
-      setAlertDialog({ isOpen: true, title: 'Error', message: 'Failed to delete account', variant: 'error' });
-      console.error(err);
+      setShowDeleteModal(false);
+      setDeleteConfirmation('');
+      setAlertDialog({ isOpen: true, title: 'Unable to delete account', message: err instanceof Error ? err.message : 'Failed to delete account', variant: 'error' });
       setIsDeleting(false);
     }
   };
@@ -119,12 +129,12 @@ export default function SettingsPage() {
         )}
 
         {error && !loading && (
-          <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-6 text-red-700">
+          <div role="alert" className="bg-red-50 border border-red-200 rounded-xl p-4 mb-6 text-red-700">
             {error}
           </div>
         )}
 
-        {!loading && !error && user && (
+        {!loading && user && (
           <div className="space-y-6">
             {/* Plan Section */}
             <div className="bg-white rounded-xl p-4 lg:p-6 shadow-sm border border-navy-100">
@@ -146,17 +156,19 @@ export default function SettingsPage() {
                   {user.subscriptionTier !== 'TEAM' && (
                     <button
                       onClick={() => handleUpgrade(user.subscriptionTier === 'PRO' ? 'team' : 'pro')}
-                      className="px-4 py-2 text-sm bg-teal-600 text-white rounded-lg hover:bg-teal-500 transition"
+                      disabled={billingBusy}
+                      className="px-4 py-2 text-sm bg-teal-600 text-white rounded-lg hover:bg-teal-500 transition disabled:opacity-50"
                     >
                       Upgrade
                     </button>
                   )}
-                  <button
+                  {hasSubscription && <button
                     onClick={handleManage}
-                    className="px-4 py-2 text-sm text-navy-600 border border-navy-200 rounded-lg hover:bg-navy-50 transition"
+                    disabled={billingBusy}
+                    className="px-4 py-2 text-sm text-navy-600 border border-navy-200 rounded-lg hover:bg-navy-50 transition disabled:opacity-50"
                   >
                     Manage Subscription
-                  </button>
+                  </button>}
                 </div>
               </div>
             </div>
@@ -285,6 +297,7 @@ export default function SettingsPage() {
 
             <div className="flex justify-end gap-3">
               <button
+                disabled={isDeleting}
                 onClick={() => {
                   setShowDeleteModal(false);
                   setDeleteConfirmation('');

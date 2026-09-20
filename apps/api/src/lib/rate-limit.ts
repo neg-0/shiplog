@@ -39,7 +39,7 @@ if (!globalThis.rateLimitInterval) {
         }
       }
     }
-  }, CLEANUP_INTERVAL);
+  }, CLEANUP_INTERVAL).unref();
 }
 
 export const rateLimit = (options: RateLimitOptions): MiddlewareHandler => {

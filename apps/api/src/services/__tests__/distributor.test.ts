@@ -188,4 +188,22 @@ describe('distributeRelease', () => {
     expect(results[0].responseCode).toBe(500);
     expect(results[0].error).toBe('Internal Server Error');
   }, 60000);
+
+  it('reports legacy generic webhooks as unsupported without making a request', async () => {
+    const results = await distributeReleaseWithResults(release, notes, [{ type: 'webhook', audience: 'customer', webhookUrl: 'https://example.com/hook' }]);
+    expect(results[0]).toMatchObject({ success: false, error: 'Generic webhooks are not supported. Choose Slack or Discord.' });
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('escapes untrusted HTML in emailed release notes', async () => {
+    await distributeReleaseWithResults(release, { ...notes, customer: '<img src=x onerror=alert(1)> **Safe title**' }, [
+      { type: 'email', audience: 'customer', email: 'recipient@example.com' },
+    ]);
+    const emailBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+    const html = emailBody.content.find((content: any) => content.type === 'text/html').value;
+    expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;');
+    expect(html).not.toContain('<img');
+    expect(html).toContain('<strong>Safe title</strong>');
+  });
+
 });

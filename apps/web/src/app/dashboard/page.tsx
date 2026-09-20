@@ -15,6 +15,7 @@ function DashboardContent() {
   const [error, setError] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const exchangeInProgress = useRef(false);
+  const exchangedCode = useRef<string | null>(null);
 
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -39,15 +40,18 @@ function DashboardContent() {
   // Handle auth code from OAuth callback
   useEffect(() => {
     const code = searchParams.get('code');
-    if (!code) return;
+    if (!code || exchangedCode.current === code) return;
 
     // Prevent the auth-check effect from redirecting to login
     // while the exchange is still in progress
     exchangeInProgress.current = true;
+    // React Strict Mode replays effects; OAuth codes can only be used once.
+    exchangedCode.current = code;
 
     exchangeAuthCode(code)
       .then(() => getRepos())
       .then(({ repos }) => {
+        exchangeInProgress.current = false;
         if (repos.length === 0) {
           router.replace('/dashboard/repos/connect');
         } else {
@@ -56,7 +60,7 @@ function DashboardContent() {
       })
       .catch(() => {
         exchangeInProgress.current = false;
-        router.replace('/login');
+        router.replace('/login?error=auth_failed');
       });
   }, [searchParams, router]);
 
@@ -112,7 +116,8 @@ function DashboardContent() {
               <p className="text-red-600 mt-1">{error}</p>
             </div>
             <button
-              onClick={() => window.location.reload()}
+              onClick={fetchDashboardData}
+              aria-label="Retry loading repositories"
               className="text-red-600 hover:text-red-800 transition"
             >
               <RefreshCw className="w-5 h-5" />

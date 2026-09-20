@@ -1,16 +1,17 @@
 'use client';
 
 import { DashboardLayout } from '@/components/DashboardLayout';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/Dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, ConfirmDialog } from '@/components/Dialog';
 import { AlertCircle, ArrowLeft, Check, Code, Copy, Edit3, ExternalLink, Eye, Loader2, RefreshCw, Send, Tag, MessageSquare } from 'lucide-react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
-import MDEditor from '@uiw/react-md-editor';
+import dynamic from 'next/dynamic';
 import { getRelease, getUser, isAuthenticated, publishRelease, regenerateNotes, updateReleaseNotes, type Release, type User } from '../../../../lib/api';
 
 type Tab = 'customer' | 'developer' | 'stakeholder';
+const MDEditor = dynamic(() => import('@uiw/react-md-editor'), { ssr: false });
 
 export default function ReleaseDetailPage() {
   const [release, setRelease] = useState<Release | null>(null);
@@ -26,10 +27,13 @@ export default function ReleaseDetailPage() {
   const [user, setUser] = useState<User | null>(null);
   const [showPublishDialog, setShowPublishDialog] = useState(false);
   const [selectedChannels, setSelectedChannels] = useState<string[]>([]);
+  const [showRegenerateDialog, setShowRegenerateDialog] = useState(false);
+  const [publishMessage, setPublishMessage] = useState<string | null>(null);
 
   const params = useParams();
   const router = useRouter();
   const releaseId = params.id as string;
+  const deliveryNeedsReview = release?.error?.startsWith('Delivery outcome needs review.') ?? false;
 
   useEffect(() => {
     if (!isAuthenticated()) {
@@ -51,7 +55,7 @@ export default function ReleaseDetailPage() {
         if (data.repo?.config?.channels) {
           setSelectedChannels(
             data.repo.config.channels
-              .filter(c => c.enabled)
+              .filter(c => c.enabled && c.type !== 'WEBHOOK')
               .map(c => c.id)
           );
         }
@@ -65,10 +69,26 @@ export default function ReleaseDetailPage() {
     fetchRelease();
   }, [releaseId, router]);
 
+  useEffect(() => {
+    if (release?.status !== 'PROCESSING') return;
+    let active = true;
+    const timer = window.setInterval(async () => {
+      try {
+        const data = await getRelease(releaseId);
+        if (active) setRelease(data);
+      } catch {
+        // Keep the last known state; the next poll can recover from a brief outage.
+      }
+    }, 5000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [release?.status, releaseId]);
+
   const handleRegenerate = async () => {
     if (!release) return;
     try {
       setRegenerating(true);
+      setError(null);
+      setShowRegenerateDialog(false);
       await regenerateNotes(releaseId);
       const data = await getRelease(releaseId);
       setRelease(data);
@@ -83,10 +103,15 @@ export default function ReleaseDetailPage() {
     if (!release) return;
     try {
       setPublishing(true);
-      await publishRelease(releaseId, selectedChannels);
+      setError(null);
+      setPublishMessage(null);
+      const result = await publishRelease(releaseId, selectedChannels);
       const data = await getRelease(releaseId);
       setRelease(data);
       setShowPublishDialog(false);
+      setPublishMessage(result.status === 'partial_success'
+        ? `The release was published, but ${result.failedCount || 1} delivery failed. Choose Retry delivery to try the failed channels again.`
+        : 'Release notes published successfully.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to publish release');
     } finally {
@@ -104,6 +129,7 @@ export default function ReleaseDetailPage() {
     if (!release) return;
     try {
       setSaving(true);
+      setError(null);
       await updateReleaseNotes(releaseId, { [activeTab]: editContent });
       const data = await getRelease(releaseId);
       setRelease(data);
@@ -115,11 +141,15 @@ export default function ReleaseDetailPage() {
     }
   };
 
-  const handleCopy = () => {
+  const handleCopy = async () => {
     if (!release?.notes) return;
-    navigator.clipboard.writeText(release.notes[activeTab]);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      await navigator.clipboard.writeText(editing ? editContent : release.notes[activeTab]);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setError('Could not copy the notes. Please select the text and copy it manually.');
+    }
   };
 
   const getStatusColor = (status: string) => {
@@ -181,6 +211,8 @@ export default function ReleaseDetailPage() {
         {/* Release Content */}
         {release && !loading && (
           <>
+            {deliveryNeedsReview && <p role="alert" className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-900">Delivery outcome needs review. Please contact support before retrying or regenerating this release.</p>}
+            {publishMessage && <p role="status" className="mb-6 rounded-lg bg-navy-100 p-4 text-navy-800">{publishMessage}</p>}
             {/* Release Header */}
             <div className="bg-white rounded-xl p-4 lg:p-6 shadow-sm border border-navy-100 mb-6">
               <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
@@ -215,10 +247,11 @@ export default function ReleaseDetailPage() {
                   {release.notes && (
                     <button
                       onClick={() => setShowPublishDialog(true)}
-                      className="px-4 py-2 text-sm bg-teal-600 text-white rounded-lg hover:bg-teal-500 transition flex items-center gap-2"
+                      disabled={editing || regenerating || saving || publishing || deliveryNeedsReview}
+                      className="px-4 py-2 text-sm bg-teal-600 text-white rounded-lg hover:bg-teal-500 transition flex items-center gap-2 disabled:opacity-50"
                     >
                       <Send className="w-4 h-4" />
-                      {release.status === 'PUBLISHED' ? 'Republish' : 'Publish'}
+                      {release.status === 'PUBLISHED' ? 'Retry delivery' : 'Publish'}
                     </button>
                   )}
                 </div>
@@ -233,8 +266,9 @@ export default function ReleaseDetailPage() {
                   {(Object.keys(tabConfig) as Tab[]).map((tab) => (
                     <button
                       key={tab}
-                      onClick={() => { setActiveTab(tab); setEditing(false); }}
-                      className={`px-6 py-4 text-sm font-medium transition flex-shrink-0 ${activeTab === tab
+                      onClick={() => { setActiveTab(tab); setCopied(false); }}
+                      disabled={editing || saving || regenerating}
+                      className={`px-6 py-4 text-sm font-medium transition flex-shrink-0 disabled:cursor-not-allowed ${activeTab === tab
                           ? 'text-teal-600 border-b-2 border-teal-600 bg-teal-50/50'
                           : 'text-navy-600 hover:text-navy-900 hover:bg-navy-50'
                         }`}
@@ -254,7 +288,7 @@ export default function ReleaseDetailPage() {
                     <div /> {/* Spacer */}
 
                     {/* Actions */}
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center justify-end gap-2">
                       <button
                         onClick={handleCopy}
                         className="px-3 py-1.5 text-sm text-navy-600 hover:text-navy-900 hover:bg-navy-50 rounded-md transition flex items-center gap-1.5"
@@ -266,14 +300,15 @@ export default function ReleaseDetailPage() {
                         <>
                           <button
                             onClick={handleEdit}
+                            disabled={regenerating || publishing || deliveryNeedsReview}
                             className="px-3 py-1.5 text-sm text-navy-600 hover:text-navy-900 hover:bg-navy-50 rounded-md transition flex items-center gap-1.5"
                           >
                             <Edit3 className="w-4 h-4" />
                             Edit
                           </button>
                           <button
-                            onClick={handleRegenerate}
-                            disabled={regenerating}
+                            onClick={() => setShowRegenerateDialog(true)}
+                            disabled={regenerating || publishing || deliveryNeedsReview}
                             className="px-3 py-1.5 text-sm text-navy-600 hover:text-navy-900 hover:bg-navy-50 rounded-md transition flex items-center gap-1.5 disabled:opacity-50"
                           >
                             {regenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
@@ -286,6 +321,7 @@ export default function ReleaseDetailPage() {
 
                   {editing ? (
                     <div>
+                      <p className="mb-3 text-sm text-navy-600">Save or cancel your changes before switching audiences or publishing.</p>
                       <div className="mb-4 border border-navy-200 rounded-lg overflow-hidden" data-color-mode="light">
                         <MDEditor
                           value={editContent}
@@ -300,6 +336,7 @@ export default function ReleaseDetailPage() {
                       <div className="flex justify-end gap-2">
                         <button
                           onClick={() => { setEditing(false); }}
+                          disabled={saving}
                           className="px-4 py-2 text-sm text-navy-600 hover:text-navy-900 transition"
                         >
                           Cancel
@@ -342,7 +379,7 @@ export default function ReleaseDetailPage() {
                 {release.status !== 'PROCESSING' && (
                   <button
                     onClick={handleRegenerate}
-                    disabled={regenerating}
+                    disabled={regenerating || deliveryNeedsReview}
                     className="px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-500 transition flex items-center gap-2 mx-auto disabled:opacity-50"
                   >
                     {regenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
@@ -355,21 +392,24 @@ export default function ReleaseDetailPage() {
         )}
 
         {/* Publish Dialog */}
-        <Dialog open={showPublishDialog} onOpenChange={setShowPublishDialog}>
+        <Dialog open={showPublishDialog} onOpenChange={(open) => { if (!publishing) setShowPublishDialog(open); }}>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Publish Release Notes</DialogTitle>
               <DialogDescription>
-                Choose where you want to send this update.
+                Publish this update to your hosted changelog and choose any channels to notify. Previously successful deliveries will not be sent again.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-4">
-              {release?.repo.config?.channels && release.repo.config.channels.length > 0 ? (
+              {error && <p role="alert" className="mx-6 text-sm text-red-700">{error}</p>}
+              {release?.repo.config?.channels?.some(channel => channel.enabled) ? (
                 <div className="space-y-2">
-                  {release.repo.config.channels.map((channel) => (
+                  {release.repo.config.channels.filter(channel => channel.enabled).map((channel) => (
                     <div key={channel.id} className="flex items-center gap-3 p-3 rounded-lg border border-navy-100 bg-navy-50/50">
                       <input
                         type="checkbox"
+                        aria-label={`Notify ${channel.name}`}
+                        disabled={publishing || channel.type === 'WEBHOOK'}
                         checked={selectedChannels.includes(channel.id)}
                         onChange={(e) => {
                           if (e.target.checked) {
@@ -390,13 +430,14 @@ export default function ReleaseDetailPage() {
                           <span className="font-medium text-navy-900">{channel.name}</span>
                         </div>
                         <p className="text-xs text-navy-500 capitalize">{channel.audience} Audience</p>
+                        {channel.type === 'WEBHOOK' && <p className="text-xs text-amber-700">Generic webhooks are unavailable. Add a Slack or Discord channel instead.</p>}
                       </div>
                     </div>
                   ))}
                 </div>
               ) : (
                 <div className="text-center py-6 bg-navy-50 rounded-lg">
-                  <p className="text-navy-600 mb-2">No channels configured.</p>
+                  <p className="text-navy-600 mb-2">No enabled channels. You can still publish to your hosted changelog.</p>
                   <Link href={`/dashboard/repos/${release?.repo.id}`} className="text-teal-600 hover:underline text-sm">
                     Add a channel in settings
                   </Link>
@@ -406,21 +447,30 @@ export default function ReleaseDetailPage() {
             <DialogFooter>
               <button
                 onClick={() => setShowPublishDialog(false)}
+                disabled={publishing}
                 className="px-4 py-2 text-sm text-navy-600 hover:text-navy-900 transition"
               >
                 Cancel
               </button>
               <button
                 onClick={handlePublish}
-                disabled={publishing || selectedChannels.length === 0}
+                disabled={publishing}
                 className="px-4 py-2 text-sm bg-teal-600 text-white rounded-lg hover:bg-teal-500 transition disabled:opacity-50 flex items-center gap-2"
               >
                 {publishing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                Send to {selectedChannels.length} channel{selectedChannels.length !== 1 ? 's' : ''}
+                {selectedChannels.length === 0 ? 'Publish to changelog' : `Publish and notify ${selectedChannels.length} channel${selectedChannels.length !== 1 ? 's' : ''}`}
               </button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
+        <ConfirmDialog
+          isOpen={showRegenerateDialog}
+          onClose={() => setShowRegenerateDialog(false)}
+          onConfirm={handleRegenerate}
+          title="Regenerate all release notes?"
+          message="This replaces the notes for every audience, including any manual edits."
+          confirmText="Regenerate all notes"
+        />
       </div>
     </DashboardLayout>
   );

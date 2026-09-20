@@ -172,4 +172,36 @@ describe('SettingsPage', () => {
     expect(await screen.findByText('API Keys')).toBeInTheDocument();
     expect(screen.getByText('Coming soon')).toBeInTheDocument();
   });
+
+  it('uses the billing portal for an existing subscription and keeps settings visible on failure', async () => {
+    (api.getUser as jest.Mock).mockResolvedValue({ ...mockUser, subscriptionTier: 'PRO', subscriptionStatus: 'trialing' });
+    (api.createPortalSession as jest.Mock).mockRejectedValue(new Error('Billing is temporarily unavailable'));
+    render(<SettingsPage />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Upgrade' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Billing is temporarily unavailable');
+    expect(api.createPortalSession).toHaveBeenCalledTimes(1);
+    expect(api.createCheckoutSession).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Upgrade' })).toBeEnabled();
+    expect(screen.getByText('Edit Profile')).toBeInTheDocument();
+  });
+
+  it('starts checkout for a free user with no subscription', async () => {
+    (api.getUser as jest.Mock).mockResolvedValue({ ...mockUser, subscriptionStatus: null });
+    (api.createCheckoutSession as jest.Mock).mockRejectedValue(new Error('Try again'));
+    render(<SettingsPage />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Upgrade' }));
+    await waitFor(() => expect(api.createCheckoutSession).toHaveBeenCalledWith('pro'));
+    expect(api.createPortalSession).not.toHaveBeenCalled();
+  });
+
+  it('surfaces account deletion instructions from the API', async () => {
+    (api.deleteUser as jest.Mock).mockRejectedValue(new Error('Cancel your subscription before deleting your account.'));
+    render(<SettingsPage />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete Account' }));
+    fireEvent.change(screen.getByPlaceholderText('DELETE'), { target: { value: 'DELETE' } });
+    const buttons = screen.getAllByRole('button', { name: 'Delete Account' });
+    fireEvent.click(buttons[buttons.length - 1]);
+    expect(await screen.findByText('Cancel your subscription before deleting your account.')).toBeInTheDocument();
+    expect(screen.queryByText('Delete Account?')).not.toBeInTheDocument();
+  });
 });

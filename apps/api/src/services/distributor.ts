@@ -9,7 +9,7 @@ import { logError, logInfo } from '../lib/logger.js';
 import { logger } from '../lib/logger.js';
 
 export interface DistributionTarget {
-  type: 'slack' | 'discord' | 'email' | 'hosted';
+  type: 'slack' | 'discord' | 'email' | 'hosted' | 'webhook';
   audience: 'customer' | 'developer' | 'stakeholder';
   webhookUrl?: string; // For Slack/Discord
   email?: string; // For email
@@ -91,7 +91,7 @@ function validateWebhookUrl(url: string): void {
  */
 export async function distributeRelease(
   release: Release & { repo?: { fullName: string } },
-  notes: GeneratedNotes,
+  notes: Pick<GeneratedNotes, 'customer' | 'developer' | 'stakeholder'>,
   targets: DistributionTarget[]
 ): Promise<DistributionResult[]> {
   return distributeReleaseWithResults(release, notes, targets);
@@ -107,7 +107,7 @@ export async function distributeRelease(
  */
 export async function distributeReleaseWithResults(
   release: Release & { repo?: { fullName: string } },
-  notes: GeneratedNotes,
+  notes: Pick<GeneratedNotes, 'customer' | 'developer' | 'stakeholder'>,
   targets: DistributionTarget[]
 ): Promise<DistributionResult[]> {
   const payload: DistributionPayload = {
@@ -153,6 +153,8 @@ async function distributeToTarget(
 
   try {
     switch (target.type) {
+      case 'webhook':
+        return { target, success: false, error: 'Generic webhooks are not supported. Choose Slack or Discord.' };
       case 'slack':
         return await sendToSlack(target, payload, notes);
       case 'discord':
@@ -460,7 +462,7 @@ function markdownToHtml(markdown: string, payload: DistributionPayload): string 
   const safeTagName = escapeHtml(payload.tagName);
   const safeRepoFullName = escapeHtml(payload.repoFullName);
 
-  let html = markdown
+  const html = escapeHtml(markdown)
     .replace(/^### (.+)$/gm, '<h3 style="color: #102a43; margin-top: 16px;">$1</h3>')
     .replace(/^## (.+)$/gm, '<h2 style="color: #102a43; margin-top: 20px;">$1</h2>')
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
@@ -478,7 +480,7 @@ function markdownToHtml(markdown: string, payload: DistributionPayload): string 
         ${html}
         <hr style="margin: 24px 0; border: none; border-top: 1px solid #e2e8f0;">
         <p style="color: #627d98; font-size: 14px;">
-          <a href="${payload.releaseUrl}" style="color: #27ab83;">View on GitHub</a> •
+          <a href="${escapeHtml(payload.releaseUrl)}" style="color: #27ab83;">View on GitHub</a> •
           Powered by <a href="https://shiplog.io" style="color: #27ab83;">ShipLog</a>
         </p>
       </div>

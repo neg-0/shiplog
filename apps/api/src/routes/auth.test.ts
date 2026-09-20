@@ -1,4 +1,4 @@
-import { jest, describe, it, expect, beforeEach } from '@jest/globals';
+import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { Hono } from 'hono';
 
 const mockPrisma = {
@@ -47,6 +47,11 @@ describe('Auth System', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockFetch.mockReset();
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+    delete process.env.DEMO_ACCESS_TOKEN;
   });
 
   describe('Encryption', () => {
@@ -188,6 +193,50 @@ describe('Auth System', () => {
 
       expect(mockPrisma.user.upsert).toHaveBeenCalled();
       expect(mockFetch).toHaveBeenCalled();
+    });
+  });
+
+  describe('Session code exchange', () => {
+    async function createCode() {
+      process.env.DEMO_ACCESS_TOKEN = 'test-demo-token';
+      mockPrisma.user.upsert.mockResolvedValue({ id: 'demo-user', login: 'demo-user' });
+      const response = await app.request('/auth/demo', {
+        method: 'POST', headers: { 'X-Demo-Token': 'test-demo-token' },
+      });
+      return (await response.json()).code as string;
+    }
+
+    function exchange(code: string) {
+      return app.request('/auth/exchange', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code }),
+      });
+    }
+
+    it('sets cookies for the JWT lifetime and consumes the code only once', async () => {
+      const code = await createCode();
+      const response = await exchange(code);
+      expect(response.status).toBe(200);
+      expect(response.headers.get('Set-Cookie')).toContain('Max-Age=3600');
+      expect((await exchange(code)).status).toBe(401);
+    });
+
+    it('rejects expired codes before the periodic cleanup runs', async () => {
+      const issuedAt = Date.now();
+      const now = jest.spyOn(Date, 'now').mockReturnValue(issuedAt);
+      const code = await createCode();
+      now.mockReturnValue(issuedAt + 30_000);
+
+      const response = await exchange(code);
+      expect(response.status).toBe(401);
+      expect(response.headers.get('Set-Cookie')).toBeNull();
+    });
+
+    it('returns a validation error for malformed exchange JSON', async () => {
+      const response = await app.request('/auth/exchange', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{',
+      });
+      expect(response.status).toBe(400);
     });
   });
 

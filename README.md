@@ -1,64 +1,59 @@
-# ShipLog 🚢
+# ShipLog
 
-> Release notes that ship themselves — tailored for customers, developers, and execs — from your GitHub releases.
+Release notes from GitHub, written for customers, developers, and stakeholders.
 
-## What is ShipLog?
+Connect a repository, import or receive a release, generate three drafts, review them, and publish a hosted changelog or send selected Slack/Discord updates.
 
-ShipLog connects to your GitHub repository and automatically generates **three versions** of your release notes whenever you publish a release:
+- Web: Next.js 15, React 19, TypeScript, Tailwind; deployed on Vercel.
+- API: Node.js, Hono, Prisma/PostgreSQL; deployed on Railway.
+- Sign-in: GitHub OAuth. Billing: Stripe. Generation: OpenAI.
 
-1. **Customer Changelog** — Feature-focused, benefit-driven, no jargon
-2. **Developer Changelog** — Technical details, breaking changes, migration notes
-3. **Stakeholder Brief** — Executive summary, shipped vs planned, impact
+See [readiness review](docs/READINESS.md) for verified fixes, live rollout checks, and unfinished features. [Architecture](docs/ARCHITECTURE.md) and [roadmap](docs/ROADMAP.md) contain historical plans, not a current feature guarantee.
 
-Then it **distributes them automatically** to:
-- Slack / Discord channels
-- Email digests
-- Hosted changelog page at `shiplog.io/your-org`
+## Local development
 
-## Project Structure
+Use Node.js 20+ and the package manager version in `package.json`:
 
-```
-shiplog/
-├── apps/
-│   ├── web/          # Next.js frontend (Vercel)
-│   └── api/          # Bun backend (Railway)
-├── packages/
-│   └── shared/       # Shared types and utilities
-└── docs/             # Documentation
+```sh
+corepack enable
+corepack prepare pnpm@8.15.0 --activate
+pnpm install --frozen-lockfile
+pnpm --filter api db:generate
 ```
 
-## Tech Stack
+Copy `apps/api/.env.example` to `apps/api/.env` and configure a **local development** PostgreSQL database and provider test credentials. Never copy production credentials into a test fixture. Apply the schema to that local database with `pnpm --filter api db:push` before first use. The API process needs those values in its environment; for Node versions supporting `--env-file`, start it with:
 
-- **Frontend:** Next.js 14+ (App Router), TypeScript, Tailwind CSS
-- **Backend:** Bun + Hono, TypeScript
-- **Database:** PostgreSQL (Railway)
-- **Auth:** GitHub OAuth
-- **Hosting:** Vercel (frontend) + Railway (backend)
-
-## Getting Started
-
-```bash
-# Install dependencies
-pnpm install
-
-# Start development
-pnpm dev
+```sh
+cd apps/api
+node --env-file=.env --import tsx src/index.ts
 ```
 
-## Status
+Start the frontend in another terminal:
 
-🚧 **Under Development** — MVP in progress
-
-## Environment Variables
-
-```
-STRIPE_SECRET_KEY=sk_live_...
-STRIPE_PUBLISHABLE_KEY=pk_live_...
-STRIPE_PRICE_PRO=price_...
-STRIPE_PRICE_TEAM=price_...
-STRIPE_WEBHOOK_SECRET=whsec_...
+```sh
+pnpm --filter web dev
 ```
 
-## License
+The frontend proxies `/api/*` to `http://127.0.0.1:3001` during development. Override `API_URL` for another development backend. Production defaults to `https://api.shiplog.io`.
 
-MIT
+## Validation
+
+```sh
+pnpm typecheck
+pnpm test:api --runInBand --watchman=false
+pnpm test:web --runInBand --watchman=false
+pnpm build
+pnpm exec playwright install chromium
+pnpm test:e2e
+pnpm audit --prod
+```
+
+Unit tests mock providers. Browser tests target a local API and verify public navigation, mobile layout, returning-visitor hydration, and the interactive example; they do not exercise live OAuth, generation, payment, or external delivery.
+
+## Deployment configuration
+
+The workspace uses `pnpm-lock.yaml`. Railway's API root is `apps/api`, so it uses its own checked-in `package-lock.json` with `npm ci`. When changing API dependencies, refresh both locks; generate the npm lock in a clean directory to avoid recording pnpm symlinks.
+
+Stripe price variable names are `STRIPE_PRICE_PRO` and `STRIPE_PRICE_TEAM`. For production OAuth across web/API subdomains, set `COOKIE_DOMAIN=.shiplog.io`, `APP_URL` to the canonical web origin, and `API_URL` to the API origin. Authentication session cookies remain host-only.
+
+The checked-in Railway command runs `prisma db push --skip-generate` before startup, without accepting data loss. There is no Prisma migration history yet. Review any schema drift before deploying; do not add a data-loss waiver to get a deployment through.

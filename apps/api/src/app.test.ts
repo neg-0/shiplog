@@ -1,4 +1,4 @@
-import { jest, describe, it, expect } from '@jest/globals';
+import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { mockDeep } from 'jest-mock-extended';
 import type { PrismaClient } from '@prisma/client';
 
@@ -38,6 +38,15 @@ process.env.APP_URL = 'https://shiplog.io';
 const { app, getAllowedCorsOrigins } = await import('./app.js');
 
 describe('App', () => {
+  beforeEach(() => {
+    // App routing tests must not depend on GitHub availability or make live requests.
+    jest.spyOn(global, 'fetch').mockResolvedValue(new Response('ok', { status: 200 }));
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
   it('should return root info', async () => {
     const res = await app.request('/');
     expect(res.status).toBe(200);

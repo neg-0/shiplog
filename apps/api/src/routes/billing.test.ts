@@ -9,7 +9,9 @@ const mockPrisma = {
     updateMany: jest.fn<any>(),
     findMany: jest.fn<any>(),
   },
+  $transaction: jest.fn<any>(),
   organization: {
+    updateMany: jest.fn<any>(),
     findMany: jest.fn<any>(),
     update: jest.fn<any>(),
   },
@@ -51,7 +53,10 @@ jest.unstable_mockModule('../lib/db.js', () => ({
 
 jest.unstable_mockModule('stripe', () => ({
   __esModule: true,
-  default: jest.fn<any>(() => mockStripe),
+  default: jest.fn<any>((secret: string) => {
+    if (!secret) throw new Error('Stripe requires an API key');
+    return mockStripe;
+  }),
 }));
 
 const OLD_ENV = process.env;
@@ -76,6 +81,8 @@ describe('Billing Route', () => {
     jest.resetModules();
     const mod = await import('./billing.js');
     billingRoute = mod.billing;
+    mockPrisma.$transaction.mockImplementation(async (callback: any) => callback(mockPrisma));
+    mockPrisma.user.updateMany.mockResolvedValue({ count: 1 });
     mockPrisma.user.findMany.mockResolvedValue([{ id: 'user_123' }]);
     mockPrisma.organization.findMany.mockResolvedValue([]);
   });
@@ -113,6 +120,7 @@ describe('Billing Route', () => {
       expect(res.status).toBe(200);
       expect(mockPrisma.user.updateMany).toHaveBeenCalledWith({
         where: {
+          id: 'user_123',
           stripeCustomerId: 'cus_123',
           OR: [
             { stripeLastEventTimestamp: { lt: 1000 } },
@@ -158,6 +166,7 @@ describe('Billing Route', () => {
       expect(res.status).toBe(200);
       expect(mockPrisma.user.updateMany).toHaveBeenCalledWith({
         where: {
+          id: 'user_123',
           stripeCustomerId: 'cus_123',
           OR: [
             { stripeLastEventTimestamp: { lt: 1000 } },
@@ -204,10 +213,67 @@ describe('Billing Route', () => {
       const res = await billingRoute.request(req);
 
       expect(res.status).toBe(200);
-      expect(mockPrisma.organization.update).toHaveBeenCalledWith({
-        where: { id: 'org_1' },
+      expect(mockPrisma.organization.updateMany).toHaveBeenCalledWith({
+        where: { ownerId: 'user_123' },
         data: { subscriptionId: 'sub_team_123' }
       });
+    });
+
+    it('does not change an organization when a stale event did not update its owner', async () => {
+      mockStripe.webhooks.constructEvent.mockReturnValue({
+        type: 'customer.subscription.updated', created: 1000,
+        data: { object: { id: 'sub_123' } },
+      });
+      mockStripe.subscriptions.retrieve.mockResolvedValue({
+        id: 'sub_123', customer: 'cus_123', status: 'canceled',
+        items: { data: [{ price: { id: 'price_team_123' } }] },
+      });
+      mockPrisma.user.updateMany.mockResolvedValue({ count: 0 });
+
+      const res = await billingRoute.request('/webhook', {
+        method: 'POST', headers: { 'stripe-signature': 'sig' }, body: '{}',
+      });
+
+      expect(res.status).toBe(200);
+      expect(mockPrisma.organization.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('returns a retryable error instead of downgrading an unrecognized paid price to FREE', async () => {
+      mockStripe.webhooks.constructEvent.mockReturnValue({
+        type: 'customer.subscription.updated', created: 1000,
+        data: { object: { id: 'sub_123' } },
+      });
+      mockStripe.subscriptions.retrieve.mockResolvedValue({
+        id: 'sub_123', customer: 'cus_123', status: 'active',
+        items: { data: [{ price: { id: 'price_not_configured', lookup_key: null } }] },
+      });
+
+      const res = await billingRoute.request('/webhook', {
+        method: 'POST', headers: { 'stripe-signature': 'sig' }, body: '{}',
+      });
+
+      expect(res.status).toBe(500);
+      expect(mockPrisma.user.updateMany).not.toHaveBeenCalled();
+      expect(mockPrisma.organization.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('returns a retryable error when organization entitlement synchronization fails', async () => {
+      mockStripe.webhooks.constructEvent.mockReturnValue({
+        type: 'customer.subscription.updated', created: 1000,
+        data: { object: { id: 'sub_123' } },
+      });
+      mockStripe.subscriptions.retrieve.mockResolvedValue({
+        id: 'sub_123', customer: 'cus_123', status: 'active',
+        items: { data: [{ price: { id: 'price_team_123' } }] },
+      });
+      mockPrisma.organization.updateMany.mockRejectedValueOnce(new Error('Database unavailable'));
+
+      const res = await billingRoute.request('/webhook', {
+        method: 'POST', headers: { 'stripe-signature': 'sig' }, body: '{}',
+      });
+
+      expect(res.status).toBe(500);
+      expect(mockPrisma.$transaction).toHaveBeenCalled();
     });
   });
 
@@ -261,6 +327,22 @@ describe('Billing Route', () => {
   });
 
   describe('POST /checkout', () => {
+    it.each(['active', 'trialing', 'past_due', 'unpaid', 'incomplete', 'paused'])('prevents a second subscription for a %s subscriber even when their tier is stale', async (status) => {
+      mockPrisma.user.findUnique.mockResolvedValue({
+        id: 'user_123', stripeSubscriptionId: 'sub_existing',
+        subscriptionStatus: status, subscriptionTier: 'FREE',
+      });
+
+      const res = await billingRoute.request('/checkout', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plan: 'team' }),
+      });
+
+      expect(res.status).toBe(400);
+      expect(mockStripe.checkout.sessions.create).not.toHaveBeenCalled();
+      expect(mockStripe.customers.create).not.toHaveBeenCalled();
+    });
+
     it('should return 400 for invalid plan', async () => {
       const req = new Request('http://localhost/checkout?plan=invalid', {
         method: 'POST',
@@ -268,5 +350,20 @@ describe('Billing Route', () => {
       const res = await billingRoute.request(req);
       expect(res.status).toBe(400);
     });
+  });
+
+  it('loads without billing credentials and reports unavailable checkout', async () => {
+    delete process.env.STRIPE_SECRET_KEY;
+    jest.resetModules();
+    const { billing } = await import('./billing.js');
+
+    const response = await billing.request('/checkout', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plan: 'pro' }),
+    });
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: 'Stripe not configured' });
+    expect(mockStripe.checkout.sessions.create).not.toHaveBeenCalled();
   });
 });

@@ -18,11 +18,12 @@ export async function exchangeAuthCode(code: string): Promise<void> {
 }
 
 export async function logout(): Promise<void> {
-  await fetch('/api/auth/logout', {
+  const res = await fetch('/api/auth/logout', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
   });
+  if (!res.ok) throw new Error('Failed to sign out');
 }
 
 async function fetchApi<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -38,7 +39,7 @@ async function fetchApi<T>(path: string, options: RequestInit = {}): Promise<T> 
   });
 
   if (res.status === 401) {
-    await logout();
+    await logout().catch(() => undefined);
     if (typeof window !== 'undefined') {
       window.location.href = '/login';
     }
@@ -283,11 +284,12 @@ export interface Release {
   publishedAt: string | null;
   status: string;
   processedAt: string | null;
+  error?: string | null;
   repo: {
     id: string;
     fullName: string;
     config?: {
-      channels?: Channel[];
+      channels?: Pick<Channel, 'id' | 'type' | 'name' | 'audience' | 'enabled'>[];
     };
   };
   notes: ReleaseNotes | null;
@@ -304,7 +306,7 @@ export async function regenerateNotes(id: string, options?: { tone?: string }): 
   });
 }
 
-export async function publishRelease(id: string, channels?: string[]): Promise<{ status: string }> {
+export async function publishRelease(id: string, channels?: string[]): Promise<{ status: string; failedCount?: number; distributedTo?: number }> {
   return fetchApi(`/releases/${id}/publish`, {
     method: 'POST',
     body: JSON.stringify({ channels }),

@@ -44,6 +44,7 @@ describe('Auth Routes', () => {
     process.env.GITHUB_CLIENT_SECRET = 'mock-client-secret';
     process.env.APP_URL = 'http://localhost:3000';
     process.env.API_URL = 'http://localhost:3001';
+    process.env.COOKIE_DOMAIN = '.shiplog.io';
 
     // Re-import mocks and modules
     const db = await import('../lib/db.js');
@@ -128,6 +129,8 @@ describe('Auth Routes', () => {
       expect(res.status).toBe(302);
       // Callback uses exchange code
       expect(res.headers.get('Location')).toContain('http://localhost:3000/dashboard');
+      expect(res.headers.get('Set-Cookie')).toContain('Domain=.shiplog.io');
+      expect(res.headers.get('Set-Cookie')).toContain('oauth_state=');
       expect(prismaMock.user.upsert).toHaveBeenCalled();
     });
 

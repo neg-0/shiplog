@@ -129,6 +129,16 @@ function parseLinkHeader(linkHeader: string, rel: string): string | null {
 // PUBLIC API
 // ============================================
 
+/** Read canonical repository metadata using the connecting user's GitHub token. */
+export async function getRepository(owner: string, repo: string, accessToken: string): Promise<GitHubRepo> {
+  const response = await fetchWithTimeout(
+    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
+    { headers: getHeaders(accessToken) }
+  );
+  if (!response.ok) throw new Error(`Failed to fetch repository: ${response.status}`);
+  return response.json() as Promise<GitHubRepo>;
+}
+
 /**
  * Fetch detailed release data including commits and PRs between the given tag and the previous one.
  */
@@ -142,7 +152,7 @@ export async function fetchReleaseData(
 
   // 1. Get the release
   const releaseRes = await fetchWithTimeout(
-    `https://api.github.com/repos/${owner}/${repo}/releases/tags/${tagName}`,
+    `https://api.github.com/repos/${owner}/${repo}/releases/tags/${encodeURIComponent(tagName)}`,
     { headers }
   );
 
@@ -158,9 +168,10 @@ export async function fetchReleaseData(
     { headers }
   );
 
-  const releases = (await releasesRes.json()) as GitHubRelease[];
+  if (!releasesRes.ok) throw new Error(`Failed to list releases: ${releasesRes.status}`);
+  const releases = ((await releasesRes.json()) as GitHubRelease[]).filter(release => !release.draft);
   const currentIndex = releases.findIndex(r => r.tag_name === tagName);
-  const previousTag = currentIndex < releases.length - 1
+  const previousTag = currentIndex >= 0 && currentIndex < releases.length - 1
     ? releases[currentIndex + 1]?.tag_name ?? null
     : null;
 
@@ -169,7 +180,7 @@ export async function fetchReleaseData(
 
   if (previousTag) {
     const compareRes = await fetchWithTimeout(
-      `https://api.github.com/repos/${owner}/${repo}/compare/${previousTag}...${tagName}`,
+      `https://api.github.com/repos/${owner}/${repo}/compare/${encodeURIComponent(previousTag)}...${encodeURIComponent(tagName)}`,
       { headers }
     );
 

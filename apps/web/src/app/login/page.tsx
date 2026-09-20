@@ -10,6 +10,7 @@ function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const showDemo = searchParams.get('demo') === 'true';
+  const authFailed = searchParams.get('error') === 'auth_failed';
   const [loading, setLoading] = useState(false);
   const [demoToken, setDemoToken] = useState('');
   const [showDemoInput, setShowDemoInput] = useState(false);
@@ -59,6 +60,12 @@ function LoginForm() {
         </p>
       </div>
 
+      {authFailed && (
+        <p role="alert" className="mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+          We couldn&apos;t finish signing you in. Please try connecting with GitHub again.
+        </p>
+      )}
+
       <a 
         href="/api/auth/github"
         className="w-full bg-navy-900 text-white py-4 px-6 rounded-xl font-semibold hover:bg-navy-800 transition flex items-center justify-center gap-3"
@@ -73,6 +80,7 @@ function LoginForm() {
             <div className="space-y-3">
               <input
                 type="text"
+                aria-label="Demo access token"
                 value={demoToken}
                 onChange={(e) => setDemoToken(e.target.value)}
                 placeholder="Enter Demo Access Token"
@@ -121,7 +129,7 @@ function LoginForm() {
         <ul className="space-y-2 text-sm text-navy-600">
           <li className="flex items-center gap-2">
             <span className="w-2 h-2 bg-teal-500 rounded-full" />
-            Read access to your repositories
+            Repository access (GitHub&apos;s OAuth permission includes write access)
           </li>
           <li className="flex items-center gap-2">
             <span className="w-2 h-2 bg-teal-500 rounded-full" />

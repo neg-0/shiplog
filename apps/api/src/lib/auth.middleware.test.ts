@@ -147,6 +147,20 @@ describe('requireAuth middleware', () => {
     expect(body.user.login).toBe('testuser');
     expect(verifyTokenMock).toHaveBeenCalledWith('bearer-token');
   });
+
+  it('ignores similarly named cookies when selecting a session token', async () => {
+    verifyTokenMock.mockResolvedValue(validPayload);
+    prismaMock.user.findUnique.mockResolvedValue(mockUser as any);
+
+    const res = await buildApp().request('/test', {
+      headers: {
+        Cookie: 'other_shiplog_session=wrong-token; shiplog_session=real-token',
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(verifyTokenMock).toHaveBeenCalledWith('real-token');
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -33,7 +33,7 @@ describe('Home Page', () => {
 
     expect(screen.getByText(/Release notes that/)).toBeInTheDocument();
     expect(screen.getByText('ship themselves')).toBeInTheDocument();
-    expect(screen.getByText(/One commit\. Three audiences\. Zero friction\./)).toBeInTheDocument();
+    expect(screen.getByText(/One release\. Three audiences\. Ready to share\./)).toBeInTheDocument();
   });
 
   it('renders the navigation bar with ShipLog branding', () => {
@@ -90,7 +90,6 @@ describe('Home Page', () => {
     expect(screen.getByText('Delivered to every port')).toBeInTheDocument();
     expect(screen.getByText('Slack')).toBeInTheDocument();
     expect(screen.getByText('Discord')).toBeInTheDocument();
-    expect(screen.getByText('Email')).toBeInTheDocument();
     expect(screen.getByText('Hosted Page')).toBeInTheDocument();
   });
 

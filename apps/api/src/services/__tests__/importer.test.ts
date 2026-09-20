@@ -162,4 +162,13 @@ describe('importRepoHistory', () => {
       data: { status: 'FAILED' },
     });
   });
+
+  it('never imports or generates notes for unpublished GitHub drafts', async () => {
+    mockPrisma.repo.findUnique.mockResolvedValue({ id: 'repo-1', owner: 'owner', name: 'repo', config: { autoGenerate: true } } as any);
+    mockListReleases.mockResolvedValue([{ id: 101, tag_name: 'secret-beta', draft: true, published_at: null }]);
+    await importRepoHistory('repo-1', 'token');
+    expect(mockPrisma.release.upsert).not.toHaveBeenCalled();
+    expect(mockGenerateReleaseNotes).not.toHaveBeenCalled();
+  });
+
 });

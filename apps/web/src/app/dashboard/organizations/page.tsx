@@ -1,11 +1,11 @@
 'use client';
 
 import { DashboardLayout } from '@/components/DashboardLayout';
-import { AlertCircle, Building2, Crown, Loader2, Plus, Shield, User as UserIcon } from 'lucide-react';
+import { AlertCircle, Building2, Crown, Loader2, Shield, User as UserIcon } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { createOrganization, getOrganizations, getUser, isAuthenticated, type User } from '../../../lib/api';
+import { getOrganizations, getUser, isAuthenticated, type User } from '../../../lib/api';
 
 // Local type extending the API Organization with a derived role field
 interface Organization {
@@ -22,11 +22,8 @@ export default function OrganizationsPage() {
   const [error, setError] = useState<string | null>(null);
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [user, setUser] = useState<User | null>(null);
-  const [showCreateModal, setShowCreateModal] = useState(false);
 
   const router = useRouter();
-
-  const isPro = user?.subscriptionTier === 'TEAM';
 
   useEffect(() => {
     if (!isAuthenticated()) {
@@ -71,26 +68,14 @@ export default function OrganizationsPage() {
         <div className="flex items-center justify-between mb-8">
           <div>
             <h1 className="text-2xl font-bold text-navy-900">Organizations</h1>
-            <p className="text-navy-600 mt-1">Manage your team workspaces</p>
+            <p className="text-navy-600 mt-1">View your existing team workspaces</p>
           </div>
-          {isPro ? (
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-500 transition flex items-center gap-2"
-            >
-              <Plus className="w-4 h-4" />
-              Create Organization
-            </button>
-          ) : (
-            <Link
-              href="/dashboard/settings"
-              className="px-4 py-2 bg-navy-900 text-white rounded-lg hover:bg-navy-800 transition flex items-center gap-2"
-            >
-              <Building2 className="w-4 h-4" />
-              Upgrade to Team
-            </Link>
-          )}
+
         </div>
+
+        <p role="status" className="mb-6 rounded-xl border border-navy-200 bg-white p-4 text-sm text-navy-600">
+          New organization setup and team invitations are not available yet. Existing organizations remain accessible below.
+        </p>
 
         {/* Loading */}
         {loading && (
@@ -117,29 +102,10 @@ export default function OrganizationsPage() {
               <div className="bg-white rounded-xl p-12 shadow-sm border border-navy-100 text-center">
                 <Building2 className="w-16 h-16 text-navy-200 mx-auto mb-4" />
                 <h3 className="text-xl font-semibold text-navy-900 mb-2">No organizations yet</h3>
-                <p className="text-navy-600 mb-6 max-w-md mx-auto">
-                  {isPro
-                    ? "Create an organization to collaborate with your team on release notes."
-                    : "Upgrade to the Team plan to create organizations and collaborate with your team."
-                  }
+                <p className="text-navy-600 max-w-md mx-auto">
+                  You can connect repositories and publish release notes from your personal dashboard.
                 </p>
-                {isPro ? (
-                  <button
-                    onClick={() => setShowCreateModal(true)}
-                    className="px-6 py-3 bg-teal-600 text-white rounded-lg hover:bg-teal-500 transition flex items-center gap-2 mx-auto"
-                  >
-                    <Plus className="w-5 h-5" />
-                    Create Your First Organization
-                  </button>
-                ) : (
-                  <Link
-                    href="/dashboard/settings"
-                    className="inline-flex items-center gap-2 px-6 py-3 bg-navy-900 text-white rounded-lg hover:bg-navy-800 transition"
-                  >
-                    <Building2 className="w-5 h-5" />
-                    Upgrade to Team — $79/mo
-                  </Link>
-                )}
+                <Link href="/dashboard" className="mt-6 inline-block rounded-lg bg-navy-900 px-5 py-3 text-white hover:bg-navy-800">Go to Repositories</Link>
               </div>
             ) : (
               <div className="grid gap-4">
@@ -176,156 +142,6 @@ export default function OrganizationsPage() {
       </div>
 
 
-      {/* Create Organization Modal */}
-      {
-        showCreateModal && (
-          <CreateOrganizationModal
-            onClose={() => setShowCreateModal(false)}
-            onCreated={async () => {
-              setShowCreateModal(false);
-              const userData = await getUser();
-              const orgsData = await getOrganizations();
-              setOrganizations(
-                orgsData.organizations.map((org) => ({
-                  ...org,
-                  role: org.ownerId === userData.id ? 'OWNER' as const : 'MEMBER' as const,
-                }))
-              );
-            }}
-          />
-        )
-      }
     </DashboardLayout >
-  );
-}
-
-function CreateOrganizationModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
-  const [name, setName] = useState('');
-  const [githubOrg, setGithubOrg] = useState('');
-  const [creating, setCreating] = useState(false);
-  const [createError, setCreateError] = useState<string | null>(null);
-  const [githubOrgs, setGithubOrgs] = useState<{ id: number; login: string }[]>([]);
-  const [loadingOrgs, setLoadingOrgs] = useState(true);
-
-  useEffect(() => {
-    // TODO: Fetch user's GitHub organizations when endpoint is available
-    setLoadingOrgs(false);
-    setGithubOrgs([]);
-  }, []);
-
-  const handleCreate = async () => {
-    if (!name.trim()) return;
-
-    setCreating(true);
-    setCreateError(null);
-    try {
-      await createOrganization({
-        name,
-        slug: name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''),
-        githubOrgLogin: githubOrg || undefined,
-      });
-      onCreated();
-    } catch (err) {
-      setCreateError(err instanceof Error ? err.message : 'Failed to create organization');
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div
-        className="bg-white rounded-xl max-w-md w-full shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="p-6 border-b border-navy-100">
-          <h2 className="text-xl font-bold text-navy-900">Create Organization</h2>
-          <p className="text-navy-600 text-sm mt-1">
-            Set up a team workspace for collaborative release notes
-          </p>
-        </div>
-
-        <div className="p-6 space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-navy-700 mb-1">
-              Organization Name
-            </label>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Acme Inc"
-              className="w-full px-4 py-2 border border-navy-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-navy-700 mb-1">
-              Link GitHub Organization
-              <span className="text-navy-400 font-normal ml-1">(optional)</span>
-            </label>
-            {loadingOrgs ? (
-              <div className="flex items-center gap-2 text-navy-500 py-2">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Loading GitHub organizations...
-              </div>
-            ) : githubOrgs.length === 0 ? (
-              <div className="bg-navy-50 rounded-lg p-4 text-sm text-navy-600">
-                <p className="mb-2">No GitHub organizations found.</p>
-                <p className="text-navy-500">
-                  You can link a GitHub organization later to restrict which repos can be added.
-                </p>
-              </div>
-            ) : (
-              <select
-                value={githubOrg}
-                onChange={(e) => setGithubOrg(e.target.value)}
-                className="w-full px-4 py-2 border border-navy-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500"
-              >
-                <option value="">Don&apos;t link (allow any repo)</option>
-                {githubOrgs.map((org) => (
-                  <option key={org.id} value={org.login}>
-                    @{org.login}
-                  </option>
-                ))}
-              </select>
-            )}
-          </div>
-
-          <div className="bg-teal-50 border border-teal-200 rounded-lg p-4">
-            <p className="text-sm text-teal-800">
-              <strong>Team Plan:</strong> Unlimited seats included. Invite your entire team at no extra cost.
-            </p>
-          </div>
-
-          {createError && (
-            <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-2">
-              <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
-              <p className="text-sm text-red-600">{createError}</p>
-            </div>
-          )}
-        </div>
-
-        <div className="p-6 border-t border-navy-100 flex gap-3">
-          <button
-            onClick={onClose}
-            className="flex-1 px-4 py-2 border border-navy-200 text-navy-600 rounded-lg font-medium hover:bg-navy-50 transition"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleCreate}
-            disabled={creating || !name.trim()}
-            className="flex-1 px-4 py-2 bg-teal-600 text-white rounded-lg font-medium hover:bg-teal-500 transition disabled:opacity-50 flex items-center justify-center gap-2"
-          >
-            {creating ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Plus className="w-4 h-4" />
-            )}
-            Create Organization
-          </button>
-        </div>
-      </div>
-    </div>
   );
 }

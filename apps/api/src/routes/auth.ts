@@ -23,7 +23,8 @@ const APP_URL = process.env.APP_URL || 'https://shiplog.io';
 const API_URL = process.env.API_URL || 'https://api.shiplog.io';
 
 const isProduction = process.env.NODE_ENV === 'production';
-const COOKIE_MAX_AGE = 7 * 24 * 60 * 60;
+// Match the one-hour JWT lifetime so an expired session cannot leave a stale login marker.
+const COOKIE_MAX_AGE = 60 * 60;
 
 // The OAuth handshake spans two subdomains: the web app (e.g. www.shiplog.io) starts
 // login through its /api proxy, but GitHub delivers the callback straight to the API
@@ -52,11 +53,11 @@ const CODE_TTL_MS = 30 * 1000;
 setInterval(() => {
   const now = Date.now();
   for (const [code, entry] of pendingCodes) {
-    if (now - entry.createdAt > CODE_TTL_MS) {
+    if (now - entry.createdAt >= CODE_TTL_MS) {
       pendingCodes.delete(code);
     }
   }
-}, 60 * 1000);
+}, 60 * 1000).unref();
 
 /**
  * GET /github
@@ -108,7 +109,7 @@ auth.get(
       return c.json({ error: 'Invalid OAuth state' }, 400);
     }
 
-    deleteCookie(c, 'oauth_state');
+    deleteCookie(c, 'oauth_state', { path: '/', domain: COOKIE_DOMAIN });
 
     if (!GITHUB_CLIENT_ID || !GITHUB_CLIENT_SECRET) {
       return c.json({ error: 'GitHub OAuth not configured' }, 500);
@@ -211,18 +212,18 @@ auth.get(
  * @description Exchange a short-lived code for an httpOnly session cookie.
  */
 auth.post('/exchange', authLimiter, async (c) => {
-  const body = await c.req.json<{ code?: string }>();
+  const body = await c.req.json<{ code?: string }>().catch(() => null);
 
-  if (!body.code) {
+  if (!body || typeof body.code !== 'string' || !body.code) {
     return c.json({ error: 'Missing code' }, 400);
   }
 
   const entry = pendingCodes.get(body.code);
-  if (!entry) {
+  pendingCodes.delete(body.code);
+  if (!entry || Date.now() - entry.createdAt >= CODE_TTL_MS) {
     return c.json({ error: 'Invalid or expired code' }, 401);
   }
 
-  pendingCodes.delete(body.code);
   setAuthCookies(c, entry.token);
 
   return c.json({ success: true });

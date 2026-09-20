@@ -23,7 +23,7 @@ export function FeedbackWidget({ repoId, repoName }: FeedbackWidgetProps) {
     setSending(true);
     setFeedbackError(null);
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/public/feedback`, {
+      const res = await fetch('/api/public/feedback', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ repoId, feedback, email, source: 'widget' }),
@@ -49,11 +49,12 @@ export function FeedbackWidget({ repoId, repoName }: FeedbackWidgetProps) {
 
   if (isOpen) {
     return (
-      <div className="fixed bottom-4 right-4 z-50 w-80 bg-white rounded-lg shadow-xl border border-gray-200 p-4 animate-in fade-in slide-in-from-bottom-4 duration-300">
+      <div className="fixed bottom-4 right-4 z-50 w-80 max-w-[calc(100vw-2rem)] max-h-[calc(100dvh-2rem)] overflow-y-auto bg-white rounded-lg shadow-xl border border-gray-200 p-4 animate-in fade-in slide-in-from-bottom-4 duration-300">
         <div className="flex justify-between items-center mb-4">
           <h3 className="font-semibold text-gray-900">Feedback for {repoName}</h3>
           <button 
             onClick={() => setIsOpen(false)}
+            aria-label="Close feedback"
             className="text-gray-500 hover:text-gray-700 p-1"
           >
             <X className="w-4 h-4" />
@@ -72,6 +73,8 @@ export function FeedbackWidget({ repoId, repoName }: FeedbackWidgetProps) {
                 Your Feedback
               </label>
               <textarea
+                aria-label="Your feedback"
+                maxLength={2000}
                 required
                 className="w-full rounded-md border-gray-300 shadow-sm focus:border-teal-500 focus:ring-teal-500 text-sm p-2 border"
                 rows={3}
@@ -87,6 +90,7 @@ export function FeedbackWidget({ repoId, repoName }: FeedbackWidgetProps) {
               </label>
               <input
                 type="email"
+                aria-label="Email (optional)"
                 className="w-full rounded-md border-gray-300 shadow-sm focus:border-teal-500 focus:ring-teal-500 text-sm p-2 border"
                 placeholder="you@example.com"
                 value={email}

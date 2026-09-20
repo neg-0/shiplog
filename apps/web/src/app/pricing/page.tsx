@@ -1,6 +1,11 @@
 import { Check, GitBranch, Ship } from 'lucide-react';
 import Link from 'next/link';
 
+export const metadata = {
+  title: 'Pricing | ShipLog',
+  alternates: { canonical: '/pricing' },
+};
+
 type Plan = {
   name: string;
   price: string;
@@ -29,7 +34,7 @@ const plans: Plan[] = [
     period: '/mo',
     description: 'For growing teams',
     trial: '14-day free trial',
-    features: ['5 repos', 'Auto-trigger on release', 'Slack + Discord', 'Email digests', 'Edit before publish'],
+    features: ['5 repos', 'Auto-trigger on release', 'Slack + Discord', 'Edit before publish'],
     cta: 'Start Free Trial',
     href: '/login',
     highlighted: true,
@@ -39,7 +44,7 @@ const plans: Plan[] = [
     price: '$79',
     period: '/mo',
     description: 'For scaling orgs',
-    features: ['Unlimited repos', 'Everything in Pro', 'Custom branding', 'API access', 'Priority support'],
+    features: ['Unlimited repos', 'Everything in Pro', 'Branding options by request'],
     cta: 'Contact Us',
     href: 'mailto:hello@shiplog.io',
     highlighted: false,
@@ -56,9 +61,9 @@ export default function PricingPage() {
               <Ship className="w-7 h-7 text-teal-600" />
               <span className="text-lg font-bold text-navy-900">ShipLog</span>
             </Link>
-            <nav className="flex items-center gap-6">
+            <nav className="flex items-center gap-3 sm:gap-6">
               <Link href="/docs" className="text-navy-600 hover:text-navy-900 transition text-sm">Docs</Link>
-              <Link href="/changelog" className="text-navy-600 hover:text-navy-900 transition text-sm">Changelog</Link>
+              <Link href="/changelog" className="hidden sm:inline text-navy-600 hover:text-navy-900 transition text-sm">Changelog</Link>
               <Link href="/pricing" className="text-navy-900 font-medium transition text-sm">Pricing</Link>
               <Link href="/login" className="bg-navy-900 text-white px-4 py-2 rounded-lg hover:bg-navy-800 transition text-sm">Login</Link>
             </nav>
@@ -80,7 +85,7 @@ export default function PricingPage() {
                   key={plan.name}
                   className={`rounded-2xl p-6 text-left ${
                     plan.highlighted
-                      ? 'bg-navy-900 text-white ring-4 ring-teal-500 scale-105'
+                      ? 'bg-navy-900 text-white ring-4 ring-teal-500 md:scale-105'
                       : 'bg-white border border-navy-200'
                   }`}
                 >
@@ -143,7 +148,7 @@ export default function PricingPage() {
             <Ship className="w-16 h-16 mx-auto mb-6 text-teal-400" />
             <h2 className="text-3xl font-bold mb-4">Ready to ship your release notes?</h2>
             <p className="text-navy-300 mb-8 max-w-xl mx-auto">
-              Connect your GitHub repo in under 2 minutes. Your next release will write itself.
+              Connect one repository for free and turn an existing release into your first changelog.
             </p>
             <Link
               href="/login"

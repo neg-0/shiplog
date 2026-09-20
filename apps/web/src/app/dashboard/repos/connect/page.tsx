@@ -5,7 +5,7 @@ import { AlertCircle, ArrowLeft, Check, GitBranch, Loader2, Search } from 'lucid
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { connectRepo, createCheckoutSession, getAvailableRepos, getUser, isAuthenticated, type GitHubRepo, type User } from '../../../../lib/api';
+import { connectRepo, createCheckoutSession, createPortalSession, getAvailableRepos, getUser, isAuthenticated, type GitHubRepo, type User } from '../../../../lib/api';
 
 export default function ConnectRepoPage() {
   const [repos, setRepos] = useState<GitHubRepo[]>([]);
@@ -17,6 +17,7 @@ export default function ConnectRepoPage() {
   const [connected, setConnected] = useState<Set<number>>(new Set());
   const [upgradePrompt, setUpgradePrompt] = useState<{ requiredTier: 'PRO' | 'TEAM'; message: string } | null>(null);
   const [user, setUser] = useState<User | null>(null);
+  const [upgrading, setUpgrading] = useState(false);
 
   const router = useRouter();
 
@@ -60,16 +61,14 @@ export default function ConnectRepoPage() {
   }, [search, repos]);
 
   const handleConnect = async (repo: GitHubRepo) => {
+    if (connecting !== null) return;
     try {
       setError(null);
       setUpgradePrompt(null);
       setConnecting(repo.githubId);
-      await connectRepo(repo);
+      const result = await connectRepo(repo);
       setConnected(prev => new Set(prev).add(repo.githubId));
-      // Remove from available list after short delay
-      setTimeout(() => {
-        setRepos(prev => prev.filter(r => r.githubId !== repo.githubId));
-      }, 1000);
+      router.push(`/dashboard/repos/${result.id}`);
     } catch (err) {
       const errorObj = err as Error & { status?: number; data?: { upgradeRequired?: boolean; requiredTier?: 'PRO' | 'TEAM' } };
       if (errorObj.status === 403 && errorObj.data?.upgradeRequired) {
@@ -86,15 +85,19 @@ export default function ConnectRepoPage() {
   };
 
   const handleUpgrade = async () => {
-    if (!upgradePrompt) return;
+    if (!upgradePrompt || upgrading) return;
+    setUpgrading(true);
+    setError(null);
     try {
       const plan = upgradePrompt.requiredTier === 'TEAM' ? 'team' : 'pro';
-      const session = await createCheckoutSession(plan);
-      if (session.url) {
-        window.location.href = session.url;
-      }
+      const hasSubscription = user?.subscriptionStatus && !['canceled', 'incomplete_expired'].includes(user.subscriptionStatus);
+      const session = hasSubscription ? await createPortalSession() : await createCheckoutSession(plan);
+      if (!session.url) throw new Error('Billing is temporarily unavailable. Please try again.');
+      window.location.href = session.url;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start checkout');
+    } finally {
+      setUpgrading(false);
     }
   };
 
@@ -121,6 +124,7 @@ export default function ConnectRepoPage() {
           <input
             type="text"
             placeholder="Search repositories..."
+            aria-label="Search repositories"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full pl-12 pr-4 py-3 rounded-xl border border-navy-200 bg-white text-navy-900 placeholder:text-navy-400 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
@@ -146,6 +150,7 @@ export default function ConnectRepoPage() {
             </div>
             <button
               onClick={handleUpgrade}
+              disabled={upgrading}
               className="px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-500 transition"
             >
               Upgrade to {upgradePrompt.requiredTier}
@@ -181,7 +186,7 @@ export default function ConnectRepoPage() {
                 </div>
                 <button
                   onClick={() => handleConnect(repo)}
-                  disabled={connecting === repo.githubId || connected.has(repo.githubId)}
+                  disabled={connecting !== null || connected.has(repo.githubId)}
                   className={`px-4 py-2 rounded-lg font-medium transition flex items-center justify-center gap-2 w-full sm:w-auto ${connected.has(repo.githubId)
                     ? 'bg-teal-100 text-teal-700'
                     : 'bg-teal-600 text-white hover:bg-teal-500 disabled:opacity-50'
@@ -219,8 +224,8 @@ export default function ConnectRepoPage() {
         {!loading && repos.length === 0 && !error && (
           <div className="bg-white rounded-xl p-8 text-center border border-navy-100">
             <GitBranch className="w-12 h-12 text-navy-300 mx-auto mb-4" />
-            <h3 className="text-lg font-semibold text-navy-900 mb-2">All repositories connected</h3>
-            <p className="text-navy-600 mb-4">You&apos;ve already connected all your GitHub repositories</p>
+            <h3 className="text-lg font-semibold text-navy-900 mb-2">No repositories available to connect</h3>
+            <p className="text-navy-600 mb-4">Your repositories may already be connected. You need admin access on GitHub to connect a repository and create its webhook.</p>
             <Link
               href="/dashboard"
               className="inline-block bg-navy-900 text-white px-6 py-3 rounded-lg hover:bg-navy-800 transition"

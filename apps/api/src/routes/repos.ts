@@ -5,7 +5,7 @@ import { prisma } from '../lib/db.js';
 import { logger } from '../lib/logger.js';
 import { requireAuth, decrypt } from '../lib/auth.js';
 import { apiLimiter } from '../lib/rate-limit.js';
-import { listUserRepos, createWebhook, deleteWebhook } from '../services/github.js';
+import { listUserRepos, getRepository, createWebhook, deleteWebhook } from '../services/github.js';
 import { importRepoHistory } from '../services/importer.js';
 import {
   connectRepoSchema,
@@ -196,9 +196,9 @@ repos.get('/github/available', async (c) => {
   const accessToken = await decrypt(dbUser.accessToken);
   const githubRepos = await listUserRepos(accessToken);
 
-  // Get already connected repo IDs
+  // GitHub repositories can only be connected once across accounts.
   const connectedRepos = await prisma.repo.findMany({
-    where: { userId: user.id },
+    where: { githubId: { in: githubRepos.map(repo => repo.id) } },
     select: { githubId: true },
   });
   const connectedIds = new Set(connectedRepos.map((r: any) => r.githubId));
@@ -248,11 +248,10 @@ repos.post(
 
     const accessToken = await decrypt(dbUser.accessToken);
 
-    // Check if already connected (globally for this user)
+    // The database permits one connection per GitHub repository.
     const existing = await prisma.repo.findFirst({
       where: { 
         githubId: body.githubId,
-        userId: user.id,
       },
     });
 
@@ -282,44 +281,39 @@ repos.post(
     const webhookSecret = crypto.randomUUID();
     const webhookUrl = `${API_URL}/webhooks/github`;
 
+    let webhookId: number | undefined;
     try {
+      const githubRepo = await getRepository(body.owner, body.repo, accessToken);
+      if (githubRepo.id !== body.githubId || githubRepo.full_name.toLowerCase() !== body.fullName.toLowerCase()) {
+        return c.json({ error: 'Repository details do not match GitHub. Refresh and try again.' }, 400);
+      }
       // Create GitHub webhook
-      const { id: webhookId } = await createWebhook(
-        body.owner,
-        body.repo,
+      ({ id: webhookId } = await createWebhook(
+        githubRepo.owner.login,
+        githubRepo.name,
         webhookUrl,
         webhookSecret,
         accessToken
-      );
+      ));
 
       // Store in database
       const repo = await prisma.repo.create({
         data: {
-          githubId: body.githubId,
-          name: body.repo,
-          fullName: body.fullName,
-          owner: body.owner,
-          description: body.description ?? null,
+          githubId: githubRepo.id,
+          name: githubRepo.name,
+          fullName: githubRepo.full_name,
+          owner: githubRepo.owner.login,
+          description: githubRepo.description,
+          isPublic: false,
           webhookId,
           webhookSecret,
           webhookActive: true,
           status: 'ACTIVE',
           userId: user.id,
+          config: { create: {} },
         },
         include: {
           config: true,
-        },
-      });
-
-      // Create default config
-      await prisma.repoConfig.create({
-        data: {
-          repoId: repo.id,
-          autoGenerate: true,
-          autoPublish: false,
-          generateCustomer: true,
-          generateDeveloper: true,
-          generateStakeholder: true,
         },
       });
 
@@ -348,27 +342,17 @@ repos.post(
     } catch (error) {
       logger.error('Failed to connect repo', { error, githubId: body.githubId, fullName: body.fullName });
       
-      // Still create the repo but mark webhook as failed
-      const repo = await prisma.repo.create({
-        data: {
-          githubId: body.githubId,
-          name: body.repo,
-          fullName: body.fullName,
-          owner: body.owner,
-          description: body.description ?? null,
-          webhookActive: false,
-          status: 'ERROR',
-          userId: user.id,
-        },
-      });
-
+      // Leave a failed connection retryable and avoid orphaned GitHub hooks.
+      if (webhookId !== undefined) {
+        try {
+          await deleteWebhook(body.owner, body.repo, webhookId, accessToken);
+        } catch (cleanupError) {
+          logger.warn('Failed to clean up GitHub webhook', { githubId: body.githubId, error: cleanupError });
+        }
+      }
       return c.json({
-        status: 'partial',
-        id: repo.id,
-        fullName: repo.fullName,
-        webhookActive: false,
-        error: 'Failed to create webhook - you may need to create it manually',
-      }, 201);
+        error: 'Could not connect the repository. Check GitHub admin permissions and try again.',
+      }, 502);
     }
   }
 );
@@ -479,6 +463,10 @@ repos.post(
     const user = c.get('user');
     const id = c.req.param('id');
     const body = c.req.valid('json');
+
+    if (body.type === 'WEBHOOK') {
+      return c.json({ error: 'Generic webhooks are not supported. Choose Slack or Discord.' }, 400);
+    }
 
     const repo = await prisma.repo.findFirst({
       where: { id, ...repoAccess(user.id) },
@@ -609,12 +597,12 @@ repos.delete('/:id', async (c) => {
         select: { accessToken: true },
       });
 
-      if (ownerUser?.accessToken) {
-        const accessToken = await decrypt(ownerUser.accessToken);
-        await deleteWebhook(repo.owner, repo.name, repo.webhookId, accessToken);
-      }
+      if (!ownerUser?.accessToken) throw new Error('Repository owner must reconnect GitHub');
+      const accessToken = await decrypt(ownerUser.accessToken);
+      await deleteWebhook(repo.owner, repo.name, repo.webhookId, accessToken);
     } catch (error) {
       logger.warn('Failed to delete GitHub webhook', { repoId: id, error });
+      return c.json({ error: 'Could not remove the GitHub webhook. Reconnect GitHub or check repository admin permissions and retry.' }, 502);
     }
   }
 

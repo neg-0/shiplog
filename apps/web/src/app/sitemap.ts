@@ -9,8 +9,13 @@ export default function sitemap(): MetadataRoute.Sitemap {
       priority: 1,
     },
     {
-      url: 'https://shiplog.io/login',
+      url: 'https://shiplog.io/pricing',
       lastModified: new Date(),
+      changeFrequency: 'monthly',
+      priority: 0.8,
+    },
+    {
+      url: 'https://shiplog.io/docs',
       changeFrequency: 'monthly',
       priority: 0.8,
     },

@@ -45,7 +45,7 @@ describe('Webhooks Routes', () => {
 
   const payload = JSON.stringify({
     action: 'published',
-    release: { tag_name: tagName },
+    release: { id: 1, tag_name: tagName },
     repository: { full_name: repoName },
   });
 
@@ -62,6 +62,7 @@ describe('Webhooks Routes', () => {
         name: 'repo',
         user: { accessToken: 'encrypted_token' },
         config: {
+            autoPublish: true,
             channels: [],
             emailRecipients: [],
             productName: 'Product',
@@ -100,6 +101,9 @@ describe('Webhooks Routes', () => {
       prismaMock.release.create.mockResolvedValue({
         id: 'release_1',
         tagName: tagName,
+        status: 'READY',
+        publishedAt: new Date(),
+        notes: { customer: 'C', developer: 'D', stakeholder: 'S' },
       } as any);
 
       // Mock DB notes creation
@@ -110,6 +114,8 @@ describe('Webhooks Routes', () => {
       ]);
 
       prismaMock.distribution.createMany.mockResolvedValue({ count: 1 });
+      prismaMock.distribution.findMany.mockResolvedValue([]);
+      prismaMock.release.updateMany.mockResolvedValue({ count: 1 });
       prismaMock.release.update.mockResolvedValue({} as any);
 
       const req = new Request('http://localhost/github', {
@@ -139,7 +145,7 @@ describe('Webhooks Routes', () => {
       expect(distributeReleaseWithResultsMock).toHaveBeenCalled();
       expect(prismaMock.release.update).toHaveBeenCalledWith({
           where: { id: 'release_1' },
-          data: { status: 'PUBLISHED' },
+          data: { status: 'PUBLISHED', error: null },
       });
     });
 
@@ -198,4 +204,31 @@ describe('Webhooks Routes', () => {
         expect(await res.json()).toEqual({ error: 'Unauthorized' });
     });
   });
+
+  it('resumes publication on GitHub redelivery without regenerating notes', async () => {
+    prismaMock.repo.findFirst.mockResolvedValue({
+      id: 'repo_1', fullName: repoName, webhookSecret: secret,
+      config: { autoPublish: true, channels: [], emailRecipients: [] },
+    } as any);
+    prismaMock.release.findUnique.mockResolvedValue({
+      id: 'release_1', repoId: 'repo_1', status: 'READY', publishedAt: new Date(), isDraft: false,
+      notes: { customer: 'C', developer: 'D', stakeholder: 'S', tokensUsed: 1 },
+    } as any);
+    prismaMock.release.updateMany.mockResolvedValue({ count: 1 });
+    prismaMock.distribution.findMany.mockResolvedValue([]);
+    distributeReleaseWithResultsMock.mockResolvedValue([
+      { target: { audience: 'customer', type: 'hosted' }, success: true },
+    ]);
+    const response = await webhooks.request('/github', {
+      method: 'POST', body: payload,
+      headers: { 'x-github-event': 'release', 'x-hub-signature-256': signature },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ releaseStatus: 'PUBLISHED' });
+    expect(prismaMock.release.updateMany).toHaveBeenCalledWith({ where: { id: 'release_1', status: 'READY' }, data: { status: 'PROCESSING' } });
+    expect(generateReleaseNotesMock).not.toHaveBeenCalled();
+    expect(fetchReleaseDataMock).not.toHaveBeenCalled();
+    expect(distributeReleaseWithResultsMock).toHaveBeenCalled();
+  });
+
 });

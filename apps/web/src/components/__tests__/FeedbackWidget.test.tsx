@@ -65,7 +65,7 @@ describe('FeedbackWidget', () => {
 
     await waitFor(() => {
         expect(mockFetch).toHaveBeenCalledWith(
-            'http://api.example.com/public/feedback',
+            '/api/public/feedback',
             expect.objectContaining({
                 method: 'POST',
                 body: JSON.stringify({

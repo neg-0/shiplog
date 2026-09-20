@@ -310,6 +310,7 @@ describe('Public Routes', () => {
         id: 'repo-1',
         name: 'my-repo',
         publicTitle: 'My Product',
+        user: { subscriptionTier: 'FREE' },
       } as any);
 
       const mockRelease = {
@@ -354,6 +355,7 @@ describe('Public Routes', () => {
         id: 'repo-1',
         name: 'my-repo',
         publicTitle: null,
+        user: { subscriptionTier: 'FREE' },
       } as any);
 
       prismaMock.release.findFirst.mockResolvedValue(null);
@@ -365,4 +367,42 @@ describe('Public Routes', () => {
       expect(data.error).toBe('Release not found');
     });
   });
+
+  it('filters unpublished notes and GitHub drafts from every public release query', async () => {
+    const publishedOnly = {
+      status: { in: ['PUBLISHED', 'PARTIAL_SUCCESS'] },
+      isDraft: false,
+      publishedAt: { not: null },
+    };
+    prismaMock.repo.findFirst.mockResolvedValue({ id: 'repo-1', releases: [], user: { subscriptionTier: 'FREE' } } as any);
+    prismaMock.release.findMany.mockResolvedValue([]);
+    prismaMock.release.count.mockResolvedValue(0);
+    prismaMock.release.findFirst.mockResolvedValue(null);
+
+    await app.request('/repo');
+    expect(prismaMock.repo.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      select: expect.objectContaining({ releases: expect.objectContaining({ where: publishedOnly }) }),
+    }));
+    await app.request('/repo/releases');
+    expect(prismaMock.release.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { repoId: 'repo-1', ...publishedOnly } }));
+    expect(prismaMock.release.count).toHaveBeenCalledWith({ where: { repoId: 'repo-1', ...publishedOnly } });
+    await app.request('/repo/releases/v1.0');
+    expect(prismaMock.release.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { repoId: 'repo-1', tagName: 'v1.0', ...publishedOnly },
+    }));
+  });
+
+  it.each(['page=abc', 'page=0', 'page=1.5', 'limit=wat', 'limit=-1'])('rejects invalid pagination: %s', async query => {
+    const response = await app.request(`/repo/releases?${query}`);
+    expect(response.status).toBe(400);
+    expect(prismaMock.release.findMany).not.toHaveBeenCalled();
+  });
+
+  it('preserves Team branding preference on a release detail', async () => {
+    prismaMock.repo.findFirst.mockResolvedValue({ id: 'repo-1', name: 'App', user: { subscriptionTier: 'TEAM' }, hidePoweredBy: true } as any);
+    prismaMock.release.findFirst.mockResolvedValue({ id: 'release-1', notes: null } as any);
+    const response = await app.request('/repo/releases/v1.0');
+    expect(await response.json()).toMatchObject({ showPoweredBy: false });
+  });
+
 });

@@ -2,7 +2,7 @@
 
 import { Ship, Settings, GitBranch, Bell, LogOut, Menu, X, Building2 } from 'lucide-react';
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { logout, type User } from '../lib/api';
 import { DashboardFeedbackWidget } from './DashboardFeedbackWidget';
@@ -16,10 +16,29 @@ export function DashboardLayout({ children, user }: DashboardLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const pathname = usePathname();
   const router = useRouter();
+  const [logoutError, setLogoutError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!sidebarOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSidebarOpen(false);
+    };
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [sidebarOpen]);
 
   const handleLogout = async () => {
-    await logout();
-    router.push('/login');
+    try {
+      await logout();
+      router.push('/login');
+    } catch {
+      setLogoutError('Could not sign out. Please try again.');
+    }
   };
 
   const navItems = [
@@ -48,6 +67,8 @@ export function DashboardLayout({ children, user }: DashboardLayoutProps) {
           onClick={() => setSidebarOpen(!sidebarOpen)}
           className="p-2 hover:bg-navy-800 rounded-lg transition"
           aria-label="Toggle menu"
+          aria-expanded={sidebarOpen}
+          aria-controls="dashboard-sidebar"
         >
           {sidebarOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
         </button>
@@ -62,11 +83,11 @@ export function DashboardLayout({ children, user }: DashboardLayoutProps) {
       )}
 
       {/* Sidebar */}
-      <aside className={`
+      <aside id="dashboard-sidebar" className={`
         fixed left-0 top-0 h-full w-64 bg-navy-900 text-white p-6 z-50
         transform transition-transform duration-300 ease-in-out
-        ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
-        lg:translate-x-0
+        ${sidebarOpen ? 'translate-x-0 visible' : '-translate-x-full invisible'}
+        lg:translate-x-0 lg:visible
       `}>
         <Link href="/dashboard" className="flex items-center gap-2 mb-8 mt-2 lg:mt-0">
           <Ship className="w-8 h-8 text-teal-400" />
@@ -81,6 +102,7 @@ export function DashboardLayout({ children, user }: DashboardLayoutProps) {
               <Link 
                 key={item.href}
                 href={item.href} 
+                aria-current={active ? 'page' : undefined}
                 className={`flex items-center gap-3 px-4 py-3 rounded-lg transition ${
                   active 
                     ? 'bg-navy-800 text-white' 
@@ -96,6 +118,7 @@ export function DashboardLayout({ children, user }: DashboardLayoutProps) {
         </nav>
 
         <div className="absolute bottom-6 left-6 right-6">
+          {logoutError && <p role="alert" className="mb-3 text-sm text-red-200">{logoutError}</p>}
           {user ? (
             <div className="flex items-center gap-3 px-4 py-3 bg-navy-800 rounded-lg">
               <img

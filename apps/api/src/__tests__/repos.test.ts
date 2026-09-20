@@ -18,6 +18,7 @@ jest.unstable_mockModule('../lib/auth.js', () => ({
 
 jest.unstable_mockModule('../services/github.js', () => ({
   listUserRepos: jest.fn(),
+  getRepository: jest.fn(),
   createWebhook: jest.fn(),
   deleteWebhook: jest.fn(),
 }));
@@ -126,6 +127,9 @@ describe('Repos Routes', () => {
       prismaMock.repo.count.mockResolvedValue(0); // Limit not reached
 
       githubService.createWebhook.mockResolvedValue({ id: 999 });
+      githubService.getRepository.mockResolvedValue({
+        id: 103, name: 'new-repo', full_name: 'owner/new-repo', owner: { login: 'owner' }, description: null,
+      });
 
       prismaMock.repo.create.mockResolvedValue({
         id: 'new-repo-id',
@@ -148,7 +152,7 @@ describe('Repos Routes', () => {
 
       expect(res.status).toBe(200);
       expect(githubService.createWebhook).toHaveBeenCalled();
-      expect(prismaMock.repo.create).toHaveBeenCalled();
+      expect(prismaMock.repo.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ isPublic: false, config: { create: {} } }) }));
       expect(importerService.importRepoHistory).toHaveBeenCalled();
     });
 
@@ -241,4 +245,70 @@ describe('Repos Routes', () => {
       expect(prismaMock.repo.delete).toHaveBeenCalled();
     });
   });
+
+  it('does not create a broken repository when GitHub denies webhook creation', async () => {
+    prismaMock.user.findUnique.mockResolvedValue({ accessToken: 'enc-token', subscriptionTier: 'PRO' } as any);
+    prismaMock.repo.findFirst.mockResolvedValue(null);
+    prismaMock.repo.count.mockResolvedValue(0);
+    githubService.getRepository.mockResolvedValue({ id: 103, name: 'repo', full_name: 'owner/repo', owner: { login: 'owner' } });
+    githubService.createWebhook.mockRejectedValue(new Error('403'));
+    const response = await repos.request('/connect', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ githubId: 103, owner: 'owner', repo: 'repo', fullName: 'owner/repo' }),
+    });
+    expect(response.status).toBe(502);
+    expect(prismaMock.repo.create).not.toHaveBeenCalled();
+    expect(importerService.importRepoHistory).not.toHaveBeenCalled();
+  });
+
+  it('rejects fabricated repository IDs before creating a webhook', async () => {
+    prismaMock.user.findUnique.mockResolvedValue({ accessToken: 'enc-token', subscriptionTier: 'PRO' } as any);
+    prismaMock.repo.findFirst.mockResolvedValue(null);
+    prismaMock.repo.count.mockResolvedValue(0);
+    githubService.getRepository.mockResolvedValue({ id: 999, name: 'repo', full_name: 'owner/repo', owner: { login: 'owner' } });
+    const response = await repos.request('/connect', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ githubId: 103, owner: 'owner', repo: 'repo', fullName: 'owner/repo' }),
+    });
+    expect(response.status).toBe(400);
+    expect(githubService.createWebhook).not.toHaveBeenCalled();
+    expect(prismaMock.repo.create).not.toHaveBeenCalled();
+  });
+
+  it('cleans up the GitHub webhook when saving the repository fails', async () => {
+    prismaMock.user.findUnique.mockResolvedValue({ accessToken: 'enc-token', subscriptionTier: 'PRO' } as any);
+    prismaMock.repo.findFirst.mockResolvedValue(null);
+    prismaMock.repo.count.mockResolvedValue(0);
+    githubService.getRepository.mockResolvedValue({ id: 103, name: 'repo', full_name: 'owner/repo', owner: { login: 'owner' } });
+    githubService.createWebhook.mockResolvedValue({ id: 99 });
+    prismaMock.repo.create.mockRejectedValue(new Error('Database unavailable'));
+    const response = await repos.request('/connect', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ githubId: 103, owner: 'owner', repo: 'repo', fullName: 'owner/repo' }),
+    });
+    expect(response.status).toBe(502);
+    expect(prismaMock.repo.create).toHaveBeenCalledTimes(1);
+    expect(githubService.deleteWebhook).toHaveBeenCalledWith('owner', 'repo', 99, 'decrypted-access-token');
+  });
+
+
+  it('preserves repository and webhook secret when GitHub deletion fails', async () => {
+    prismaMock.repo.findUnique.mockResolvedValue({ id: 'repo-1', userId: 'test-user-id', webhookId: 99, owner: 'owner', name: 'repo' } as any);
+    prismaMock.user.findUnique.mockResolvedValue({ accessToken: 'enc-token' } as any);
+    githubService.deleteWebhook.mockRejectedValue(new Error('403'));
+    const response = await repos.request('/repo-1', { method: 'DELETE' });
+    expect(response.status).toBe(502);
+    expect(prismaMock.repo.delete).not.toHaveBeenCalled();
+  });
+
+  it('rejects unsupported generic webhook channel creation', async () => {
+    const response = await repos.request('/repo-1/channels', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'WEBHOOK', name: 'Generic', audience: 'CUSTOMER', webhookUrl: 'https://example.com/hook' }),
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: 'Generic webhooks are not supported. Choose Slack or Discord.' });
+    expect(prismaMock.channel.create).not.toHaveBeenCalled();
+  });
+
 });

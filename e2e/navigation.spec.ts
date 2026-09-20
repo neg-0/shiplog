@@ -12,7 +12,7 @@ test.describe('Navigation', () => {
     // The login page has a ShipLog brand but it's not a navigation link.
     // Verify user can still navigate back.
     await page.goto('/login');
-    await expect(page.getByText('ShipLog')).toBeVisible();
+    await expect(page.getByText('ShipLog', { exact: true })).toBeVisible();
   });
 
   test('should show 404 page for non-existent routes', async ({ page }) => {

@@ -1,6 +1,34 @@
 import { test, expect } from '@playwright/test';
 
 test.describe('Home / Landing Page', () => {
+  test('lets visitors compare the same release across audiences', async ({ page }) => {
+    await page.goto('/');
+    await page.getByRole('link', { name: 'See it in action' }).click();
+    await expect(page).toHaveURL(/#example$/);
+    await page.getByRole('button', { name: 'Developers', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'PDF export and a CSV fix' })).toBeVisible();
+    await page.getByRole('button', { name: 'Stakeholders', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Easier reporting outside the product' })).toBeVisible();
+  });
+
+  test('keeps the mobile navigation and example within the viewport', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/');
+    await expect(page.locator('nav').getByRole('link', { name: 'Connect GitHub' })).toBeVisible();
+    await page.getByRole('link', { name: 'See it in action' }).click();
+    await expect(page.getByRole('button', { name: 'Customers', exact: true })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  });
+
+  test('hydrates a returning visitor without replacing mismatched server markup', async ({ page, context }) => {
+    await context.addCookies([{ name: 'shiplog_logged_in', value: '1', domain: 'localhost', path: '/' }]);
+    const errors: string[] = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.goto('/');
+    await expect(page.locator('nav').getByRole('link', { name: 'Dashboard' })).toBeVisible();
+    expect(errors.filter(error => /hydrat|Minified React error/i.test(error))).toEqual([]);
+  });
+
   test('should render the landing page with correct title', async ({ page }) => {
     await page.goto('/');
     await expect(page).toHaveTitle(/ShipLog/);
@@ -21,7 +49,7 @@ test.describe('Home / Landing Page', () => {
 
   test('should display the hero tagline', async ({ page }) => {
     await page.goto('/');
-    await expect(page.getByText('One commit. Three audiences. Zero friction.')).toBeVisible();
+    await expect(page.getByText('One release. Three audiences. Ready to share.')).toBeVisible();
   });
 
   test('should have a CTA button linking to login for unauthenticated users', async ({ page }) => {
@@ -31,11 +59,11 @@ test.describe('Home / Landing Page', () => {
     await expect(ctaLink).toHaveAttribute('href', '/login');
   });
 
-  test('should have a "See it in action" button linking to features', async ({ page }) => {
+  test('should have a "See it in action" button linking to the example', async ({ page }) => {
     await page.goto('/');
     const actionLink = page.getByRole('link', { name: /See it in action/i });
     await expect(actionLink).toBeVisible();
-    await expect(actionLink).toHaveAttribute('href', '#features');
+    await expect(actionLink).toHaveAttribute('href', '#example');
   });
 
   test('should display the "How it works" section', async ({ page }) => {

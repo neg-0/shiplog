@@ -8,7 +8,7 @@ test.describe('Login Page', () => {
 
   test('should display the ShipLog brand', async ({ page }) => {
     await page.goto('/login');
-    await expect(page.getByText('ShipLog')).toBeVisible();
+    await expect(page.getByText('ShipLog', { exact: true })).toBeVisible();
   });
 
   test('should display the GitHub login button', async ({ page }) => {
@@ -21,7 +21,7 @@ test.describe('Login Page', () => {
   test('should describe what GitHub access is requested', async ({ page }) => {
     await page.goto('/login');
     await expect(page.getByText('What we\'ll access:')).toBeVisible();
-    await expect(page.getByText('Read access to your repositories')).toBeVisible();
+    await expect(page.getByText("Repository access (GitHub's OAuth permission includes write access)")).toBeVisible();
     await expect(page.getByText('Webhook creation for release events')).toBeVisible();
     await expect(page.getByText('Your GitHub profile (name, email)')).toBeVisible();
   });

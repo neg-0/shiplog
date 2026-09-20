@@ -54,7 +54,7 @@ describe('StaticPageLayout', () => {
     expect(changelogLinks[0]!.closest('a')).toHaveAttribute('href', '/changelog');
 
     const pricingLink = screen.getByText('Pricing');
-    expect(pricingLink.closest('a')).toHaveAttribute('href', '/#pricing');
+    expect(pricingLink.closest('a')).toHaveAttribute('href', '/pricing');
 
     const loginLink = screen.getByText('Login');
     expect(loginLink.closest('a')).toHaveAttribute('href', '/login');

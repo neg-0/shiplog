@@ -12,7 +12,7 @@ jest.mock('../../lib/api', () => ({
 }));
 
 const mockRouter = { push: jest.fn(), replace: jest.fn() };
-const mockSearchParams = new URLSearchParams();
+let mockSearchParams = new URLSearchParams();
 jest.mock('next/navigation', () => ({
   useRouter: () => mockRouter,
   useSearchParams: () => mockSearchParams,
@@ -72,6 +72,7 @@ describe('DashboardPage', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockSearchParams = new URLSearchParams();
     (api.isAuthenticated as jest.Mock).mockReturnValue(true);
     (api.getUser as jest.Mock).mockResolvedValue(mockUser);
     (api.getRepos as jest.Mock).mockResolvedValue({ repos: mockRepos });
@@ -131,5 +132,20 @@ describe('DashboardPage', () => {
     render(<DashboardPage />);
 
     expect(await screen.findByText('FREE Plan')).toBeInTheDocument();
+  });
+
+  it('exchanges an OAuth code only once under Strict Mode and loads the returning-user dashboard', async () => {
+    mockSearchParams.set('code', 'one-time-code');
+    (api.exchangeAuthCode as jest.Mock).mockResolvedValue(undefined);
+    const view = render(<React.StrictMode><DashboardPage /></React.StrictMode>);
+
+    await waitFor(() => expect(mockRouter.replace).toHaveBeenCalledWith('/dashboard'));
+    expect(api.exchangeAuthCode).toHaveBeenCalledTimes(1);
+    expect(api.exchangeAuthCode).toHaveBeenCalledWith('one-time-code');
+
+    mockSearchParams = new URLSearchParams();
+    // Next provides a new search-params object when router.replace removes code.
+    view.rerender(<React.StrictMode><DashboardPage /></React.StrictMode>);
+    expect(await screen.findByText('org/repo-one')).toBeInTheDocument();
   });
 });

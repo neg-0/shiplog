@@ -3,6 +3,7 @@ import { BookOpen, Zap, Users, MessageSquare, GitBranch, HelpCircle } from 'luci
 
 export const metadata = {
   title: 'Documentation | ShipLog',
+  alternates: { canonical: '/docs' },
   description: 'Learn how to use ShipLog to generate AI-powered release notes for your software.',
 };
 
@@ -37,15 +38,15 @@ export default function DocsPage() {
               <h3 className="font-semibold text-navy-900 mb-2">2. Configure Audiences</h3>
               <p className="text-navy-600">
                 By default, ShipLog generates notes for three audiences: Developers, Customers, and Stakeholders.
-                Pro users can create custom audiences with tailored prompts.
+                Choose the customer tone in your repository settings.
               </p>
             </div>
             
             <div>
               <h3 className="font-semibold text-navy-900 mb-2">3. Publish a Release</h3>
               <p className="text-navy-600">
-                When you create a release on GitHub, ShipLog automatically generates release notes 
-                for each configured audience. View and edit them in your dashboard.
+                Recent releases are imported when you connect a repository. You can also publish a new release on GitHub.
+                Generate notes, review each audience, and publish when you are ready. Enable automatic generation and publishing in repository settings when you want to automate this flow.
               </p>
             </div>
           </div>
@@ -130,18 +131,18 @@ export default function DocsPage() {
             </div>
 
             <div>
-              <h3 className="font-semibold text-navy-900 mb-2">Can I customize the prompts?</h3>
+              <h3 className="font-semibold text-navy-900 mb-2">Can I review notes before publishing?</h3>
               <p className="text-navy-600">
-                Pro and Team users can create custom audiences with their own prompts, allowing you 
-                to tailor the output for specific use cases like investor updates or support docs.
+                Yes. Keep auto-publish off in repository settings, edit the generated notes for each audience,
+                and publish after review. You can also adjust the customer tone before regenerating.
               </p>
             </div>
 
             <div>
               <h3 className="font-semibold text-navy-900 mb-2">How do I share my changelog?</h3>
               <p className="text-navy-600">
-                Each repo has a public changelog page at shiplog.io/c/your-repo. You can share this 
-                link, embed it on your site, or use our API to build custom integrations.
+                Enable a public changelog in repository settings, then use View Changelog on the repository
+                page to open and share its link. Only published releases appear on that page.
               </p>
             </div>
           </div>

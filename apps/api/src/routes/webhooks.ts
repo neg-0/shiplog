@@ -1,3 +1,4 @@
+import type { Release, GeneratedNotes } from '@prisma/client';
 import { Hono } from 'hono';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { prisma } from '../lib/db.js';
@@ -5,7 +6,7 @@ import { logger, setLoggerContext } from '../lib/logger.js';
 import { fetchReleaseData } from '../services/github.js';
 import { generateReleaseNotes } from '../services/generator.js';
 import { decrypt } from '../lib/auth.js';
-import { distributeReleaseWithResults, type DistributionTarget } from '../services/distributor.js';
+import { publishReleaseNotes } from '../services/publisher.js';
 import { metrics } from '../lib/metrics.js';
 
 /**
@@ -74,9 +75,12 @@ webhooks.post('/github', async (c) => {
   logger.info(`📥 Received GitHub webhook: ${event}`, { event });
 
   // Handle release events
-  if (event === 'release' && payload.action === 'published') {
-    const release = payload.release!;
-    const repo = payload.repository!;
+  if (event === 'release' && payload?.action === 'published') {
+    const release = payload.release;
+    const repo = payload.repository;
+    if (!release || !Number.isInteger(release.id) || !release.tag_name || !repo?.full_name) {
+      return c.json({ error: 'Invalid release payload' }, 400);
+    }
     setLoggerContext({ repo: repo.full_name });
 
     logger.info(`🚀 New release: ${repo.full_name} @ ${release.tag_name}`, {
@@ -114,12 +118,57 @@ webhooks.post('/github', async (c) => {
         return c.json({ error: 'Unauthorized' }, 401);
       }
 
+      if (connectedRepo.status === 'PAUSED') {
+        return c.json({ status: 'ignored', reason: 'repository_paused' });
+      }
+
+      const publishSavedRelease = async (savedRelease: Release & { notes: GeneratedNotes | null }) => {
+        const claimed = await prisma.release.updateMany({
+          where: { id: savedRelease.id, status: savedRelease.status },
+          data: { status: 'PROCESSING' },
+        });
+        if (!claimed.count) return c.json({ status: 'ignored', reason: 'already_processing' });
+
+        let result;
+        try {
+          result = await publishReleaseNotes({
+            ...savedRelease,
+            notes: savedRelease.notes!,
+            repo: { fullName: connectedRepo.fullName, config: connectedRepo.config },
+          });
+        } catch (error) {
+          const uncertain = error instanceof Error && error.name === 'PublicationOutcomeUnknown';
+          await prisma.release.update({
+            where: { id: savedRelease.id },
+            data: {
+              status: uncertain && savedRelease.status === 'READY' ? 'FAILED' : savedRelease.status,
+              ...(uncertain ? { error: error.message } : {}),
+            },
+          });
+          throw error;
+        }
+        metrics.releasesProcessed++;
+        metrics.distributionsSent += result.distributedTo;
+        return c.json({
+          status: 'processed', releaseStatus: result.status,
+          release: release.tag_name, repo: repo.full_name, releaseId: savedRelease.id,
+          tokensUsed: savedRelease.notes?.tokensUsed, distributedTo: result.distributedTo, failedCount: result.failedCount,
+        });
+      };
+
       // Check if release already exists to prevent replay attacks
       const existingRelease = await prisma.release.findUnique({
         where: { githubId: release.id },
+        include: { notes: true },
       });
 
       if (existingRelease) {
+        if (!existingRelease.error?.startsWith('Delivery outcome needs review.') &&
+            existingRelease.repoId === connectedRepo.id && existingRelease.notes &&
+            !existingRelease.isDraft && existingRelease.publishedAt && connectedRepo.config?.autoPublish &&
+            ['READY', 'PARTIAL_SUCCESS'].includes(existingRelease.status)) {
+          return await publishSavedRelease(existingRelease);
+        }
         logger.warn(`Release ${release.id} already processed`, { releaseId: release.id });
         return c.json({ status: 'ignored', reason: 'already_processed' });
       }
@@ -136,155 +185,61 @@ webhooks.post('/github', async (c) => {
         accessToken
       );
 
-      // Generate AI release notes
-      // Generation timing logged below
+      const releaseRecord = {
+        repoId: connectedRepo.id,
+        githubId: releaseData.release.id,
+        tagName: releaseData.release.tagName,
+        name: releaseData.release.name,
+        body: releaseData.release.body,
+        htmlUrl: releaseData.release.htmlUrl,
+        isDraft: releaseData.release.isDraft,
+        isPrerelease: releaseData.release.isPrerelease,
+        publishedAt: releaseData.release.publishedAt,
+      };
+
+      if (connectedRepo.config?.autoGenerate === false) {
+        const savedRelease = await prisma.release.create({
+          data: { ...releaseRecord, status: 'SKIPPED' },
+        });
+        return c.json({ status: 'skipped', releaseId: savedRelease.id });
+      }
+
       const start = Date.now();
-      logger.info(`🤖 Generating release notes...`);
       const notes = await generateReleaseNotes({
         tagName: releaseData.release.tagName,
         previousTag: releaseData.previousTag ?? undefined,
         releaseBody: releaseData.release.body ?? undefined,
         commits: releaseData.commits,
-        pullRequests: releaseData.pullRequests.map(pr => ({
-          ...pr,
-          body: pr.body ?? undefined,
-        })),
+        pullRequests: releaseData.pullRequests.map(pr => ({ ...pr, body: pr.body ?? undefined })),
         repoConfig: {
           productName: connectedRepo.config?.productName ?? connectedRepo.name,
           companyName: connectedRepo.config?.companyName ?? connectedRepo.owner,
           customerTone: connectedRepo.config?.customerTone ?? 'friendly',
         },
       });
-      const duration = Date.now() - start;
-      metrics.generationTimeTotal += duration;
+      metrics.generationTimeTotal += Date.now() - start;
       metrics.generationCount++;
 
-      logger.info(`✅ Generated notes (${notes.tokensUsed} tokens used)`, { tokensUsed: notes.tokensUsed });
-
-      // Create the release record
+      // Save the release and its notes atomically so retries cannot find a release without notes.
       const savedRelease = await prisma.release.create({
         data: {
-          repoId: connectedRepo.id,
-          githubId: releaseData.release.id,
-          tagName: releaseData.release.tagName,
-          name: releaseData.release.name,
-          body: releaseData.release.body,
-          htmlUrl: releaseData.release.htmlUrl,
-          isDraft: releaseData.release.isDraft,
-          isPrerelease: releaseData.release.isPrerelease,
-          publishedAt: releaseData.release.publishedAt,
+          ...releaseRecord,
           status: 'READY',
           processedAt: new Date(),
+          notes: { create: notes },
         },
+        include: { notes: true },
       });
 
-      // Create the generated notes
-      await prisma.generatedNotes.create({
-        data: {
-          releaseId: savedRelease.id,
-          customer: notes.customer,
-          developer: notes.developer,
-          stakeholder: notes.stakeholder,
-          tokensUsed: notes.tokensUsed,
-          model: notes.model,
-        },
-      });
-
-      logger.info(`💾 Saved release: ${savedRelease.id}`, { releaseId: savedRelease.id });
-
-      const distributionTargets: Array<DistributionTarget & {
-        channelId?: string;
-        emailRecipientId?: string;
-      }> = [];
-
-      const config = connectedRepo.config;
-
-      if (config?.channels?.length) {
-        for (const channel of config.channels) {
-          if (!channel.enabled) continue;
-          if (channel.type === 'WEBHOOK') continue;
-
-          const audience = channel.audience.toLowerCase() as DistributionTarget['audience'];
-          distributionTargets.push({
-            type: channel.type === 'SLACK' ? 'slack' : 'discord',
-            audience,
-            webhookUrl: channel.webhookUrl,
-            name: channel.name,
-            channelId: channel.id,
-          });
-        }
-      }
-
-      if (config?.emailRecipients?.length) {
-        for (const recipient of config.emailRecipients) {
-          if (!recipient.enabled) continue;
-          const audience = recipient.audience.toLowerCase() as DistributionTarget['audience'];
-          distributionTargets.push({
-            type: 'email',
-            audience,
-            email: recipient.email,
-            name: recipient.name ?? undefined,
-            emailRecipientId: recipient.id,
-          });
-        }
-      }
-
-      (['customer', 'developer', 'stakeholder'] as const).forEach((audience) => {
-        distributionTargets.push({
-          type: 'hosted',
-          audience,
+      if (!connectedRepo.config?.autoPublish || savedRelease.isDraft || !savedRelease.publishedAt) {
+        metrics.releasesProcessed++;
+        return c.json({
+          status: 'processed', releaseStatus: 'READY', releaseId: savedRelease.id,
+          release: release.tag_name, repo: repo.full_name, tokensUsed: notes.tokensUsed, distributedTo: 0,
         });
-      });
+      }
 
-      logger.info(`📤 Distributing release ${savedRelease.id} to ${distributionTargets.length} targets`, {
-        releaseId: savedRelease.id,
-        targetCount: distributionTargets.length
-      });
-
-      const releaseWithRepo = {
-        ...savedRelease,
-        repo: {
-          fullName: connectedRepo.fullName,
-        },
-      };
-
-      const distributionResults = await distributeReleaseWithResults(
-        releaseWithRepo,
-        notes,
-        distributionTargets
-      );
-
-      await prisma.distribution.createMany({
-        data: distributionResults.map((result) => ({
-          releaseId: savedRelease.id,
-          audience: result.target.audience.toUpperCase() as 'CUSTOMER' | 'DEVELOPER' | 'STAKEHOLDER',
-          channelId: (result.target as { channelId?: string }).channelId ?? undefined,
-          emailRecipientId: (result.target as { emailRecipientId?: string }).emailRecipientId ?? undefined,
-          hostedChangelog: result.target.type === 'hosted',
-          status: result.success ? 'SENT' : 'FAILED',
-          sentAt: result.success ? new Date() : undefined,
-          error: result.success ? undefined : result.error,
-          responseCode: result.responseCode,
-          responseBody: result.success ? undefined : result.error,
-        })),
-      });
-
-      await prisma.release.update({
-        where: { id: savedRelease.id },
-        data: { status: 'PUBLISHED' },
-      });
-
-      metrics.releasesProcessed++;
-      metrics.distributionsSent += distributionResults.length;
-
-      return c.json({
-        status: 'processed',
-        release: release.tag_name,
-        repo: repo.full_name,
-        releaseId: savedRelease.id,
-        tokensUsed: notes.tokensUsed,
-        distributedTo: distributionResults.length,
-      });
+      return await publishSavedRelease(savedRelease);
 
     } catch (error) {
       metrics.errorCounts++;

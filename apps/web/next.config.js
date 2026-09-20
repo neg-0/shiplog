@@ -19,7 +19,7 @@ const nextConfig = {
     return [
       {
         source: '/api/:path*',
-        destination: `${process.env.API_URL || 'https://api.shiplog.io'}/:path*`,
+        destination: `${process.env.API_URL || (process.env.NODE_ENV === 'production' ? 'https://api.shiplog.io' : 'http://127.0.0.1:3001')}/:path*`,
       },
     ];
   },

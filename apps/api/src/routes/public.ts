@@ -12,6 +12,12 @@ import { logger } from '../lib/logger.js';
  */
 export const publicChangelog = new Hono();
 
+const publishedReleaseFilter = {
+  status: { in: ['PUBLISHED', 'PARTIAL_SUCCESS'] as ('PUBLISHED' | 'PARTIAL_SUCCESS')[] },
+  isDraft: false,
+  publishedAt: { not: null },
+};
+
 const publicLimit = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   limit: 100,
@@ -100,7 +106,7 @@ publicChangelog.get('/:slug', async (c) => {
         },
       },
       releases: {
-        where: { publishedAt: { not: null } },
+        where: publishedReleaseFilter,
         orderBy: { publishedAt: 'desc' },
         take: 20,
         select: {
@@ -151,8 +157,8 @@ publicChangelog.get('/:slug', async (c) => {
 });
 
 const listReleasesSchema = z.object({
-  page: z.string().optional().transform(v => Math.max(1, parseInt(v || '1'))),
-  limit: z.string().optional().transform(v => Math.min(50, Math.max(1, parseInt(v || '20')))),
+  page: z.coerce.number().int().min(1).max(1_000_000).default(1),
+  limit: z.coerce.number().int().min(1).max(50).default(20),
 });
 
 /**
@@ -177,7 +183,7 @@ publicChangelog.get('/:slug/releases', zValidator('query', listReleasesSchema as
 
   const [releases, total] = await Promise.all([
     prisma.release.findMany({
-      where: { repoId: repo.id, publishedAt: { not: null } },
+      where: { repoId: repo.id, ...publishedReleaseFilter },
       orderBy: { publishedAt: 'desc' },
       skip: (page - 1) * limit,
       take: limit,
@@ -188,7 +194,7 @@ publicChangelog.get('/:slug/releases', zValidator('query', listReleasesSchema as
         publishedAt: true,
       },
     }),
-    prisma.release.count({ where: { repoId: repo.id, publishedAt: { not: null } } }),
+    prisma.release.count({ where: { repoId: repo.id, ...publishedReleaseFilter } }),
   ]);
 
   return c.json({
@@ -219,7 +225,10 @@ publicChangelog.get('/:slug/releases/:version', async (c) => {
       OR: [{ slug }, { fullName: slug.replace(/^([^-]+)-(.+)$/, '$1/$2') }],
       isPublic: true,
     },
-    select: { id: true, name: true, publicTitle: true },
+    select: {
+      id: true, name: true, publicTitle: true, hidePoweredBy: true,
+      user: { select: { subscriptionTier: true } },
+    },
   });
 
   if (!repo) {
@@ -230,7 +239,7 @@ publicChangelog.get('/:slug/releases/:version', async (c) => {
     where: {
       repoId: repo.id,
       tagName: version,
-      publishedAt: { not: null },
+      ...publishedReleaseFilter,
     },
     select: {
       id: true,
@@ -255,6 +264,7 @@ publicChangelog.get('/:slug/releases/:version', async (c) => {
 
   return c.json({
     repoName: repo.publicTitle || repo.name,
+    showPoweredBy: repo.user.subscriptionTier !== 'TEAM' || !repo.hidePoweredBy,
     id: release.id,
     version: release.tagName,
     name: release.name,

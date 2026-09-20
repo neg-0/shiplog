@@ -2,7 +2,7 @@
 
 import { X } from 'lucide-react';
 import * as React from 'react';
-import { useEffect, useCallback } from 'react';
+import { useEffect, useRef, useId } from 'react';
 
 // ============================================
 // Modern (Radix-style) Exports
@@ -11,12 +11,14 @@ import { useEffect, useCallback } from 'react';
 const DialogContext = React.createContext<{
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  titleId: string;
 } | null>(null);
 
 export function Dialog({ open, onOpenChange, children }: { open?: boolean; onOpenChange?: (open: boolean) => void; children: React.ReactNode }) {
+  const titleId = useId();
   if (typeof open !== 'undefined' && onOpenChange) {
     return (
-      <DialogContext.Provider value={{ open, onOpenChange }}>
+      <DialogContext.Provider value={{ open, onOpenChange, titleId }}>
         {children}
       </DialogContext.Provider>
     );
@@ -26,31 +28,53 @@ export function Dialog({ open, onOpenChange, children }: { open?: boolean; onOpe
 
 export function DialogContent({ children, className }: { children: React.ReactNode; className?: string }) {
   const context = React.useContext(DialogContext);
-  
-  const handleEscape = useCallback((e: KeyboardEvent) => {
-    if (e.key === 'Escape') context?.onOpenChange(false);
-  }, [context]);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const onOpenChange = useRef(context?.onOpenChange);
+  onOpenChange.current = context?.onOpenChange;
 
   useEffect(() => {
-    if (context?.open) {
-      document.addEventListener('keydown', handleEscape);
-      document.body.style.overflow = 'hidden';
-    }
-    return () => {
-      document.removeEventListener('keydown', handleEscape);
-      document.body.style.overflow = 'unset';
+    if (!context?.open) return;
+    const previousFocus = document.activeElement as HTMLElement | null;
+    const previousOverflow = document.body.style.overflow;
+    const focusable = () => Array.from(contentRef.current?.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex="0"]'
+    ) || []);
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onOpenChange.current?.(false);
+      if (e.key !== 'Tab') return;
+      const items = focusable();
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (!first) {
+        e.preventDefault();
+        contentRef.current?.focus();
+      } else if (e.shiftKey && (document.activeElement === first || document.activeElement === contentRef.current)) {
+        e.preventDefault();
+        last?.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
     };
-  }, [context?.open, handleEscape]);
+    document.addEventListener('keydown', handleKeyDown);
+    document.body.style.overflow = 'hidden';
+    (focusable()[0] || contentRef.current)?.focus();
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      document.body.style.overflow = previousOverflow;
+      previousFocus?.focus();
+    };
+  }, [context?.open]);
 
   if (!context?.open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
       <div 
         className="absolute inset-0 bg-black/50 backdrop-blur-sm"
         onClick={() => context?.onOpenChange(false)}
       />
-      <div className={`relative bg-white rounded-xl shadow-xl max-w-lg w-full overflow-hidden ${className || ''}`}>
+      <div ref={contentRef} role="dialog" aria-modal="true" aria-labelledby={context.titleId} tabIndex={-1} className={`relative bg-white rounded-xl shadow-xl max-w-lg w-full max-h-[calc(100dvh-2rem)] overflow-y-auto ${className || ''}`}>
         {children}
       </div>
     </div>
@@ -65,6 +89,8 @@ export function DialogHeader({ children }: { children: React.ReactNode }) {
         {children}
       </div>
       <button
+        type="button"
+        aria-label="Close dialog"
         onClick={() => context?.onOpenChange(false)}
         className="text-navy-400 hover:text-navy-600 transition -mt-2 -mr-2 p-2"
       >
@@ -75,7 +101,8 @@ export function DialogHeader({ children }: { children: React.ReactNode }) {
 }
 
 export function DialogTitle({ children }: { children: React.ReactNode }) {
-  return <h2 className="text-lg font-semibold text-navy-900">{children}</h2>;
+  const context = React.useContext(DialogContext);
+  return <h2 id={context?.titleId} className="text-lg font-semibold text-navy-900">{children}</h2>;
 }
 
 export function DialogDescription({ children }: { children: React.ReactNode }) {
@@ -118,7 +145,7 @@ export function ConfirmDialog({
   loading = false,
 }: ConfirmDialogProps) {
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+    <Dialog open={isOpen} onOpenChange={(open) => !open && !loading && onClose()}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
