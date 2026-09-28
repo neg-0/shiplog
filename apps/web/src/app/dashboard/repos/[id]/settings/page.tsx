@@ -70,7 +70,7 @@ export default function RepoSettingsPage() {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!repo || saving) return;
+    if (!repo?.canManage || saving) return;
     setSaving(true);
     setError(null);
     setSuccess(false);
@@ -104,6 +104,23 @@ export default function RepoSettingsPage() {
       <DashboardLayout user={user}>
         <div className="flex items-center justify-center py-12">
           <Loader2 className="w-8 h-8 text-teal-600 animate-spin" />
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  if (repo && !repo.canManage) {
+    return (
+      <DashboardLayout user={user}>
+        <div className="max-w-2xl mx-auto">
+          <Link href={`/dashboard/repos/${repoId}`} className="inline-flex items-center gap-2 text-navy-600 hover:text-navy-900 mb-6 transition">
+            <ArrowLeft className="w-4 h-4" />
+            Back to Repository
+          </Link>
+          <div className="bg-white rounded-xl shadow-sm border border-navy-100 p-6">
+            <h1 className="text-2xl font-bold text-navy-900 mb-3">Settings: {repo.fullName}</h1>
+            <p className="text-navy-600">Team members can view this repository. Ask a team owner or admin to change its settings.</p>
+          </div>
         </div>
       </DashboardLayout>
     );

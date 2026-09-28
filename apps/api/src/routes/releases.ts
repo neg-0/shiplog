@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import type { Prisma, Release } from '@prisma/client';
 import { zValidator } from '@hono/zod-validator';
 import { prisma } from '../lib/db.js';
 import { logger } from '../lib/logger.js';
@@ -11,6 +12,7 @@ import { publishReleaseNotes } from '../services/publisher.js';
 import { claimProcessing, failProcessing, needsDeliveryReview, processingWhere, recoverInterruptedProcessing } from '../services/release-processing.js';
 import { sanitizeHtml } from '../lib/sanitize.js';
 import { rateLimit } from '../lib/rate-limit.js';
+import { hasActiveTeamSubscription, readableRepo, writableRepo } from '../lib/repo-access.js';
 import {
   regenerateNotesSchema,
   publishReleaseSchema,
@@ -27,15 +29,55 @@ export const releases = new Hono();
 releases.use('*', requireAuth);
 releases.use('*', apiLimiter);
 
-// Helper for repo access (Owner or Org Member) via release
-const releaseAccess = (userId: string) => ({
-  repo: {
-    OR: [
-      { userId },
-      { organization: { members: { some: { userId } } } }
-    ]
+const releaseAccess = async (userId: string) => ({ repo: await readableRepo(userId) });
+const releaseWriteAccess = async (userId: string, tx?: Prisma.TransactionClient) => ({ repo: await writableRepo(userId, tx) });
+
+type WriteRelease = Pick<Release, 'id' | 'status' | 'error' | 'updatedAt'> & {
+  repo: { organization: { ownerId: string } | null };
+};
+const ownerLockTransaction = { maxWait: 10_000, timeout: 35_000 };
+
+/** Billing changes and Team writes serialize on the same payer row. */
+const canWriteInTransaction = async (
+  tx: Prisma.TransactionClient,
+  userId: string,
+  release: WriteRelease,
+  marker?: string,
+): Promise<boolean> => {
+  const ownerId = release.repo.organization?.ownerId ?? null;
+  if (ownerId) {
+    await tx.$queryRaw`SELECT id FROM users WHERE id = ${ownerId} FOR UPDATE`;
   }
-});
+  const current = await tx.release.findFirst({
+    where: {
+      id: release.id,
+      ...(await releaseWriteAccess(userId, tx)),
+      ...(marker ? processingWhere(release.id, marker) : {}),
+    },
+    select: { repo: { select: { organization: { select: { ownerId: true } } } } },
+  });
+  // A repo moved between personal and Team ownership needs a fresh request.
+  return Boolean(current && (current.repo.organization?.ownerId ?? null) === ownerId);
+};
+
+const claimAuthorizedProcessing = async (
+  release: WriteRelease,
+  userId: string,
+  operation: 'generation' | 'publication',
+) => prisma.$transaction(async tx => {
+  if (!(await canWriteInTransaction(tx, userId, release))) return { kind: 'unauthorized' } as const;
+  const marker = await claimProcessing(release, operation, tx);
+  return marker ? { kind: 'claimed', marker } as const : { kind: 'conflict' } as const;
+}, ownerLockTransaction);
+
+const canContinueProcessing = (release: WriteRelease, userId: string, marker: string) =>
+  prisma.$transaction(tx => canWriteInTransaction(tx, userId, release, marker), ownerLockTransaction);
+
+const abandonProcessing = (release: WriteRelease, marker: string) =>
+  prisma.release.updateMany({
+    where: processingWhere(release.id, marker),
+    data: { status: release.status, error: release.error ?? null },
+  });
 
 /**
  * GET /:id
@@ -52,7 +94,7 @@ releases.get('/:id', async (c) => {
   let release = await prisma.release.findFirst({
     where: {
       id,
-      ...releaseAccess(user.id)
+      ...(await releaseAccess(user.id))
     },
     include: {
       notes: true,
@@ -63,6 +105,15 @@ releases.get('/:id', async (c) => {
           isPublic: true,
           slug: true,
           userId: true,
+          organizationId: true,
+          organization: {
+            select: {
+              ownerId: true,
+              subscriptionId: true,
+              owner: { select: { subscriptionTier: true, subscriptionStatus: true, stripeSubscriptionId: true } },
+              members: { where: { userId: user.id }, select: { role: true } },
+            },
+          },
           user: { select: { subscriptionTier: true } },
           owner: true,
           name: true,
@@ -99,6 +150,9 @@ releases.get('/:id', async (c) => {
       fullName: release.repo.fullName,
       isPublic: release.repo.isPublic,
       slug: release.repo.slug,
+      canManage: !release.repo.organizationId
+        ? release.repo.userId === user.id
+        : release.repo.organization?.ownerId === user.id || Boolean(release.repo.organization && hasActiveTeamSubscription(release.repo.organization) && ['OWNER', 'ADMIN'].includes(release.repo.organization.members[0]?.role ?? '')),
       config: release.repo.config,
       entitlements: repoEntitlements(release.repo),
     },
@@ -145,13 +199,14 @@ releases.post(
     let release = await prisma.release.findFirst({
       where: {
         id,
-        ...releaseAccess(user.id)
+        ...(await releaseWriteAccess(user.id))
       },
       include: {
         repo: {
           include: {
             user: true,
             config: true,
+            organization: { select: { ownerId: true } },
           },
         },
       },
@@ -172,10 +227,16 @@ releases.post(
 
     logger.info(`🔄 Regenerating notes for release ${id}`, { releaseId: id });
 
-    const marker = await claimProcessing(release, 'generation');
-    if (!marker) return c.json({ error: 'Release changed or is already being processed. Reload and try again.' }, 409);
+    const claim = await claimAuthorizedProcessing(release, user.id, 'generation');
+    if (claim.kind === 'unauthorized') return c.json({ error: 'Not authorized' }, 403);
+    if (claim.kind === 'conflict') return c.json({ error: 'Release changed or is already being processed. Reload and try again.' }, 409);
+    const marker = claim.marker;
 
     try {
+      if (!(await canContinueProcessing(release, user.id, marker))) {
+        await abandonProcessing(release, marker);
+        return c.json({ error: 'Not authorized' }, 403);
+      }
       // Decrypt token and fetch release data
       const accessToken = await decrypt(release.repo.user.accessToken);
       const releaseData = await fetchReleaseData(
@@ -185,6 +246,10 @@ releases.post(
         accessToken
       );
 
+      if (!(await canContinueProcessing(release, user.id, marker))) {
+        await abandonProcessing(release, marker);
+        return c.json({ error: 'Not authorized' }, 403);
+      }
       // Generate new notes
       const notes = await generateReleaseNotes({
         tagName: releaseData.release.tagName,
@@ -203,25 +268,33 @@ releases.post(
       });
 
       // Commit the replacement notes and review state together.
-      await prisma.release.update({
-        where: processingWhere(id, marker),
-        data: {
-          status: 'READY', processedAt: new Date(), error: null,
-          isDraft: releaseData.release.isDraft,
-          publishedAt: releaseData.release.publishedAt,
-          notes: {
-            upsert: {
-              create: notes,
-              update: {
-                ...notes,
-                customerEdited: false,
-                developerEdited: false,
-                stakeholderEdited: false,
+      const committed = await prisma.$transaction(async tx => {
+        if (!(await canWriteInTransaction(tx, user.id, release, marker))) return false;
+        await tx.release.update({
+          where: processingWhere(id, marker),
+          data: {
+            status: 'READY', processedAt: new Date(), error: null,
+            isDraft: releaseData.release.isDraft,
+            publishedAt: releaseData.release.publishedAt,
+            notes: {
+              upsert: {
+                create: notes,
+                update: {
+                  ...notes,
+                  customerEdited: false,
+                  developerEdited: false,
+                  stakeholderEdited: false,
+                },
               },
             },
           },
-        },
-      });
+        });
+        return true;
+      }, ownerLockTransaction);
+      if (!committed) {
+        await abandonProcessing(release, marker);
+        return c.json({ error: 'Not authorized' }, 403);
+      }
 
       logger.info(`✅ Regenerated notes for ${release.tagName}`, { releaseId: id, tagName: release.tagName });
 
@@ -260,7 +333,7 @@ releases.post(
     let release = await prisma.release.findFirst({
       where: {
         id,
-        ...releaseAccess(user.id)
+        ...(await releaseWriteAccess(user.id))
       },
       include: {
         notes: true,
@@ -269,6 +342,7 @@ releases.post(
             id: true,
             userId: true,
             user: { select: { subscriptionTier: true } },
+            organization: { select: { ownerId: true } },
             fullName: true,
             config: { include: { channels: true, emailRecipients: true } },
           },
@@ -311,10 +385,16 @@ releases.post(
 
     logger.info(`📤 Publishing release ${id} to channels`, { releaseId: id, channels: body.channels });
 
-    const marker = await claimProcessing(release, 'publication');
-    if (!marker) return c.json({ error: 'Release changed or is already being processed. Reload and try again.' }, 409);
+    const claim = await claimAuthorizedProcessing(release, user.id, 'publication');
+    if (claim.kind === 'unauthorized') return c.json({ error: 'Not authorized' }, 403);
+    if (claim.kind === 'conflict') return c.json({ error: 'Release changed or is already being processed. Reload and try again.' }, 409);
+    const marker = claim.marker;
 
     try {
+      if (!(await canContinueProcessing(release, user.id, marker))) {
+        await abandonProcessing(release, marker);
+        return c.json({ error: 'Not authorized' }, 403);
+      }
       const result = await publishReleaseNotes({ ...release, notes: release.notes }, paid ? body.channels : [], marker);
       return c.json({
         id,
@@ -352,12 +432,12 @@ releases.patch(
     const release = await prisma.release.findFirst({
       where: {
         id,
-        ...releaseAccess(user.id)
+        ...(await releaseWriteAccess(user.id))
       },
       include: {
         notes: true,
         repo: {
-          select: { userId: true },
+          select: { userId: true, organization: { select: { ownerId: true } } },
         },
       },
     });
@@ -392,17 +472,19 @@ releases.patch(
     }
 
     const edited = await prisma.$transaction(async tx => {
+      if (!(await canWriteInTransaction(tx, user.id, release))) return 'unauthorized' as const;
       // Editing and claiming generation/publication share the release row fence.
       // Advance it even for two writes in the same millisecond.
       const changed = await tx.release.updateMany({
         where: { id, status: release.status, error: release.error ?? null, updatedAt: release.updatedAt },
         data: { updatedAt: new Date(Math.max(Date.now(), release.updatedAt.getTime() + 1)) },
       });
-      if (!changed.count) return false;
+      if (!changed.count) return 'conflict' as const;
       await tx.generatedNotes.update({ where: { releaseId: id }, data: updateData });
-      return true;
-    });
-    if (!edited) return c.json({ error: 'Release changed or is already being processed. Reload and try again.' }, 409);
+      return 'edited' as const;
+    }, ownerLockTransaction);
+    if (edited === 'unauthorized') return c.json({ error: 'Not authorized' }, 403);
+    if (edited === 'conflict') return c.json({ error: 'Release changed or is already being processed. Reload and try again.' }, 409);
 
     logger.info(`✏️ Updated notes for release ${id}`, { releaseId: id });
     

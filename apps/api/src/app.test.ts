@@ -30,7 +30,7 @@ jest.unstable_mockModule('./lib/auth.js', () => ({
 }));
 
 jest.unstable_mockModule('stripe', () => ({
-  default: jest.fn(() => ({})),
+  default: jest.fn(() => ({ balance: { retrieve: jest.fn().mockResolvedValue({}) } })),
 }));
 
 process.env.APP_URL = 'https://shiplog.io';

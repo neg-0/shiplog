@@ -35,6 +35,7 @@ export default function ReleaseDetailPage() {
   const releaseId = params.id as string;
   const deliveryNeedsReview = release?.error?.startsWith('Delivery outcome needs review.') ?? false;
   const canNotifyChannels = release?.repo.entitlements?.channels ?? false;
+  const canManage = release?.repo.canManage ?? false;
 
   useEffect(() => {
     if (!isAuthenticated()) {
@@ -85,7 +86,7 @@ export default function ReleaseDetailPage() {
   }, [release?.status, releaseId]);
 
   const handleRegenerate = async () => {
-    if (!release) return;
+    if (!release?.repo.canManage) return;
     try {
       setRegenerating(true);
       setError(null);
@@ -101,7 +102,7 @@ export default function ReleaseDetailPage() {
   };
 
   const handlePublish = async () => {
-    if (!release) return;
+    if (!release?.repo.canManage) return;
     try {
       setPublishing(true);
       setError(null);
@@ -122,13 +123,13 @@ export default function ReleaseDetailPage() {
   };
 
   const handleEdit = () => {
-    if (!release?.notes) return;
+    if (!release?.repo.canManage || !release.notes) return;
     setEditContent(release.notes[activeTab]);
     setEditing(true);
   };
 
   const handleSave = async () => {
-    if (!release) return;
+    if (!release?.repo.canManage) return;
     try {
       setSaving(true);
       setError(null);
@@ -246,7 +247,7 @@ export default function ReleaseDetailPage() {
                     <ExternalLink className="w-4 h-4" />
                     GitHub
                   </a>
-                  {release.notes && (
+                  {release.notes && canManage && (
                     <button
                       onClick={() => setShowPublishDialog(true)}
                       disabled={editing || regenerating || saving || publishing || deliveryNeedsReview}
@@ -298,7 +299,7 @@ export default function ReleaseDetailPage() {
                         {copied ? <Check className="w-4 h-4 text-teal-600" /> : <Copy className="w-4 h-4" />}
                         {copied ? 'Copied!' : 'Copy'}
                       </button>
-                      {!editing && (
+                      {!editing && canManage && (
                         <>
                           <button
                             onClick={handleEdit}
@@ -376,10 +377,12 @@ export default function ReleaseDetailPage() {
                 <p className="text-navy-600 mb-4">
                   {release.status === 'PROCESSING'
                     ? 'Notes are being generated...'
-                    : 'Click regenerate to generate release notes for this release.'}
+                    : canManage
+                      ? 'Click generate to draft release notes for this release.'
+                      : 'A team owner or admin can generate release notes for this release.'}
                 </p>
-                <p className="mb-4 text-sm text-navy-500">Generating notes sends release text, commits, and pull request descriptions to OpenAI.</p>
-                {release.status !== 'PROCESSING' && (
+                {canManage && <p className="mb-4 text-sm text-navy-500">Generating notes sends release text, commits, and pull request descriptions to OpenAI.</p>}
+                {canManage && release.status !== 'PROCESSING' && (
                   <button
                     onClick={handleRegenerate}
                     disabled={regenerating || deliveryNeedsReview}
@@ -395,7 +398,7 @@ export default function ReleaseDetailPage() {
         )}
 
         {/* Publish Dialog */}
-        <Dialog open={showPublishDialog} onOpenChange={(open) => { if (!publishing) setShowPublishDialog(open); }}>
+        <Dialog open={canManage && showPublishDialog} onOpenChange={(open) => { if (!publishing) setShowPublishDialog(open); }}>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Publish Release Notes</DialogTitle>
@@ -470,7 +473,7 @@ export default function ReleaseDetailPage() {
           </DialogContent>
         </Dialog>
         <ConfirmDialog
-          isOpen={showRegenerateDialog}
+          isOpen={canManage && showRegenerateDialog}
           onClose={() => setShowRegenerateDialog(false)}
           onConfirm={handleRegenerate}
           title="Regenerate all release notes?"

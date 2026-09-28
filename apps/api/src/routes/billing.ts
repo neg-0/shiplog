@@ -66,14 +66,18 @@ const shouldDowngrade = (status?: Stripe.Subscription.Status) => {
 
 const lifecycleRequestOptions = { timeout: 10_000, maxNetworkRetries: 0 };
 
-async function hasUnfinishedSubscription(customerId: string): Promise<boolean> {
+async function getSubscriptionState(customerId: string): Promise<{ unfinished: boolean; trialUsed: boolean }> {
   let startingAfter: string | undefined;
+  let trialUsed = false;
   for (let page = 0; page < 20; page++) {
     const subscriptions = await stripe!.subscriptions.list(
       { customer: customerId, status: 'all', limit: 100, starting_after: startingAfter }, lifecycleRequestOptions,
     );
-    if (subscriptions.data.some(subscription => !['canceled', 'incomplete_expired'].includes(subscription.status))) return true;
-    if (!subscriptions.has_more) return false;
+    trialUsed ||= subscriptions.data.some(subscription => subscription.trial_start != null);
+    if (subscriptions.data.some(subscription => !['canceled', 'incomplete_expired'].includes(subscription.status))) {
+      return { unfinished: true, trialUsed };
+    }
+    if (!subscriptions.has_more) return { unfinished: false, trialUsed };
     startingAfter = subscriptions.data.at(-1)?.id;
     if (!startingAfter) break;
   }
@@ -93,7 +97,7 @@ export async function accountDeletionBillingBlock(customerId: string): Promise<{
       return { error: 'An unfinished checkout is still open. Let it expire or contact support to close it before deleting your account.', status: 409 };
     }
 
-    if (await hasUnfinishedSubscription(customerId)) {
+    if ((await getSubscriptionState(customerId)).unfinished) {
       return { error: 'Stripe still has an unfinished subscription. Cancel it in the billing portal before deleting your account.', status: 409 };
     }
     return null;
@@ -184,7 +188,8 @@ billing.post(
           const openSessions = await stripe.checkout.sessions.list(
             { customer: dbUser.stripeCustomerId, status: 'open', limit: 1 }, lifecycleRequestOptions,
           );
-          if (await hasUnfinishedSubscription(dbUser.stripeCustomerId)) {
+          const subscriptionState = await getSubscriptionState(dbUser.stripeCustomerId);
+          if (subscriptionState.unfinished) {
             return c.json({ error: 'You already have a subscription. Please manage it in the billing portal.', redirect: '/dashboard/settings' }, 409);
           }
           const openSession = openSessions.data[0];
@@ -208,7 +213,7 @@ billing.post(
             customer: dbUser.stripeCustomerId,
             line_items: [{ price: priceId, quantity: 1 }],
             allow_promotion_codes: true,
-            subscription_data: { trial_period_days: 14 },
+            ...(plan === 'pro' && !subscriptionState.trialUsed ? { subscription_data: { trial_period_days: 14 } } : {}),
             success_url: `${APP_URL}/dashboard/settings?checkout=success`,
             cancel_url: `${APP_URL}/dashboard/settings?checkout=cancel`,
             client_reference_id: dbUser.id,
@@ -313,45 +318,66 @@ billing.post('/webhook', async (c) => {
 
   const updateUserSubscription = async (
     where: Prisma.UserWhereInput,
-    data: Prisma.UserUpdateManyMutationInput,
-    tier: SubscriptionTier,
+    customerId: string,
     subscriptionId: string,
     userId: string,
   ) => {
-    // Keep the timestamp and organization entitlement in the same transaction.
-    // A stale event must not touch organizations, and failed org sync must be retryable.
     await prisma.$transaction(async (tx) => {
-      const updated = await tx.user.updateMany({
-        where: {
-          ...where,
-          OR: [
-            { stripeLastEventTimestamp: { lt: event.created } },
-            { stripeLastEventTimestamp: null },
-          ],
-        },
-        data: { ...data, stripeLastEventTimestamp: event.created },
+      // Event timestamps have second precision and cannot order subscription changes.
+      // Serialize the provider read with the write so concurrent handlers cannot commit
+      // an earlier snapshot after a newer one. Repeated reconciliation is idempotent.
+      await tx.$queryRaw`SELECT id FROM users WHERE id = ${userId} FOR UPDATE`;
+      const current = await tx.user.findUnique({
+        where: { id: userId },
+        select: { stripeCustomerId: true, stripeSubscriptionId: true, subscriptionStatus: true, stripeLastEventTimestamp: true },
       });
+      if (!current || (current.stripeCustomerId && current.stripeCustomerId !== customerId)) return;
 
+      const subscription = await stripe.subscriptions.retrieve(subscriptionId, {
+        expand: ['items.data.price'],
+      }, lifecycleRequestOptions);
+      if (subscription.customer !== customerId) throw new Error('Subscription customer does not match the event');
+
+      const ended = (status: string | null) => status === 'canceled' || status === 'incomplete_expired';
+      if (current.stripeSubscriptionId && current.stripeSubscriptionId !== subscriptionId) {
+        // An old subscription's cancellation must not erase its replacement. A new
+        // live subscription can replace a terminal one even if its deletion event
+        // has not arrived yet; verify that terminal state with Stripe when needed.
+        if (ended(subscription.status)) return;
+        if (!ended(current.subscriptionStatus)) {
+          const previous = await stripe.subscriptions.retrieve(current.stripeSubscriptionId, {}, lifecycleRequestOptions);
+          if (previous.customer !== customerId || !ended(previous.status)) return;
+        }
+      }
+
+      const tier = shouldDowngrade(subscription.status) ? 'FREE' : getTierFromPrice(subscription.items.data[0]?.price);
+      const updated = await tx.user.updateMany({
+        where,
+        data: {
+          stripeCustomerId: customerId,
+          stripeSubscriptionId: subscriptionId,
+          subscriptionStatus: subscription.status,
+          subscriptionTier: tier,
+          trialEndsAt: subscription.trial_end ? new Date(subscription.trial_end * 1000) : null,
+          // Retained as telemetry, not an ordering or duplicate-event guard.
+          stripeLastEventTimestamp: Math.max(current.stripeLastEventTimestamp ?? 0, event.created),
+        },
+      });
       if (updated.count === 0) return;
-
       await tx.organization.updateMany({
         where: { ownerId: userId },
         data: { subscriptionId: tier === 'TEAM' ? subscriptionId : null },
       });
-    });
+    }, { maxWait: 10_000, timeout: 30_000 });
   };
 
-  const updateByCustomer = async (customerId: string, data: Prisma.UserUpdateManyMutationInput, tier: SubscriptionTier, subscriptionId: string) => {
+  const updateByCustomer = async (customerId: string, subscriptionId: string) => {
     const users = await prisma.user.findMany({
       where: { stripeCustomerId: customerId },
       select: { id: true },
     });
-
     for (const user of users) {
-      await updateUserSubscription(
-        { id: user.id, stripeCustomerId: customerId },
-        data, tier, subscriptionId, user.id,
-      );
+      await updateUserSubscription({ id: user.id, stripeCustomerId: customerId }, customerId, subscriptionId, user.id);
     }
   };
 
@@ -364,25 +390,10 @@ billing.post('/webhook', async (c) => {
 
       if (customerId && subscriptionId) {
         try {
-          const subscription = await stripe.subscriptions.retrieve(subscriptionId, {
-            expand: ['items.data.price'],
-          });
-          const price = subscription.items.data[0]?.price;
-          const tier = shouldDowngrade(subscription.status) ? 'FREE' : getTierFromPrice(price);
-          const trialEndsAt = subscription.trial_end ? new Date(subscription.trial_end * 1000) : null;
-
-          const data = {
-            stripeCustomerId: customerId,
-            stripeSubscriptionId: subscriptionId,
-            subscriptionStatus: subscription.status,
-            subscriptionTier: tier,
-            trialEndsAt,
-          };
-
           if (userId) {
-            await updateUserSubscription({ id: userId }, data, tier, subscriptionId, userId);
+            await updateUserSubscription({ id: userId }, customerId, subscriptionId, userId);
           } else {
-            await updateByCustomer(customerId, data, tier, subscriptionId);
+            await updateByCustomer(customerId, subscriptionId);
           }
         } catch (error) {
           logger.error('Error processing checkout.session.completed:', { error: error instanceof Error ? error.message : String(error) });
@@ -396,22 +407,9 @@ billing.post('/webhook', async (c) => {
     case 'customer.subscription.deleted': {
       try {
         const eventSubscription = event.data.object as Stripe.Subscription;
-        // Fetch fresh subscription with expanded price to ensure lookup_key is available
-        const subscription = await stripe.subscriptions.retrieve(eventSubscription.id, {
-          expand: ['items.data.price'],
-        });
-
-        const customerId = subscription.customer as string;
-        const price = subscription.items.data[0]?.price;
-        const tier: SubscriptionTier = shouldDowngrade(subscription.status) ? 'FREE' : getTierFromPrice(price);
-        const trialEndsAt = subscription.trial_end ? new Date(subscription.trial_end * 1000) : null;
-
-        await updateByCustomer(customerId, {
-          stripeSubscriptionId: subscription.id,
-          subscriptionStatus: subscription.status,
-          subscriptionTier: tier,
-          trialEndsAt,
-        }, tier, subscription.id);
+        const customerId = typeof eventSubscription.customer === 'string'
+          ? eventSubscription.customer : eventSubscription.customer.id;
+        await updateByCustomer(customerId, eventSubscription.id);
       } catch (error) {
         logger.error('Error processing customer.subscription event:', { error: error instanceof Error ? error.message : String(error) });
         return c.json({ error: 'Webhook processing failed' }, 500);

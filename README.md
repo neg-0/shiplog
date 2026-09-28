@@ -8,11 +8,11 @@ Connect a repository, import or receive a release, generate three drafts, review
 - API: Node.js, Hono, Prisma/PostgreSQL; deployed on Railway.
 - Sign-in: GitHub OAuth. Billing: Stripe. Generation: OpenAI.
 
-See [readiness review](docs/READINESS.md) for verified fixes, live rollout checks, and unfinished features. [Architecture](docs/ARCHITECTURE.md) and [roadmap](docs/ROADMAP.md) contain historical plans, not a current feature guarantee.
+See [readiness review](docs/READINESS.md) for verified fixes, live rollout checks, and unfinished features. The [PRD](docs/PRD.md), [architecture](docs/ARCHITECTURE.md), and [roadmap](docs/ROADMAP.md) contain historical plans, not a current feature guarantee.
 
 ## Local development
 
-Use Node.js 20+ and the package manager version in `package.json`:
+Use Node.js 20.6+ (for the `--env-file` command below) and the package manager version in `package.json`:
 
 ```sh
 corepack enable
@@ -21,12 +21,36 @@ pnpm install --frozen-lockfile
 pnpm --filter api db:generate
 ```
 
-Copy `apps/api/.env.example` to `apps/api/.env` and configure a **local development** PostgreSQL database and provider test credentials. Never copy production credentials into a test fixture. Apply the schema to that local database with `pnpm --filter api db:push` before first use. The API process needs those values in its environment; for Node versions supporting `--env-file`, start it with:
+### Environment variables
+
+Environment files live beside each app. The checked-in examples list the variables read by the current code, with local defaults and blank credentials:
+
+| App | Example | Local configuration |
+| --- | --- | --- |
+| API | [apps/api/.env.example](apps/api/.env.example) | `apps/api/.env` (explicitly loaded by the command below) |
+| Web | [apps/web/.env.example](apps/web/.env.example) | `apps/web/.env.local` (loaded automatically by Next.js) |
+
+Copy them without overwriting existing configuration:
+
+```sh
+cp -n apps/api/.env.example apps/api/.env
+cp -n apps/web/.env.example apps/web/.env.local
+```
+
+For the core journey, fill in `DATABASE_URL`, `JWT_SECRET`, GitHub OAuth credentials, and `OPENAI_API_KEY` in the API file. Register `http://localhost:3001/auth/github/callback` as the development GitHub OAuth callback. The examples also document Stripe test-mode settings and optional feedback, email, admin, and maintenance features. The API example removes the unused global `GITHUB_WEBHOOK_SECRET`: secrets are generated separately for each connected repository.
+
+Use a **local development** PostgreSQL database and provider test credentials. Both local filenames are git-ignored. Never copy production credentials into a test fixture or put secrets in `NEXT_PUBLIC_*` values, which are exposed to the browser.
+
+After creating a local PostgreSQL database, check that `DATABASE_URL` points to `127.0.0.1`, then apply the schema with `pnpm --filter api db:push`. Prisma follows the configured URL, so check it again before later schema commands. If you keep an `initdb` cluster at `.local/postgres/data`, start or stop it from the repository root with `pg_ctl -D .local/postgres/data -l .local/postgres/server.log -w start` or `pg_ctl -D .local/postgres/data -m fast -w stop`. This directory is git-ignored.
+
+Load configuration before the API modules initialize:
 
 ```sh
 cd apps/api
 node --env-file=.env --import tsx src/index.ts
 ```
+
+If you keep isolated test overrides in `apps/api/.env.local`, load both files with `node --env-file=.env --env-file=.env.local --import tsx src/index.ts` from `apps/api`. The second file overrides the first; already-exported shell variables take precedence. Ensure the resulting `DATABASE_URL` points to the test database. The `pnpm --filter api dev` command has no explicit environment-file loader; use the command above for predictable loading before module initialization.
 
 Start the frontend in another terminal:
 
@@ -34,7 +58,7 @@ Start the frontend in another terminal:
 pnpm --filter web dev
 ```
 
-The frontend proxies `/api/*` to `http://127.0.0.1:3001` during development. Override `API_URL` for another development backend. Production defaults to `https://api.shiplog.io`.
+The frontend proxies `/api/*` to `http://127.0.0.1:3001` during development. Set `API_URL` in the web environment file for another backend. `NEXT_PUBLIC_API_URL=/api` makes the admin pages use that same proxy. Production defaults to `https://api.shiplog.io` when no API origin is configured. Restart local processes after changing environment files; deployed browser `NEXT_PUBLIC_*` values require a new build.
 
 ## Validation
 

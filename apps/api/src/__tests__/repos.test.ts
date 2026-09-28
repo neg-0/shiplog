@@ -47,6 +47,13 @@ describe('Repos Routes', () => {
     repos = module.repos;
 
     jest.clearAllMocks();
+    prismaMock.$transaction.mockImplementation(async (callback: any) => callback(prismaMock));
+    // Older route fixtures use findFirst; writable routes now do two reads
+    // inside a transaction (before and after locking the owner user row).
+    prismaMock.repo.findUnique.mockImplementation(async (args: any) => {
+      const repo = await prismaMock.repo.findFirst({ where: { id: args.where.id } });
+      return repo ? { userId: 'test-user-id', organizationId: null, ...repo } : null;
+    });
   });
 
   describe('GET /', () => {
@@ -184,6 +191,67 @@ describe('Repos Routes', () => {
     });
   });
 
+  describe('POST /:id/import', () => {
+    it('reports a GitHub failure and permits a safe metadata retry', async () => {
+      prismaMock.repo.findUnique.mockResolvedValue({
+        id: 'repo-1', userId: 'test-user-id', organizationId: null, fullName: 'owner/repo',
+      } as any);
+      prismaMock.user.findUnique.mockResolvedValue({ accessToken: 'enc-token' } as any);
+      importerService.importRepoHistory
+        .mockRejectedValueOnce(new Error('GitHub unavailable'))
+        .mockResolvedValueOnce({ found: 2 });
+
+      const first = await repos.request('/repo-1/import', { method: 'POST' });
+      expect(first.status).toBe(502);
+      expect(await first.json()).toMatchObject({ error: expect.stringContaining('Could not import') });
+
+      const retry = await repos.request('/repo-1/import', { method: 'POST' });
+      expect(retry.status).toBe(200);
+      expect(await retry.json()).toEqual({ status: 'complete', found: 2 });
+      expect(importerService.importRepoHistory).toHaveBeenCalledWith('repo-1', 'decrypted-access-token', { metadataOnly: true });
+    });
+
+    it('rejects an ordinary team member even if they connected the repository', async () => {
+      prismaMock.repo.findUnique.mockResolvedValue({
+        id: 'repo-1', userId: 'test-user-id', organizationId: 'org-1',
+        organization: {
+          ownerId: 'team-owner', subscriptionId: 'sub_team',
+          owner: { subscriptionTier: 'TEAM', subscriptionStatus: 'active', stripeSubscriptionId: 'sub_team' },
+          members: [{ role: 'MEMBER' }],
+        },
+      } as any);
+
+      const response = await repos.request('/repo-1/import', { method: 'POST' });
+      expect(response.status).toBe(404);
+      expect(importerService.importRepoHistory).not.toHaveBeenCalled();
+    });
+
+    it('rechecks Team access after decrypting and before calling the importer', async () => {
+      const active = {
+        id: 'repo-1', userId: 'connector', organizationId: 'org-1',
+        organization: {
+          ownerId: 'team-owner', subscriptionId: 'sub_team',
+          owner: { subscriptionTier: 'TEAM', subscriptionStatus: 'active', stripeSubscriptionId: 'sub_team' },
+          members: [{ role: 'ADMIN' }],
+        },
+      };
+      prismaMock.repo.findUnique
+        .mockResolvedValueOnce(active as any)
+        .mockResolvedValueOnce({
+          ...active,
+          organization: {
+            ...active.organization, subscriptionId: null,
+            owner: { subscriptionTier: 'FREE', subscriptionStatus: 'canceled', stripeSubscriptionId: 'sub_team' },
+          },
+        } as any);
+      prismaMock.user.findUnique.mockResolvedValue({ accessToken: 'enc-token' } as any);
+
+      const response = await repos.request('/repo-1/import', { method: 'POST' });
+      expect(response.status).toBe(404);
+      expect(importerService.importRepoHistory).not.toHaveBeenCalled();
+    });
+  });
+
   describe('PATCH /:id/config', () => {
     it('updates repo config', async () => {
       prismaMock.repo.findFirst.mockResolvedValue({ id: 'repo-1', user: { subscriptionTier: 'PRO' } } as any);
@@ -200,6 +268,54 @@ describe('Repos Routes', () => {
 
       expect(res.status).toBe(200);
       expect(prismaMock.repoConfig.upsert).toHaveBeenCalled();
+    });
+
+    it('blocks an admin write when Team cancellation lands before the locked authorization read', async () => {
+      prismaMock.repo.findUnique
+        .mockResolvedValueOnce({ userId: 'connector', organization: { ownerId: 'team-owner' } } as any)
+        .mockResolvedValueOnce({
+          id: 'repo-1', userId: 'connector', organizationId: 'org-1',
+          user: { subscriptionTier: 'TEAM' },
+          organization: {
+            ownerId: 'team-owner', subscriptionId: null,
+            owner: { subscriptionTier: 'FREE', subscriptionStatus: 'canceled', stripeSubscriptionId: 'sub_team' },
+            members: [{ role: 'ADMIN' }],
+          },
+        } as any);
+
+      const response = await repos.request('/repo-1/config', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ autoGenerate: true }),
+      });
+
+      expect(response.status).toBe(404);
+      expect(prismaMock.$queryRaw).toHaveBeenCalledTimes(1);
+      expect(prismaMock.repo.findUnique).toHaveBeenCalledTimes(2);
+      expect(prismaMock.repo.findUnique.mock.invocationCallOrder[0]).toBeLessThan(prismaMock.$queryRaw.mock.invocationCallOrder[0]);
+      expect(prismaMock.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(prismaMock.repo.findUnique.mock.invocationCallOrder[1]);
+      expect(prismaMock.repoConfig.upsert).not.toHaveBeenCalled();
+    });
+
+    it('lets the organization owner disable automation after Team cancellation', async () => {
+      prismaMock.repo.findUnique
+        .mockResolvedValueOnce({ userId: 'connector', organization: { ownerId: 'test-user-id' } } as any)
+        .mockResolvedValueOnce({
+          id: 'repo-1', userId: 'connector', organizationId: 'org-1',
+          user: { subscriptionTier: 'FREE' },
+          organization: {
+            ownerId: 'test-user-id', subscriptionId: null,
+            owner: { subscriptionTier: 'FREE', subscriptionStatus: 'canceled', stripeSubscriptionId: 'sub_team' },
+            members: [],
+          },
+        } as any);
+      prismaMock.repoConfig.upsert.mockResolvedValue({ repoId: 'repo-1', autoGenerate: false } as any);
+
+      const response = await repos.request('/repo-1/config', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ autoGenerate: false }),
+      });
+      expect(response.status).toBe(200);
+      expect(prismaMock.repoConfig.upsert).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -246,6 +362,59 @@ describe('Repos Routes', () => {
       expect(res.status).toBe(200);
       expect(githubService.deleteWebhook).toHaveBeenCalled();
       expect(prismaMock.repo.delete).toHaveBeenCalled();
+    });
+
+    it('finishes an authorized disconnect when Team access ends during webhook removal', async () => {
+      const active = {
+        id: 'repo-1', githubId: 101, userId: 'connector', organizationId: 'org-1',
+        webhookId: 999, owner: 'owner', name: 'repo', fullName: 'owner/repo',
+        organization: {
+          ownerId: 'team-owner', subscriptionId: 'sub_team',
+          owner: { subscriptionTier: 'TEAM', subscriptionStatus: 'active', stripeSubscriptionId: 'sub_team' },
+          members: [{ role: 'ADMIN' }],
+        },
+      };
+      prismaMock.repo.findUnique
+        .mockResolvedValueOnce(active as any)
+        .mockResolvedValueOnce(active as any)
+        .mockResolvedValueOnce({ userId: 'connector', organization: { ownerId: 'team-owner' } } as any)
+        .mockResolvedValueOnce({
+          ...active,
+          organization: {
+            ...active.organization, subscriptionId: null,
+            owner: { subscriptionTier: 'FREE', subscriptionStatus: 'canceled', stripeSubscriptionId: 'sub_team' },
+          },
+        } as any);
+      prismaMock.user.findUnique.mockResolvedValue({ accessToken: 'enc-token' } as any);
+
+      const response = await repos.request('/repo-1', { method: 'DELETE' });
+      expect(response.status).toBe(200);
+      expect(githubService.deleteWebhook).toHaveBeenCalledWith('owner', 'repo', 999, 'decrypted-access-token');
+      expect(prismaMock.$queryRaw).toHaveBeenCalledTimes(1);
+      expect(prismaMock.repo.delete).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not delete a repo when its webhook changed during the GitHub call', async () => {
+      const active = {
+        id: 'repo-1', githubId: 101, userId: 'connector', organizationId: 'org-1',
+        webhookId: 999, owner: 'owner', name: 'repo', fullName: 'owner/repo',
+        organization: {
+          ownerId: 'team-owner', subscriptionId: 'sub_team',
+          owner: { subscriptionTier: 'TEAM', subscriptionStatus: 'active', stripeSubscriptionId: 'sub_team' },
+          members: [{ role: 'ADMIN' }],
+        },
+      };
+      prismaMock.repo.findUnique
+        .mockResolvedValueOnce(active as any)
+        .mockResolvedValueOnce(active as any)
+        .mockResolvedValueOnce({ userId: 'connector', organization: { ownerId: 'team-owner' } } as any)
+        .mockResolvedValueOnce({ ...active, webhookId: 1000 } as any);
+      prismaMock.user.findUnique.mockResolvedValue({ accessToken: 'enc-token' } as any);
+
+      const response = await repos.request('/repo-1', { method: 'DELETE' });
+      expect(response.status).toBe(404);
+      expect(githubService.deleteWebhook).toHaveBeenCalledTimes(1);
+      expect(prismaMock.repo.delete).not.toHaveBeenCalled();
     });
   });
 

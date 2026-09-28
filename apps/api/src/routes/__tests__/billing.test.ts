@@ -71,6 +71,7 @@ describe('Billing Routes', () => {
     jest.clearAllMocks();
     prismaMock.$transaction.mockImplementation(async (callback: any) => callback(prismaMock));
     prismaMock.user.updateMany.mockResolvedValue({ count: 1 });
+    prismaMock.user.findUnique.mockResolvedValue({ stripeCustomerId: 'cus_123', stripeSubscriptionId: null, subscriptionStatus: null, stripeLastEventTimestamp: null } as any);
     (stripeMock.checkout.sessions.list as jest.Mock).mockResolvedValue({ data: [], has_more: false } as any);
     (stripeMock.subscriptions.list as jest.Mock).mockResolvedValue({ data: [], has_more: false } as any);
   });

@@ -91,6 +91,15 @@ describe('generateReleaseNotes', () => {
     expect(result.model).toBe('gpt-4-turbo');
   });
 
+  it('marks token usage unknown when a provider response omits usage', async () => {
+    mockCreate.mockResolvedValueOnce({ choices: [{ message: { content: 'Customer' } }], usage: { total_tokens: 50 } });
+    mockCreate.mockResolvedValueOnce({ choices: [{ message: { content: 'Developer' } }] });
+    mockCreate.mockResolvedValueOnce({ choices: [{ message: { content: 'Stakeholder' } }], usage: { total_tokens: 60 } });
+
+    const result = await generateReleaseNotes(input);
+    expect(result.tokensUsed).toBeNull();
+  });
+
   it('should handle API errors gracefully', async () => {
     mockCreate.mockRejectedValue(new Error('API Error'));
     await expect(generateReleaseNotes(input)).rejects.toThrow('API Error');

@@ -12,6 +12,7 @@ jest.mock('../../../../lib/api', () => ({
   updateChannel: jest.fn(),
   deleteChannel: jest.fn(),
   disconnectRepo: jest.fn(),
+  retryRepoImport: jest.fn(),
 }));
 
 const mockRouter = { push: jest.fn(), replace: jest.fn() };
@@ -34,6 +35,7 @@ describe('RepoDetailPage', () => {
     fullName: 'test-org/test-repo',
     description: 'A test repo',
     status: 'ACTIVE',
+    canManage: true,
     slug: 'test-repo-slug',
     isPublic: true,
     entitlements: { automation: false, channels: false, branding: false, grandfathered: false },
@@ -96,6 +98,27 @@ describe('RepoDetailPage', () => {
     expect(screen.queryByRole('link', { name: 'View Changelog' })).not.toBeInTheDocument();
   });
 
+  it('shows organization members a read-only repository view', async () => {
+    (api.getRepo as jest.Mock).mockResolvedValue({
+      ...mockRepo,
+      canManage: false,
+      isPublic: false,
+      entitlements: { ...mockRepo.entitlements, channels: true },
+      config: { channels: [{ id: 'channel-1', name: 'Announcements', type: 'SLACK', audience: 'CUSTOMER', enabled: true }] },
+    });
+    render(<RepoDetailPage />);
+    expect(await screen.findByText('Announcements')).toBeInTheDocument();
+    expect(screen.getByText(/Ask a team admin to change them/)).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Settings' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Enable public changelog' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Edit tone and automation' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry GitHub import' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Add Channel' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Remove channel' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '● Active' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Audience for Announcements')).not.toBeInTheDocument();
+  });
+
   it('blocks Free channel creation and updates but permits pausing and removing an existing channel', async () => {
     const channel = { id: 'channel-1', name: 'Announcements', type: 'SLACK', audience: 'CUSTOMER', enabled: true };
     (api.getRepo as jest.Mock).mockResolvedValue({ ...mockRepo, config: { channels: [channel] } });
@@ -154,5 +177,24 @@ describe('RepoDetailPage', () => {
     expect(api.getRepo).toHaveBeenCalledTimes(22);
     view.unmount();
     jest.useRealTimers();
+  });
+
+  it('shows a failed GitHub import and recovers on retry', async () => {
+    (api.retryRepoImport as jest.Mock)
+      .mockRejectedValueOnce(new Error('Could not import GitHub releases.'))
+      .mockResolvedValueOnce({ status: 'complete', found: 1 });
+    (api.getRepo as jest.Mock)
+      .mockResolvedValueOnce(mockRepo)
+      .mockResolvedValueOnce(mockRepo)
+      .mockResolvedValue({ ...mockRepo, releases: [{ id: 'release-1', tagName: 'v1.0.0', name: 'First release', status: 'SKIPPED', publishedAt: null }] });
+
+    render(<RepoDetailPage />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Retry GitHub import' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not import GitHub releases.');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry GitHub import' }));
+    expect(await screen.findByRole('status')).toHaveTextContent('Checked 1 recent published GitHub release');
+    expect(await screen.findByText('v1.0.0')).toBeInTheDocument();
+    expect(api.retryRepoImport).toHaveBeenCalledTimes(2);
   });
 });

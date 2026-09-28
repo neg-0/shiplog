@@ -6,7 +6,7 @@ import { AlertCircle, ArrowLeft, Bell, ExternalLink, GitBranch, HelpCircle, Load
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useEffect, useState, type FormEvent } from 'react';
-import { addChannel, deleteChannel, disconnectRepo, getRepo, getUser, isAuthenticated, updateChannel, type Channel, type RepoDetail, type User } from '../../../../lib/api';
+import { addChannel, deleteChannel, disconnectRepo, getRepo, getUser, isAuthenticated, retryRepoImport, updateChannel, type Channel, type NewChannel, type RepoDetail, type User } from '../../../../lib/api';
 import { formatRelativeDate } from '../../../../lib/utils';
 
 export default function RepoDetailPage() {
@@ -17,7 +17,7 @@ export default function RepoDetailPage() {
   const [channels, setChannels] = useState<Channel[]>([]);
   const [channelError, setChannelError] = useState<string | null>(null);
   const [channelSaving, setChannelSaving] = useState(false);
-  const [channelForm, setChannelForm] = useState<Omit<Channel, 'id'>>({
+  const [channelForm, setChannelForm] = useState<NewChannel>({
     type: 'SLACK',
     name: '',
     webhookUrl: '',
@@ -31,6 +31,8 @@ export default function RepoDetailPage() {
   const [reloadKey, setReloadKey] = useState(0);
   const [importPending, setImportPending] = useState(false);
   const [refreshStopped, setRefreshStopped] = useState(false);
+  const [retryingImport, setRetryingImport] = useState(false);
+  const [importResult, setImportResult] = useState<{ kind: 'success' | 'error'; message: string } | null>(null);
 
   const params = useParams();
   const router = useRouter();
@@ -92,6 +94,32 @@ export default function RepoDetailPage() {
     setShowDisconnectConfirm(true);
   };
 
+  const handleRetryImport = async () => {
+    if (retryingImport) return;
+    setRetryingImport(true);
+    setImportResult(null);
+    try {
+      const result = await retryRepoImport(repoId);
+      setImportResult({
+        kind: 'success',
+        message: result.found === 0
+          ? 'No recent published GitHub releases were found. Publish a release on GitHub, then try again.'
+          : `Checked ${result.found} recent published GitHub release${result.found === 1 ? '' : 's'}.`,
+      });
+    } catch (err) {
+      setImportResult({
+        kind: 'error',
+        message: err instanceof Error ? err.message : 'Could not import GitHub releases. Please try again.',
+      });
+    } finally {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('importing');
+      window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
+      setRetryingImport(false);
+      setReloadKey(value => value + 1);
+    }
+  };
+
   const confirmDisconnect = async () => {
     try {
       setDisconnecting(true);
@@ -107,7 +135,7 @@ export default function RepoDetailPage() {
 
   const handleAddChannel = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!canUseChannels) return;
+    if (!repo?.canManage || !canUseChannels) return;
     setChannelError(null);
 
     if (!channelForm.webhookUrl || !channelForm.name) {
@@ -134,6 +162,7 @@ export default function RepoDetailPage() {
   };
 
   const handleUpdateChannel = async (channelId: string, updates: Partial<Channel>) => {
+    if (!repo?.canManage) return;
     setChannelError(null);
     try {
       const updated = await updateChannel(repoId, channelId, updates);
@@ -144,6 +173,7 @@ export default function RepoDetailPage() {
   };
 
   const handleDeleteChannel = async (channelId: string) => {
+    if (!repo?.canManage) return;
     setDeleteConfirm(null);
     setChannelError(null);
     try {
@@ -216,21 +246,25 @@ export default function RepoDetailPage() {
                   </div>
                 </div>
                 <div className="flex flex-col sm:flex-row gap-2">
-                  <Link
-                    href={`/dashboard/repos/${repoId}/settings`}
-                    className="px-4 py-2 text-sm text-navy-600 border border-navy-200 rounded-lg hover:bg-navy-50 transition flex items-center justify-center gap-2"
-                  >
-                    <Settings className="w-4 h-4" />
-                    Settings
-                  </Link>
-                  <Link
-                    href={repo.isPublic ? `/c/${repo.slug || repo.fullName.replace('/', '-')}` : `/dashboard/repos/${repoId}/settings`}
-                    target={repo.isPublic ? '_blank' : undefined}
-                    className="px-4 py-2 text-sm text-navy-600 border border-navy-200 rounded-lg hover:bg-navy-50 transition flex items-center justify-center gap-2"
-                  >
-                    <ExternalLink className="w-4 h-4" />
-                    {repo.isPublic ? 'View Changelog' : 'Enable public changelog'}
-                  </Link>
+                  {repo.canManage && (
+                    <Link
+                      href={`/dashboard/repos/${repoId}/settings`}
+                      className="px-4 py-2 text-sm text-navy-600 border border-navy-200 rounded-lg hover:bg-navy-50 transition flex items-center justify-center gap-2"
+                    >
+                      <Settings className="w-4 h-4" />
+                      Settings
+                    </Link>
+                  )}
+                  {(repo.isPublic || repo.canManage) && (
+                    <Link
+                      href={repo.isPublic ? `/c/${repo.slug || repo.fullName.replace('/', '-')}` : `/dashboard/repos/${repoId}/settings`}
+                      target={repo.isPublic ? '_blank' : undefined}
+                      className="px-4 py-2 text-sm text-navy-600 border border-navy-200 rounded-lg hover:bg-navy-50 transition flex items-center justify-center gap-2"
+                    >
+                      <ExternalLink className="w-4 h-4" />
+                      {repo.isPublic ? 'View Changelog' : 'Enable public changelog'}
+                    </Link>
+                  )}
                   <a
                     href={`https://github.com/${repo.fullName}`}
                     target="_blank"
@@ -242,7 +276,7 @@ export default function RepoDetailPage() {
                   </a>
                 </div>
               </div>
-              {!repo.isPublic && <p className="mt-3 text-sm text-navy-600">Your hosted changelog is private. Publish release notes, then enable public access in Settings when you are ready to share.</p>}
+              {!repo.isPublic && <p className="mt-3 text-sm text-navy-600">{repo.canManage ? 'Your hosted changelog is private. Publish release notes, then enable public access in Settings when you are ready to share.' : 'This hosted changelog is private. Ask a team admin to enable public access when it is ready to share.'}</p>}
             </div>
 
             <div className="grid gap-6 lg:grid-cols-2">
@@ -250,9 +284,18 @@ export default function RepoDetailPage() {
               <div className="bg-white rounded-xl p-4 lg:p-6 shadow-sm border border-navy-100">
                 <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                   <h2 className="flex items-center gap-3 text-lg font-semibold text-navy-900"><Tag className="w-5 h-5 text-navy-600" />Recent Releases</h2>
-                  <button onClick={() => setReloadKey(value => value + 1)} className="inline-flex items-center gap-1 text-sm font-medium text-teal-700 hover:underline"><RefreshCw className="w-4 h-4" />Refresh</button>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <button onClick={() => setReloadKey(value => value + 1)} className="inline-flex items-center gap-1 text-sm font-medium text-teal-700 hover:underline"><RefreshCw className="w-4 h-4" />Refresh</button>
+                    {repo.canManage && (
+                      <button onClick={handleRetryImport} disabled={retryingImport} className="inline-flex items-center gap-1 text-sm font-medium text-teal-700 hover:underline disabled:opacity-50">
+                        <RefreshCw className={`w-4 h-4 ${retryingImport ? 'animate-spin' : ''}`} />
+                        {retryingImport ? 'Checking GitHub…' : 'Retry GitHub import'}
+                      </button>
+                    )}
+                  </div>
                 </div>
-                {refreshStopped && <p role="status" className="mb-3 text-sm text-navy-600">Automatic refresh has stopped. Import or generation may still be running. Use Refresh to check again.</p>}
+                {refreshStopped && <p role="status" className="mb-3 text-sm text-navy-600">Automatic refresh has stopped. Use Refresh to check saved releases, or Retry GitHub import if recent releases are missing.</p>}
+                {importResult && <p role={importResult.kind === 'error' ? 'alert' : 'status'} className={`mb-3 text-sm ${importResult.kind === 'error' ? 'text-red-700' : 'text-teal-700'}`}>{importResult.message}</p>}
                 {repo.releases && repo.releases.length > 0 ? (
                   <div className="space-y-3">
                     {repo.releases.map((release) => (
@@ -308,22 +351,26 @@ export default function RepoDetailPage() {
                         Stakeholders
                       </div>
                     )}
-                    <Link
-                      href={`/dashboard/repos/${repoId}/settings`}
-                      className="block px-3 py-2 text-sm text-teal-700 hover:underline"
-                    >
-                      Edit tone and automation
-                    </Link>
+                    {repo.canManage && (
+                      <Link
+                        href={`/dashboard/repos/${repoId}/settings`}
+                        className="block px-3 py-2 text-sm text-teal-700 hover:underline"
+                      >
+                        Edit tone and automation
+                      </Link>
+                    )}
                   </div>
                 ) : (
                   <div>
                     <p className="text-navy-500 mb-4">No configuration yet.</p>
-                    <Link
-                      href={`/dashboard/repos/${repoId}/settings`}
-                      className="inline-block px-4 py-2 text-sm bg-navy-900 text-white rounded-lg hover:bg-navy-800 transition"
-                    >
-                      Configure Repository
-                    </Link>
+                    {repo.canManage && (
+                      <Link
+                        href={`/dashboard/repos/${repoId}/settings`}
+                        className="inline-block px-4 py-2 text-sm bg-navy-900 text-white rounded-lg hover:bg-navy-800 transition"
+                      >
+                        Configure Repository
+                      </Link>
+                    )}
                   </div>
                 )}
               </div>
@@ -340,10 +387,11 @@ export default function RepoDetailPage() {
                     {channelError}
                   </div>
                 )}
-                {!canUseChannels && <p className="mb-4 text-sm text-navy-600">Slack and Discord delivery requires Pro. <Link href="/dashboard/settings" className="font-medium text-teal-700 underline">Upgrade your plan</Link>. You can still pause or remove existing channels.</p>}
-                {repo.entitlements?.grandfathered && <p className="mb-4 text-sm text-navy-600">Your existing automation and channel access is preserved for this repository.</p>}
+                {repo.canManage && !canUseChannels && <p className="mb-4 text-sm text-navy-600">Slack and Discord delivery requires Pro. <Link href="/dashboard/settings" className="font-medium text-teal-700 underline">Upgrade your plan</Link>. You can still pause or remove existing channels.</p>}
+                {repo.canManage && repo.entitlements?.grandfathered && <p className="mb-4 text-sm text-navy-600">Your existing automation and channel access is preserved for this repository.</p>}
+                {!repo.canManage && <p className="mb-4 text-sm text-navy-600">Team members can view channels. Ask a team admin to change them.</p>}
 
-                <form onSubmit={handleAddChannel} className="space-y-3">
+                {repo.canManage && <form onSubmit={handleAddChannel} className="space-y-3">
                   <fieldset disabled={!canUseChannels || channelSaving} className="space-y-3 disabled:opacity-60">
                   <div className="grid gap-3 md:grid-cols-2">
                     <div>
@@ -422,7 +470,7 @@ export default function RepoDetailPage() {
                     {channelSaving ? 'Saving...' : 'Add Channel'}
                   </button>
                   </fieldset>
-                </form>
+                </form>}
 
                 <div className="mt-6 space-y-3">
                   {channels.length === 0 ? (
@@ -444,7 +492,7 @@ export default function RepoDetailPage() {
                             </div>
                           </div>
                           {/* Status + Actions - stacked vertically */}
-                          <div className="flex items-start gap-2">
+                          {repo.canManage ? <div className="flex items-start gap-2">
                             <div className="flex flex-col items-end gap-1.5">
                               <button
                                 onClick={() => handleUpdateChannel(channel.id, { enabled: !channel.enabled })}
@@ -478,7 +526,12 @@ export default function RepoDetailPage() {
                             >
                               <Trash2 className="w-4 h-4" />
                             </button>
-                          </div>
+                          </div> : (
+                            <div className="flex flex-col items-end gap-1.5 text-xs text-navy-600">
+                              <span>{channel.enabled ? 'Active' : 'Paused'}</span>
+                              <span>{channel.audience.toLowerCase()}</span>
+                            </div>
+                          )}
                         </div>
                       </div>
                     ))

@@ -80,12 +80,13 @@ describe('SettingsPage', () => {
     expect(screen.getByText(/Status: active/)).toBeInTheDocument();
   });
 
-  it('shows upgrade button for non-TEAM users', async () => {
+  it('shows Pro trial and Team options for Free users', async () => {
     render(<SettingsPage />);
 
     await waitFor(() => expect(api.getUser).toHaveBeenCalled());
 
-    expect(await screen.findByText('Upgrade')).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Upgrade to Pro · 14-day trial if eligible' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Explore Team · no trial' })).toBeInTheDocument();
     expect(screen.getByText('Manage Subscription')).toBeInTheDocument();
   });
 
@@ -97,7 +98,7 @@ describe('SettingsPage', () => {
     await waitFor(() => expect(api.getUser).toHaveBeenCalled());
 
     expect(await screen.findByText('Manage Subscription')).toBeInTheDocument();
-    expect(screen.queryByText('Upgrade')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Upgrade to Pro|Explore Team/ })).not.toBeInTheDocument();
   });
 
   it('save changes calls updateUser', async () => {
@@ -177,11 +178,11 @@ describe('SettingsPage', () => {
     (api.getUser as jest.Mock).mockResolvedValue({ ...mockUser, subscriptionTier: 'PRO', subscriptionStatus: 'trialing' });
     (api.createPortalSession as jest.Mock).mockRejectedValue(new Error('Billing is temporarily unavailable'));
     render(<SettingsPage />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Upgrade' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Explore Team · no trial' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Billing is temporarily unavailable');
     expect(api.createPortalSession).toHaveBeenCalledTimes(1);
     expect(api.createCheckoutSession).not.toHaveBeenCalled();
-    expect(screen.getByRole('button', { name: 'Upgrade' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Explore Team · no trial' })).toBeEnabled();
     expect(screen.getByText('Edit Profile')).toBeInTheDocument();
   });
 
@@ -189,9 +190,17 @@ describe('SettingsPage', () => {
     (api.getUser as jest.Mock).mockResolvedValue({ ...mockUser, subscriptionStatus: null });
     (api.createCheckoutSession as jest.Mock).mockRejectedValue(new Error('Try again'));
     render(<SettingsPage />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Upgrade' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Upgrade to Pro · 14-day trial if eligible' }));
     await waitFor(() => expect(api.createCheckoutSession).toHaveBeenCalledWith('pro'));
     expect(api.createPortalSession).not.toHaveBeenCalled();
+  });
+
+  it('starts Team checkout directly for a Free user without a subscription', async () => {
+    (api.getUser as jest.Mock).mockResolvedValue({ ...mockUser, subscriptionStatus: null });
+    (api.createCheckoutSession as jest.Mock).mockRejectedValue(new Error('Try again'));
+    render(<SettingsPage />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Explore Team · no trial' }));
+    await waitFor(() => expect(api.createCheckoutSession).toHaveBeenCalledWith('team'));
   });
 
   it('surfaces account deletion instructions from the API', async () => {

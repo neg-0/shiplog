@@ -1,5 +1,7 @@
 # ShipLog Architecture
 
+> Historical design sketch. The current API runs on Node/Hono, automation is opt-in, and publication is review-first. Email recipient management is incomplete. Route names and environment variables below may be stale; use the application code and [READINESS.md](READINESS.md) for current behavior.
+
 ## Overview
 
 ```

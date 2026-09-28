@@ -1,5 +1,7 @@
 # ShipLog Roadmap
 
+> Historical backlog, not a verified release plan. Check [READINESS.md](READINESS.md) and current code before treating an item below as shipped or still open.
+
 ## Active Goals
 - Launch Readiness (The Hyper-Activation Sprint)
 - Marketing & Growth

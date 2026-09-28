@@ -1,5 +1,7 @@
 # ShipLog PRD v0.1
 
+> Historical proposal, not the current shipped contract. Today a new repository starts private with automation off; users generate, review, and publish explicitly. Pro can opt into automation, and self-serve delivery supports hosted changelogs, Slack, and Discord. Email recipient setup and team invitations are incomplete. See [READINESS.md](READINESS.md) for verified behavior and open gates.
+
 ## Problem Statement
 
 Teams ship code but struggle to communicate those changes to different stakeholders without manual rewriting. The same release needs to be explained differently to:

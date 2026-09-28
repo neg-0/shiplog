@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { zValidator } from '@hono/zod-validator';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '../lib/db.js';
 import { logger } from '../lib/logger.js';
 import { requireAuth, decrypt } from '../lib/auth.js';
@@ -9,6 +10,7 @@ import { repoEntitlements } from '../lib/entitlements.js';
 import { validateWebhookUrl } from '../services/distributor.js';
 import { listUserRepos, getRepository, createWebhook, deleteWebhook } from '../services/github.js';
 import { importRepoHistory } from '../services/importer.js';
+import { hasActiveTeamSubscription, readableRepo } from '../lib/repo-access.js';
 import {
   connectRepoSchema,
   updateRepoConfigSchema,
@@ -29,14 +31,6 @@ const API_URL = process.env.API_URL || 'https://api.shiplog.io';
 repos.use('*', requireAuth);
 repos.use('*', apiLimiter);
 
-// Helper for repo access (Owner or Org Member)
-const repoAccess = (userId: string) => ({
-  OR: [
-    { userId },
-    { organization: { members: { some: { userId } } } }
-  ]
-});
-
 // Helper for admin/owner access check (for deletion/critical updates)
 const checkRepoAdmin = async (repoId: string, userId: string) => {
   const repo = await prisma.repo.findUnique({
@@ -44,6 +38,7 @@ const checkRepoAdmin = async (repoId: string, userId: string) => {
     include: {
       organization: {
         include: {
+          owner: { select: { subscriptionTier: true, subscriptionStatus: true, stripeSubscriptionId: true } },
           members: {
             where: { userId }
           }
@@ -54,20 +49,79 @@ const checkRepoAdmin = async (repoId: string, userId: string) => {
 
   if (!repo) return null;
 
-  // If personal repo, userId must match
-  if (repo.userId === userId && !repo.organizationId) return repo;
+  // Personal repositories belong to the connecting user.
+  if (!repo.organizationId) return repo.userId === userId ? repo : null;
 
-  // If org repo, user must be owner/admin
-  if (repo.organizationId && repo.organization?.members.length) {
+  // Organization membership, not the original connecting user ID, grants
+  // management rights after a repository is moved into a team.
+  if (repo.organization?.ownerId === userId) return repo;
+  if (repo.organization && hasActiveTeamSubscription(repo.organization) && repo.organization.members.length) {
     const role = repo.organization.members[0].role;
     if (role === 'OWNER' || role === 'ADMIN') return repo;
   }
 
-  // If user is the direct owner (even if in org, usually userId is the creator/owner)
-  if (repo.userId === userId) return repo;
-
   return null;
 };
+
+const currentRepo = (tx: Prisma.TransactionClient, repoId: string, userId: string) =>
+  tx.repo.findUnique({
+    where: { id: repoId },
+    include: {
+      user: { select: { subscriptionTier: true } },
+      config: true,
+      organization: {
+        include: {
+          owner: { select: { subscriptionTier: true, subscriptionStatus: true, stripeSubscriptionId: true } },
+          members: { where: { userId }, select: { role: true } },
+        },
+      },
+    },
+  });
+
+type CurrentRepo = NonNullable<Awaited<ReturnType<typeof currentRepo>>>;
+
+const canWriteRepo = (repo: CurrentRepo, userId: string): boolean => {
+  if (!repo.organizationId) return repo.userId === userId;
+  if (repo.organization?.ownerId === userId) return true;
+  if (repo.organization && hasActiveTeamSubscription(repo.organization) &&
+    ['OWNER', 'ADMIN'].includes(repo.organization.members[0]?.role ?? '')) return true;
+  return false;
+};
+
+type AcceptedWebhookDeletion = Pick<CurrentRepo, 'githubId' | 'userId' | 'organizationId' | 'webhookId'>;
+
+// The billing webhook and organization membership writes lock the same owner
+// row. Keep authorization and each database mutation on one side of those
+// changes; never hold this lock while calling GitHub.
+const withWritableRepo = async <T>(
+  repoId: string,
+  userId: string,
+  write: (tx: Prisma.TransactionClient, repo: CurrentRepo) => Promise<T>,
+  acceptedWebhookDeletion?: AcceptedWebhookDeletion,
+): Promise<T | null> => prisma.$transaction(async (tx) => {
+  const target = await tx.repo.findUnique({
+    where: { id: repoId },
+    select: { userId: true, organization: { select: { ownerId: true } } },
+  });
+  if (!target) return null;
+
+  const lockOwnerId = target.organization?.ownerId ?? target.userId;
+  await tx.$queryRaw`SELECT id FROM users WHERE id = ${lockOwnerId} FOR UPDATE`;
+  const repo = await currentRepo(tx, repoId, userId);
+  // If the repo moved to another owner while we waited, this is not its lock.
+  if (!repo || (repo.organization?.ownerId ?? repo.userId) !== lockOwnerId) return null;
+  const sameWebhook = acceptedWebhookDeletion &&
+    repo.githubId === acceptedWebhookDeletion.githubId &&
+    repo.userId === acceptedWebhookDeletion.userId &&
+    repo.organizationId === acceptedWebhookDeletion.organizationId &&
+    repo.webhookId === acceptedWebhookDeletion.webhookId;
+  const currentlyWritable = canWriteRepo(repo, userId);
+  // A confirmed GitHub deletion was authorized just before that network call.
+  // Finish that specific disconnect even if billing or membership changed mid-call.
+  if (acceptedWebhookDeletion && !sameWebhook) return null;
+  if (!currentlyWritable && !sameWebhook) return null;
+  return write(tx, repo);
+}, { maxWait: 10_000, timeout: 35_000 });
 
 // List user's connected repos
 /**
@@ -79,7 +133,7 @@ repos.get('/', async (c) => {
   const user = c.get('user');
   
   const connectedRepos = await prisma.repo.findMany({
-    where: repoAccess(user.id),
+    where: await readableRepo(user.id),
     include: {
       releases: {
         orderBy: { publishedAt: 'desc' },
@@ -121,14 +175,31 @@ repos.get('/:id', async (c) => {
   const repo = await prisma.repo.findFirst({
     where: { 
       id,
-      ...repoAccess(user.id),
+      ...(await readableRepo(user.id)),
     },
     include: {
       user: { select: { subscriptionTier: true } },
+      organization: {
+        select: {
+          ownerId: true,
+          subscriptionId: true,
+          owner: { select: { subscriptionTier: true, subscriptionStatus: true, stripeSubscriptionId: true } },
+          members: { where: { userId: user.id }, select: { role: true } },
+        },
+      },
       config: {
-        include: {
-          channels: true,
-          emailRecipients: true,
+        select: {
+          autoGenerate: true,
+          autoPublish: true,
+          generateCustomer: true,
+          generateDeveloper: true,
+          generateStakeholder: true,
+          customerTone: true,
+          companyName: true,
+          productName: true,
+          channels: {
+            select: { id: true, type: true, name: true, audience: true, enabled: true },
+          },
         },
       },
       releases: {
@@ -158,6 +229,9 @@ repos.get('/:id', async (c) => {
     description: repo.description,
     status: repo.status,
     webhookActive: repo.webhookActive,
+    canManage: !repo.organizationId
+      ? repo.userId === user.id
+      : repo.organization?.ownerId === user.id || Boolean(repo.organization && hasActiveTeamSubscription(repo.organization) && ['OWNER', 'ADMIN'].includes(repo.organization.members[0]?.role ?? '')),
     entitlements: repoEntitlements(repo),
     isPublic: repo.isPublic,
     slug: repo.slug,
@@ -363,6 +437,34 @@ repos.post(
   }
 );
 
+/** Retry GitHub release discovery without regenerating notes or sending channels. */
+repos.post('/:id/import', async (c) => {
+  const user = c.get('user');
+  const repo = await checkRepoAdmin(c.req.param('id'), user.id);
+  if (!repo) return c.json({ error: 'Repository not found or unauthorized' }, 404);
+
+  const owner = await prisma.user.findUnique({
+    where: { id: repo.userId },
+    select: { accessToken: true },
+  });
+  if (!owner?.accessToken) {
+    return c.json({ error: 'The connecting GitHub account must sign in again before importing releases.' }, 409);
+  }
+
+  try {
+    const accessToken = await decrypt(owner.accessToken);
+    // Decryption can take time; recheck paid membership just before import.
+    if (!await checkRepoAdmin(repo.id, user.id)) {
+      return c.json({ error: 'Repository not found or unauthorized' }, 404);
+    }
+    const result = await importRepoHistory(repo.id, accessToken, { metadataOnly: true });
+    return c.json({ status: 'complete', found: result.found });
+  } catch (error) {
+    logger.warn('GitHub history retry failed', { repoId: repo.id, error });
+    return c.json({ error: 'Could not import GitHub releases. Check repository access and try again.' }, 502);
+  }
+});
+
 /**
  * PATCH /:id/config
  * @description Update repository configuration (AI generation settings).
@@ -376,35 +478,25 @@ repos.patch(
     const body = c.req.valid('json');
 
     try {
-      // Verify access
-      const repo = await prisma.repo.findFirst({
-        where: {
-          id,
-          ...repoAccess(user.id),
-        },
-        select: { id: true, user: { select: { subscriptionTier: true } } },
+      const response = await withWritableRepo(id, user.id, async (tx, repo) => {
+        if ((body.autoGenerate === true || body.autoPublish === true) && !repoEntitlements(repo).automation) {
+          return c.json({ error: 'Automatic generation and publishing require Pro or Team.', upgradeRequired: true }, 403);
+        }
+
+        const config = await tx.repoConfig.upsert({
+          where: { repoId: id },
+          create: {
+            repoId: id,
+            autoGenerate: false,
+            ...body,
+          },
+          update: body,
+        });
+        return c.json(config);
       });
-
-      if (!repo) {
-        return c.json({ error: 'Repository not found' }, 404);
-      }
-
-      if ((body.autoGenerate === true || body.autoPublish === true) && !repoEntitlements(repo).automation) {
-        return c.json({ error: 'Automatic generation and publishing require Pro or Team.', upgradeRequired: true }, 403);
-      }
-
-      const config = await prisma.repoConfig.upsert({
-        where: { repoId: id },
-        create: {
-          repoId: id,
-          autoGenerate: false,
-          ...body,
-        },
-        update: body,
-      });
-
-      logger.info(`📝 Updated config for repo ${id}`, { repoId: id });
-      return c.json(config);
+      if (!response) return c.json({ error: 'Repository not found' }, 404);
+      if (response.ok) logger.info(`📝 Updated config for repo ${id}`, { repoId: id });
+      return response;
     } catch (error) {
       logger.error('Failed to update repo config', { repoId: id, error });
       return c.json({ error: 'Failed to update configuration' }, 500);
@@ -425,41 +517,31 @@ repos.patch(
     const body = c.req.valid('json');
 
     try {
-      // Verify access
-      const repo = await prisma.repo.findFirst({
-        where: {
-          id,
-          ...repoAccess(user.id),
-        },
-        select: { id: true, user: { select: { subscriptionTier: true } } },
+      const response = await withWritableRepo(id, user.id, async (tx, repo) => {
+        if ((body.hidePoweredBy === true || body.publicLogoUrl || body.publicAccentColor) && !repoEntitlements(repo).branding) {
+          return c.json({ error: 'Custom branding requires Team.', upgradeRequired: true }, 403);
+        }
+
+        const updated = await tx.repo.update({
+          where: { id },
+          data: body,
+          select: {
+            id: true,
+            isPublic: true,
+            slug: true,
+            publicTitle: true,
+            publicDescription: true,
+            publicLogoUrl: true,
+            publicAccentColor: true,
+            hidePoweredBy: true,
+            excludeFromFeatured: true,
+          },
+        });
+        return c.json(updated);
       });
-
-      if (!repo) {
-        return c.json({ error: 'Repository not found' }, 404);
-      }
-
-      if ((body.hidePoweredBy === true || body.publicLogoUrl || body.publicAccentColor) && !repoEntitlements(repo).branding) {
-        return c.json({ error: 'Custom branding requires Team.', upgradeRequired: true }, 403);
-      }
-
-      const updated = await prisma.repo.update({
-        where: { id },
-        data: body,
-        select: {
-          id: true,
-          isPublic: true,
-          slug: true,
-          publicTitle: true,
-          publicDescription: true,
-          publicLogoUrl: true,
-          publicAccentColor: true,
-          hidePoweredBy: true,
-          excludeFromFeatured: true,
-        },
-      });
-
-      logger.info(`📝 Updated settings for repo ${id}`, { repoId: id });
-      return c.json(updated);
+      if (!response) return c.json({ error: 'Repository not found' }, 404);
+      if (response.ok) logger.info(`📝 Updated settings for repo ${id}`, { repoId: id });
+      return response;
     } catch (error) {
       logger.error('Failed to update repo settings', { repoId: id, error });
       return c.json({ error: 'Failed to update settings' }, 500);
@@ -483,38 +565,31 @@ repos.post(
       return c.json({ error: 'Generic webhooks are not supported. Choose Slack or Discord.' }, 400);
     }
 
-    const repo = await prisma.repo.findFirst({
-      where: { id, ...repoAccess(user.id) },
-      include: { config: true, user: { select: { subscriptionTier: true } } },
-    });
-
-    if (!repo) {
-      return c.json({ error: 'Repository not found' }, 404);
-    }
-
-    if (!repoEntitlements(repo).channels) {
-      return c.json({ error: 'Slack and Discord channels require Pro or Team.', upgradeRequired: true }, 403);
-    }
-
     try { validateWebhookUrl(body.webhookUrl, body.type.toLowerCase() as 'slack' | 'discord'); }
     catch (error) { return c.json({ error: (error as Error).message }, 400); }
 
-    const config = repo.config || await prisma.repoConfig.create({
-      data: { repoId: repo.id, autoGenerate: false },
-    });
+    const response = await withWritableRepo(id, user.id, async (tx, repo) => {
+      if (!repoEntitlements(repo).channels) {
+        return c.json({ error: 'Slack and Discord channels require Pro or Team.', upgradeRequired: true }, 403);
+      }
 
-    const channel = await prisma.channel.create({
-      data: {
-        configId: config.id,
-        type: body.type,
-        name: body.name,
-        webhookUrl: body.webhookUrl,
-        audience: body.audience,
-        enabled: body.enabled ?? true,
-      },
-    });
+      const config = repo.config || await tx.repoConfig.create({
+        data: { repoId: repo.id, autoGenerate: false },
+      });
 
-    return c.json(channel, 201);
+      const channel = await tx.channel.create({
+        data: {
+          configId: config.id,
+          type: body.type,
+          name: body.name,
+          webhookUrl: body.webhookUrl,
+          audience: body.audience,
+          enabled: body.enabled ?? true,
+        },
+      });
+      return c.json(channel, 201);
+    });
+    return response ?? c.json({ error: 'Repository not found' }, 404);
   }
 );
 
@@ -531,44 +606,33 @@ repos.patch(
     const channelId = c.req.param('channelId');
     const body = c.req.valid('json');
 
-    // Check repo access
-    const repo = await prisma.repo.findFirst({
-      where: { id, ...repoAccess(user.id) },
-      include: { user: { select: { subscriptionTier: true } } },
+    const response = await withWritableRepo(id, user.id, async (tx, repo) => {
+      const channel = await tx.channel.findFirst({
+        where: {
+          id: channelId,
+          config: { repoId: id },
+        },
+      });
+      if (!channel) return c.json({ error: 'Channel not found' }, 404);
+
+      const disablingOnly = body.enabled === false && Object.keys(body).every(key => key === 'enabled');
+      if (!disablingOnly && !repoEntitlements(repo).channels) {
+        return c.json({ error: 'Slack and Discord channels require Pro or Team. You can still disable or remove this channel.', upgradeRequired: true }, 403);
+      }
+
+      if (body.webhookUrl || body.enabled === true) {
+        if (channel.type !== 'SLACK' && channel.type !== 'DISCORD') return c.json({ error: 'Generic webhooks are not supported.' }, 400);
+        try { validateWebhookUrl(body.webhookUrl ?? channel.webhookUrl, channel.type.toLowerCase() as 'slack' | 'discord'); }
+        catch (error) { return c.json({ error: (error as Error).message }, 400); }
+      }
+
+      const updated = await tx.channel.update({
+        where: { id: channelId },
+        data: body,
+      });
+      return c.json(updated);
     });
-
-    if (!repo) {
-      return c.json({ error: 'Repository not found' }, 404);
-    }
-
-    const channel = await prisma.channel.findFirst({
-      where: {
-        id: channelId,
-        config: { repoId: id },
-      },
-    });
-
-    if (!channel) {
-      return c.json({ error: 'Channel not found' }, 404);
-    }
-
-    const disablingOnly = body.enabled === false && Object.keys(body).every(key => key === 'enabled');
-    if (!disablingOnly && !repoEntitlements(repo).channels) {
-      return c.json({ error: 'Slack and Discord channels require Pro or Team. You can still disable or remove this channel.', upgradeRequired: true }, 403);
-    }
-
-    if (body.webhookUrl || body.enabled === true) {
-      if (channel.type !== 'SLACK' && channel.type !== 'DISCORD') return c.json({ error: 'Generic webhooks are not supported.' }, 400);
-      try { validateWebhookUrl(body.webhookUrl ?? channel.webhookUrl, channel.type.toLowerCase() as 'slack' | 'discord'); }
-      catch (error) { return c.json({ error: (error as Error).message }, 400); }
-    }
-
-    const updated = await prisma.channel.update({
-      where: { id: channelId },
-      data: body,
-    });
-
-    return c.json(updated);
+    return response ?? c.json({ error: 'Repository not found' }, 404);
   }
 );
 
@@ -581,30 +645,19 @@ repos.delete('/:id/channels/:channelId', async (c) => {
   const id = c.req.param('id');
   const channelId = c.req.param('channelId');
 
-  const repo = await prisma.repo.findFirst({
-    where: { id, ...repoAccess(user.id) },
+  const response = await withWritableRepo(id, user.id, async (tx) => {
+    const channel = await tx.channel.findFirst({
+      where: {
+        id: channelId,
+        config: { repoId: id },
+      },
+    });
+    if (!channel) return c.json({ error: 'Channel not found' }, 404);
+
+    await tx.channel.delete({ where: { id: channelId } });
+    return c.json({ deleted: true });
   });
-
-  if (!repo) {
-    return c.json({ error: 'Repository not found' }, 404);
-  }
-
-  const channel = await prisma.channel.findFirst({
-    where: {
-      id: channelId,
-      config: { repoId: id },
-    },
-  });
-
-  if (!channel) {
-    return c.json({ error: 'Channel not found' }, 404);
-  }
-
-  await prisma.channel.delete({
-    where: { id: channelId },
-  });
-
-  return c.json({ deleted: true });
+  return response ?? c.json({ error: 'Repository not found' }, 404);
 });
 
 /**
@@ -622,6 +675,7 @@ repos.delete('/:id', async (c) => {
     return c.json({ error: 'Repository not found or unauthorized' }, 404);
   }
 
+  let acceptedWebhookDeletion: AcceptedWebhookDeletion | undefined;
   // Try to delete webhook from GitHub
   if (repo.webhookId) {
     try {
@@ -633,23 +687,31 @@ repos.delete('/:id', async (c) => {
 
       if (!ownerUser?.accessToken) throw new Error('Repository owner must reconnect GitHub');
       const accessToken = await decrypt(ownerUser.accessToken);
-      await deleteWebhook(repo.owner, repo.name, repo.webhookId, accessToken);
+      // GitHub cannot participate in the database transaction. Recheck after
+      // token work, immediately before the external deletion.
+      const current = await checkRepoAdmin(id, user.id);
+      if (!current || current.githubId !== repo.githubId || current.userId !== repo.userId ||
+        current.organizationId !== repo.organizationId || current.webhookId !== repo.webhookId) {
+        return c.json({ error: 'Repository not found or unauthorized' }, 404);
+      }
+      await deleteWebhook(current.owner, current.name, current.webhookId!, accessToken);
+      acceptedWebhookDeletion = {
+        githubId: current.githubId,
+        userId: current.userId,
+        organizationId: current.organizationId,
+        webhookId: current.webhookId,
+      };
     } catch (error) {
       logger.warn('Failed to delete GitHub webhook', { repoId: id, error });
       return c.json({ error: 'Could not remove the GitHub webhook. Reconnect GitHub or check repository admin permissions and retry.' }, 502);
     }
   }
 
-  // Delete from database
-  await prisma.repo.delete({
-    where: { id },
-  });
-
-  logger.info(`🔌 Disconnected repo: ${repo.fullName}`, { repoId: id, fullName: repo.fullName });
-
-  return c.json({
-    status: 'disconnected',
-    id,
-    fullName: repo.fullName,
-  });
+  const response = await withWritableRepo(id, user.id, async (tx, currentRepo) => {
+    await tx.repo.delete({ where: { id } });
+    return currentRepo.fullName;
+  }, acceptedWebhookDeletion);
+  if (!response) return c.json({ error: 'Repository not found or unauthorized' }, 404);
+  logger.info(`🔌 Disconnected repo: ${response}`, { repoId: id, fullName: response });
+  return c.json({ status: 'disconnected', id, fullName: response });
 });

@@ -1,165 +1,17 @@
-import { Check, GitBranch, Ship } from 'lucide-react';
+import { ArrowRight, Ship } from 'lucide-react';
 import Link from 'next/link';
+import Plans from '../../components/landing/Plans';
+import styles from '../../components/landing/landing.module.css';
 
-export const metadata = {
-  title: 'Pricing | ShipLog',
-  alternates: { canonical: '/pricing' },
-};
-
-type Plan = {
-  name: string;
-  price: string;
-  period?: string;
-  description: string;
-  trial?: string;
-  features: string[];
-  cta: string;
-  href: string;
-  highlighted: boolean;
-};
-
-const plans: Plan[] = [
-  {
-    name: 'Free',
-    price: '$0',
-    description: 'For side projects',
-    features: ['1 repo', 'Manual trigger', 'Hosted changelog'],
-    cta: 'Get Started',
-    href: '/login',
-    highlighted: false,
-  },
-  {
-    name: 'Pro',
-    price: '$29',
-    period: '/mo',
-    description: 'For growing teams',
-    trial: '14-day free trial',
-    features: ['5 repos', 'Auto-trigger on release', 'Slack + Discord', 'Edit before publish'],
-    cta: 'Start Free Trial',
-    href: '/login',
-    highlighted: true,
-  },
-  {
-    name: 'Team',
-    price: '$79',
-    period: '/mo',
-    description: 'For scaling orgs',
-    features: ['Unlimited repos', 'Everything in Pro', 'Branding options by request'],
-    cta: 'Contact Us',
-    href: 'mailto:hello@shiplog.io',
-    highlighted: false,
-  },
-];
+export const metadata = { title: 'Pricing | ShipLog', alternates: { canonical: '/pricing' } };
 
 export default function PricingPage() {
-  return (
-    <div className="min-h-screen bg-white">
-      <header className="fixed top-0 w-full bg-white/80 backdrop-blur-md border-b border-navy-100 z-50">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
-            <Link href="/" className="flex items-center gap-2">
-              <Ship className="w-7 h-7 text-teal-600" />
-              <span className="text-lg font-bold text-navy-900">ShipLog</span>
-            </Link>
-            <nav className="flex items-center gap-3 sm:gap-6">
-              <Link href="/docs" className="text-navy-600 hover:text-navy-900 transition text-sm">Docs</Link>
-              <Link href="/changelog" className="hidden sm:inline text-navy-600 hover:text-navy-900 transition text-sm">Changelog</Link>
-              <Link href="/pricing" className="text-navy-900 font-medium transition text-sm">Pricing</Link>
-              <Link href="/login" className="bg-navy-900 text-white px-4 py-2 rounded-lg hover:bg-navy-800 transition text-sm">Login</Link>
-            </nav>
-          </div>
-        </div>
-      </header>
-
-      <main className="pt-24 pb-16">
-        <section className="py-12">
-          <div className="max-w-6xl mx-auto px-4 text-center">
-            <h1 className="text-4xl md:text-5xl font-bold text-navy-900 mb-4">Simple pricing</h1>
-            <p className="text-xl text-navy-600 max-w-2xl mx-auto mb-12">
-              Start free. Upgrade when you need more. Every plan helps your release notes ship faster with less manual rewriting.
-            </p>
-
-            <div className="grid md:grid-cols-3 gap-6">
-              {plans.map((plan) => (
-                <div
-                  key={plan.name}
-                  className={`rounded-2xl p-6 text-left ${
-                    plan.highlighted
-                      ? 'bg-navy-900 text-white ring-4 ring-teal-500 md:scale-105'
-                      : 'bg-white border border-navy-200'
-                  }`}
-                >
-                  <h2 className={`text-lg font-semibold ${plan.highlighted ? 'text-teal-400' : 'text-navy-600'}`}>
-                    {plan.name}
-                  </h2>
-                  <div className="mt-2 mb-4">
-                    <span className="text-4xl font-bold">{plan.price}</span>
-                    {plan.period && (
-                      <span className={plan.highlighted ? 'text-navy-300' : 'text-navy-500'}>{plan.period}</span>
-                    )}
-                  </div>
-                  <p className={`text-sm mb-6 ${plan.highlighted ? 'text-navy-300' : 'text-navy-500'}`}>
-                    {plan.description}
-                  </p>
-                  {plan.trial && (
-                    <div className="mb-4 inline-block bg-teal-500/20 text-teal-400 text-xs font-semibold px-3 py-1 rounded-full">
-                      ✨ {plan.trial}
-                    </div>
-                  )}
-                  <ul className="space-y-3 mb-6">
-                    {plan.features.map((feature) => (
-                      <li key={feature} className="flex items-center gap-2">
-                        <Check className={`w-4 h-4 ${plan.highlighted ? 'text-teal-400' : 'text-teal-600'}`} />
-                        <span className={plan.highlighted ? 'text-navy-100' : 'text-navy-700'}>{feature}</span>
-                      </li>
-                    ))}
-                  </ul>
-                  {plan.href.startsWith('mailto:') ? (
-                    <a
-                      href={plan.href}
-                      className={`block text-center w-full py-3 rounded-lg font-semibold transition ${
-                        plan.highlighted
-                          ? 'bg-teal-500 text-white hover:bg-teal-400'
-                          : 'bg-navy-100 text-navy-900 hover:bg-navy-200'
-                      }`}
-                    >
-                      {plan.cta}
-                    </a>
-                  ) : (
-                    <Link
-                      href={plan.href}
-                      className={`block text-center w-full py-3 rounded-lg font-semibold transition ${
-                        plan.highlighted
-                          ? 'bg-teal-500 text-white hover:bg-teal-400'
-                          : 'bg-navy-100 text-navy-900 hover:bg-navy-200'
-                      }`}
-                    >
-                      {plan.cta}
-                    </Link>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        <section className="py-20 bg-gradient-to-br from-navy-900 to-navy-950 text-white">
-          <div className="max-w-4xl mx-auto px-4 text-center">
-            <Ship className="w-16 h-16 mx-auto mb-6 text-teal-400" />
-            <h2 className="text-3xl font-bold mb-4">Ready to ship your release notes?</h2>
-            <p className="text-navy-300 mb-8 max-w-xl mx-auto">
-              Connect one repository for free and turn an existing release into your first changelog.
-            </p>
-            <Link
-              href="/login"
-              className="inline-flex items-center gap-2 bg-teal-500 text-white px-8 py-4 rounded-xl text-lg font-semibold hover:bg-teal-400 transition shadow-lg"
-            >
-              <GitBranch className="w-5 h-5" />
-              Connect GitHub — It&apos;s Free
-            </Link>
-          </div>
-        </section>
-      </main>
-    </div>
-  );
+  return <div className={styles.page}>
+    <header className={styles.header}><Link href="/" className={styles.brand} aria-label="ShipLog home"><Ship size={27} />ShipLog</Link><nav aria-label="Main navigation" className={styles.nav}><Link href="/docs">Docs</Link><Link href="/" className={styles.desktopLink}>How it works</Link><Link href="/login" className={styles.navCta}>Log in <ArrowRight size={15} /></Link></nav></header>
+    <main>
+      <section className={styles.pricing} aria-labelledby="pricing-heading"><div className={styles.pricingIntro}><div><p className={styles.eyebrow}>A PLAN FOR YOUR SHIPPING RHYTHM.</p><h1 id="pricing-heading" className={styles.pricingTitle}>Start with one ship.<br /><em>Build your fleet.</em></h1></div><p>One repository is free.<br />Start a 14-day Pro trial from Settings when you upgrade.</p></div><Plans /><p className={styles.billingNote}>The Pro trial starts at checkout, not when you connect GitHub. After 14 days, Pro is $29/month unless you cancel before the trial ends. Team is $79/month with no automatic trial; choose it in Settings. Team collaboration tools are still in development.</p></section>
+      <section className={styles.pricingFaq} aria-labelledby="pricing-questions"><p className={styles.eyebrow}>BEFORE YOU COME ABOARD.</p><h2 id="pricing-questions">A few practical details.</h2><div><article><h3>What can I do for free?</h3><p>Connect one repository, import a GitHub release, manually generate your drafts, and publish a hosted changelog after reviewing it.</p></article><article><h3>When does my trial start?</h3><p>Create your account with GitHub, then upgrade to Pro in dashboard Settings. Eligible accounts receive 14 days free at checkout. Signing in alone does not start a trial.</p></article><article><h3>Will ShipLog publish without me?</h3><p>By default, you review and publish your notes. Pro can generate drafts automatically, and paid plans can opt into automatic publishing in repository settings.</p></article><article><h3>Where can I send my updates?</h3><p>Every plan includes a hosted changelog. Pro adds delivery to connected Slack and Discord channels when you publish.</p></article></div></section>
+      <section className={styles.closing}><div><p className={styles.eyebrow}>YOUR NEXT RELEASE IS A GOOD PLACE TO START.</p><h2>Good work.<br /><em>Worth sharing.</em></h2></div><div><Link href="/login" className={styles.primary}>Connect GitHub — start free<ArrowRight size={18} /></Link><p>Start with one repository and an existing release.</p></div></section>
+    </main><footer className={styles.footer}><Link href="/" className={styles.brand}><Ship size={24} />ShipLog</Link><p>A proper send-off for the things you build.</p><nav aria-label="Footer navigation"><Link href="/docs">Docs</Link><Link href="/privacy">Privacy</Link><Link href="/terms">Terms</Link></nav></footer>
+  </div>;
 }

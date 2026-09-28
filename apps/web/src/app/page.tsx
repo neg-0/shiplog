@@ -1,382 +1,82 @@
 'use client';
 
 import Link from 'next/link';
-import { Ship, GitBranch, Users, Mail, Slack, Zap, ArrowRight, Check, LayoutDashboard } from 'lucide-react';
+import { ArrowDown, ArrowRight, Check, GitBranch, Globe, Pause, Play, Ship, Slack } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import ReleaseExample from '../components/ReleaseExample';
 import { isAuthenticated } from '../lib/api';
+import Harbor from '../components/landing/Harbor';
+import Plans from '../components/landing/Plans';
+import styles from '../components/landing/landing.module.css';
 
-const colorMap: Record<string, { bg: string; text: string }> = {
-  teal: { bg: 'bg-teal-100', text: 'text-teal-600' },
-  amber: { bg: 'bg-amber-100', text: 'text-amber-600' },
-  navy: { bg: 'bg-navy-100', text: 'text-navy-600' },
-  blue: { bg: 'bg-blue-100', text: 'text-blue-600' },
-  purple: { bg: 'bg-purple-100', text: 'text-purple-600' },
-  indigo: { bg: 'bg-indigo-100', text: 'text-indigo-600' },
-};
+const audiences = [
+  { name: 'Customers', eyebrow: 'THE BENEFIT, WITHOUT THE JARGON', title: 'Your reports. Ready to go.', body: 'Export your reports as PDFs and share them with anyone. We also fixed a timeout so large CSV exports finish more reliably.', destination: 'Your public changelog' },
+  { name: 'Developers', eyebrow: 'THE DETAILS THAT MATTER', title: 'PDF export is here.', body: 'Added PDF report export. Fixed a timeout affecting CSV exports above 10,000 rows. Existing export formats are unchanged.', destination: 'Your engineering channel' },
+  { name: 'Stakeholders', eyebrow: 'WHAT SHIPPED. WHY IT MATTERS.', title: 'Less friction in reporting.', body: 'Teams can now share reports outside the product as PDFs. A fix to large CSV exports also improves reporting reliability.', destination: 'Your team’s release channel' },
+];
 
 export default function Home() {
   const [loggedIn, setLoggedIn] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const [audience, setAudience] = useState(0);
   useEffect(() => { setLoggedIn(isAuthenticated()); }, []);
+  const destination = loggedIn ? '/dashboard' : '/login';
+  const example = audiences[audience]!;
 
   return (
-    <div className="min-h-screen">
-      {/* Navigation */}
-      <nav className="fixed top-0 w-full bg-white/80 backdrop-blur-md border-b border-navy-100 z-50">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
-            <div className="flex items-center gap-2">
-              <Ship className="w-8 h-8 text-teal-600" />
-              <span className="text-xl font-bold text-navy-900">ShipLog</span>
-            </div>
-            <div className="flex items-center gap-3 sm:gap-6 text-sm sm:text-base">
-              <Link href="#features" className="hidden sm:inline text-navy-600 hover:text-navy-900 transition">
-                Features
-              </Link>
-              <Link href="#pricing" className="text-navy-600 hover:text-navy-900 transition">
-                Pricing
-              </Link>
-              {loggedIn ? (
-                <Link
-                  href="/dashboard"
-                  className="bg-teal-600 text-white px-4 py-2 rounded-lg hover:bg-teal-500 transition flex items-center gap-2"
-                >
-                  <LayoutDashboard className="w-4 h-4" />
-                  Dashboard
-                </Link>
-              ) : (
-                <Link
-                  href="/login"
-                  className="bg-navy-900 text-white px-4 py-2 rounded-lg hover:bg-navy-800 transition flex items-center gap-2"
-                >
-                  <GitBranch className="w-4 h-4" />
-                  Connect GitHub
-                </Link>
-              )}
-            </div>
-          </div>
-        </div>
-      </nav>
+    <div className={styles.page}>
+      <a href="#main" className={styles.skip}>Skip to content</a>
+      <header className={styles.header}>
+        <Link href="/" className={styles.brand} aria-label="ShipLog home"><Ship size={27} strokeWidth={1.7} />ShipLog</Link>
+        <nav aria-label="Main navigation" className={styles.nav}>
+          <Link href="#how-it-works" className={styles.desktopLink}>How it works</Link>
+          <Link href="#pricing">Pricing</Link>
+          <Link href="/docs" className={styles.desktopLink}>Docs</Link>
+          <Link href={destination} className={styles.navCta}>{loggedIn ? 'Dashboard' : 'Get started'} <ArrowRight size={15} /></Link>
+        </nav>
+      </header>
 
-      {/* Hero Section */}
-      <section className="pt-32 pb-20 px-4">
-        <div className="max-w-4xl mx-auto text-center">
-          <div className="inline-flex items-center gap-2 bg-teal-50 text-teal-700 px-4 py-2 rounded-full text-sm font-medium mb-6">
-            <Zap className="w-4 h-4" />
-            Set and forget release notes
+      <main id="main">
+        <section className={styles.hero} aria-labelledby="hero-heading">
+          <div className={styles.chart}>
+            <div className={styles.chartTop}><span><i /> A WORKING RELEASE HARBOR</span><span>EST. FOR BUILDERS</span></div>
+            <Harbor paused={paused} />
+            <div className={styles.chartBottom}><span>FROM YOUR REPO TO YOUR PEOPLE</span><button type="button" onClick={() => setPaused(!paused)} aria-label={paused ? 'Play harbor animation' : 'Pause harbor animation'} aria-pressed={paused}>{paused ? <Play size={12} /> : <Pause size={12} />} {paused ? 'Play' : 'Pause'}</button></div>
           </div>
-          <h1 className="text-5xl sm:text-6xl font-bold text-navy-900 mb-6 leading-tight">
-            Release notes that{' '}
-            <span className="text-teal-600">ship themselves</span>
-          </h1>
-          <p className="text-xl text-navy-600 mb-8 max-w-2xl mx-auto">
-            One release. Three audiences. Ready to share.
-            <br />
-            Turn GitHub releases into clear updates for customers, developers, and stakeholders. Review once, then share where your team works.
-          </p>
-          <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Link
-              href={loggedIn ? "/dashboard" : "/login"}
-              className="bg-navy-900 text-white px-8 py-4 rounded-xl text-lg font-semibold hover:bg-navy-800 transition flex items-center justify-center gap-2 shadow-lg shadow-navy-900/20"
-            >
-              {loggedIn ? (
-                <>
-                  <LayoutDashboard className="w-5 h-5" />
-                  Go to Dashboard
-                </>
-              ) : (
-                <>
-                  <GitBranch className="w-5 h-5" />
-                  Connect GitHub — Free
-                </>
-              )}
-            </Link>
-            <Link
-              href="#example"
-              className="bg-white text-navy-900 px-8 py-4 rounded-xl text-lg font-semibold hover:bg-navy-50 transition border-2 border-navy-200 flex items-center justify-center gap-2"
-            >
-              See it in action
-              <ArrowRight className="w-5 h-5" />
-            </Link>
+          <div className={styles.heroCopy}>
+            <p className={styles.eyebrow}><span /> GOOD WORK DESERVES A PROPER SEND-OFF.</p>
+            <h1 id="hero-heading">You ship code.<br />We get the<br /><em>word out.</em></h1>
+            <p className={styles.lede}>Turn GitHub releases into updates your customers, developers, and stakeholders can actually use.</p>
+            <p className={styles.heroDetail}>Three tailored drafts. One review. Delivered where your people already are.</p>
+            <Link href={destination} className={styles.primary}>{loggedIn ? 'Open your dashboard' : 'Connect GitHub — start free'}<ArrowRight size={18} /></Link>
+            <p className={styles.ctaNote}>One repository free. A 14-day Pro trial when you upgrade.</p>
+            <a href="#example" className={styles.textLink}>Take a look at the cargo <ArrowDown size={14} /></a>
           </div>
-        </div>
-      </section>
+        </section>
 
-      <ReleaseExample />
+        <div className={styles.channelStrip}><span>YOUR RELEASE. A WIDER REACH.</span><div><GitBranch size={18} /> GitHub <span className={styles.stripArrow}>→</span> <Slack size={18} /> Slack <span className={styles.separator}>/</span> <span className={styles.discordMark}>◒</span> Discord <span className={styles.separator}>/</span> <Globe size={18} /> Hosted changelog</div></div>
 
-      {/* How It Works */}
-      <section className="py-20 bg-navy-950 text-white">
-        <div className="max-w-6xl mx-auto px-4">
-          <h2 className="text-3xl font-bold text-center mb-4">How it works</h2>
-          <p className="text-navy-300 text-center mb-12 max-w-2xl mx-auto">
-            Connect your GitHub repo once. We handle the rest.
-          </p>
-          <div className="grid md:grid-cols-3 gap-8">
-            {[
-              {
-                step: '1',
-                title: 'Connect GitHub',
-                description: 'Sign in with GitHub and choose a repository you administer.',
-              },
-              {
-                step: '2',
-                title: 'Publish a release',
-                description: 'Connect a repository with existing releases, or publish your next release on GitHub.',
-              },
-              {
-                step: '3',
-                title: 'Notes ship everywhere',
-                description: 'Review your three drafts, then publish to your changelog and configured delivery channels.',
-              },
-            ].map((item) => (
-              <div key={item.step} className="text-center">
-                <div className="w-12 h-12 bg-teal-600 rounded-full flex items-center justify-center text-xl font-bold mx-auto mb-4">
-                  {item.step}
-                </div>
-                <h3 className="text-xl font-semibold mb-2">{item.title}</h3>
-                <p className="text-navy-300">{item.description}</p>
-              </div>
-            ))}
+        <section id="example" className={styles.example} aria-labelledby="example-heading">
+          <div className={styles.sectionIntro}><p className={styles.eyebrow}>01 / SAME RELEASE. DIFFERENT READERS.</p><h2 id="example-heading">Not everyone<br /> speaks <em>commit.</em></h2><p>Your customers want the benefit. Your developers need the details. Your stakeholders need the bigger picture. Give each of them the right version.</p></div>
+          <div className={styles.exampleBoard}>
+            <div className={styles.source}><div><GitBranch size={15} /> acme / reports <span>v1.8.0</span></div><code><span>+ feat:</span> add PDF report export<br /><span>+ fix:</span> CSV export timeout above 10k rows<br /><span>↳</span> existing export formats unchanged</code></div>
+            <div className={styles.manifest}><div className={styles.manifestHeader}><span>OUTBOUND MANIFEST</span><span>03 AUDIENCES</span></div><div className={styles.tabs} aria-label="Example audience">{audiences.map((item, index) => <button key={item.name} type="button" aria-pressed={audience === index} onClick={() => setAudience(index)}>{item.name}</button>)}</div><div className={styles.note} aria-live="polite"><p>{example.eyebrow}</p><h3>{example.title}</h3><div>{example.body}</div></div><div className={styles.manifestFoot}><span><Check size={14} /> Ready for your review</span><span>{example.destination}</span></div></div>
+            <p className={styles.exampleCaption}>Illustrative example. You review and edit the drafts before publishing.</p>
           </div>
-        </div>
-      </section>
+        </section>
 
-      {/* Three Audiences */}
-      <section id="features" className="py-20">
-        <div className="max-w-6xl mx-auto px-4">
-          <h2 className="text-3xl font-bold text-center text-navy-900 mb-4">
-            Three audiences, three formats
-          </h2>
-          <p className="text-navy-600 text-center mb-12 max-w-2xl mx-auto">
-            The same release, reframed for each stakeholder. No more rewriting.
-          </p>
-          <div className="grid md:grid-cols-3 gap-6">
-            {[
-              {
-                icon: Users,
-                title: 'Customer Changelog',
-                color: 'teal',
-                description: 'Benefit-driven, jargon-free updates your users will actually read.',
-                example: 'You can now export reports to PDF in one click',
-              },
-              {
-                icon: GitBranch,
-                title: 'Developer Changelog',
-                color: 'navy',
-                description: 'Technical details, breaking changes, migration notes.',
-                example: 'Added PDF report export; existing export formats are unchanged.',
-              },
-              {
-                icon: Mail,
-                title: 'Stakeholder Brief',
-                color: 'amber',
-                description: 'A concise summary of what shipped and why it matters.',
-                example: 'PDF export makes reports easier to share outside the product.',
-              },
-            ].map((item) => (
-              <div
-                key={item.title}
-                className="bg-white rounded-2xl p-6 shadow-lg border border-navy-100 hover:shadow-xl transition"
-              >
-                <div className={`w-12 h-12 ${colorMap[item.color]?.bg ?? 'bg-gray-100'} rounded-xl flex items-center justify-center mb-4`}>
-                  <item.icon className={`w-6 h-6 ${colorMap[item.color]?.text ?? 'text-gray-600'}`} />
-                </div>
-                <h3 className="text-xl font-semibold text-navy-900 mb-2">{item.title}</h3>
-                <p className="text-navy-600 mb-4">{item.description}</p>
-                <p className="text-sm text-navy-400 italic">&ldquo;{item.example}&rdquo;</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
+        <section id="how-it-works" className={styles.process} aria-labelledby="process-heading">
+          <div className={styles.processIntro}><p className={styles.eyebrow}>02 / A SHORT ROUTE TO PUBLISHED.</p><h2 id="process-heading">Keep building.<br />We’ll handle the draft.</h2></div>
+          <div className={styles.steps}>{[{ n: '01', title: 'Bring your repository.', text: 'Sign in with GitHub, connect a repository you administer, and import an existing release or your next one.' }, { n: '02', title: 'Give it your voice.', text: 'Generate drafts for three audiences. Check the details, edit the wording, and decide what is ready to share.' }, { n: '03', title: 'Send it on its way.', text: 'Publish to your hosted changelog and connected Slack or Discord channels. Keep a record of each delivery.' }].map(step => <div key={step.n}><span>{step.n}</span><h3>{step.title}</h3><p>{step.text}</p></div>)}</div>
+        </section>
 
-      {/* Distribution Channels */}
-      <section className="py-20 bg-navy-50">
-        <div className="max-w-6xl mx-auto px-4">
-          <h2 className="text-3xl font-bold text-center text-navy-900 mb-4">
-            Delivered to every port
-          </h2>
-          <p className="text-navy-600 text-center mb-12 max-w-2xl mx-auto">
-            Your release notes land where your team already lives.
-          </p>
-          <div className="flex flex-wrap justify-center gap-6">
-            {[
-              { name: 'Slack', icon: Slack },
-              { name: 'Discord', icon: Users },
-              { name: 'Hosted Page', icon: Ship },
-            ].map((channel) => (
-              <div
-                key={channel.name}
-                className="bg-white px-8 py-6 rounded-xl shadow-md flex items-center gap-4 border border-navy-100"
-              >
-                <channel.icon className="w-8 h-8 text-navy-600" />
-                <span className="text-lg font-medium text-navy-900">{channel.name}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
+        <section id="pricing" className={styles.pricing} aria-labelledby="pricing-heading">
+          <div className={styles.pricingIntro}><div><p className={styles.eyebrow}>03 / ROOM TO GROW.</p><h2 id="pricing-heading">Start with one ship.<br /><em>Build your fleet.</em></h2></div><p>Keep one repository on Free.<br />Start a 14-day Pro trial from Settings when you upgrade.</p></div>
+          <Plans loggedIn={loggedIn} /><Link href="/pricing" className={styles.pricingDetails}>Compare plans and billing details <ArrowRight size={14} /></Link>
+        </section>
 
-      {/* Pricing */}
-      <section id="pricing" className="py-20">
-        <div className="max-w-4xl mx-auto px-4">
-          <h2 className="text-3xl font-bold text-center text-navy-900 mb-4">
-            Simple pricing
-          </h2>
-          <p className="text-navy-600 text-center mb-12">
-            Start free. Upgrade when you need more.
-          </p>
-          <div className="grid md:grid-cols-3 gap-6">
-            {[
-              {
-                name: 'Free',
-                price: '$0',
-                description: 'For side projects',
-                features: ['1 repo', 'Manual trigger', 'Hosted changelog'],
-                cta: 'Get Started',
-                highlighted: false,
-              },
-              {
-                name: 'Pro',
-                price: '$29',
-                period: '/mo',
-                description: 'For growing teams',
-                trial: '14-day free trial',
-                features: ['5 repos', 'Auto-trigger on release', 'Slack + Discord', 'Edit before publish'],
-                cta: 'Start Free Trial',
-                highlighted: true,
-              },
-              {
-                name: 'Team',
-                price: '$79',
-                period: '/mo',
-                description: 'For scaling orgs',
-                features: ['Unlimited repos', 'Everything in Pro', 'Branding options by request'],
-                cta: 'Contact Us',
-                highlighted: false,
-              },
-            ].map((plan) => (
-              <div
-                key={plan.name}
-                className={`rounded-2xl p-6 ${
-                  plan.highlighted
-                    ? 'bg-navy-900 text-white ring-4 ring-teal-500 md:scale-105'
-                    : 'bg-white border border-navy-200'
-                }`}
-              >
-                <h3 className={`text-lg font-semibold ${plan.highlighted ? 'text-teal-400' : 'text-navy-600'}`}>
-                  {plan.name}
-                </h3>
-                <div className="mt-2 mb-4">
-                  <span className="text-4xl font-bold">{plan.price}</span>
-                  {plan.period && <span className={plan.highlighted ? 'text-navy-300' : 'text-navy-500'}>{plan.period}</span>}
-                </div>
-                <p className={`text-sm mb-6 ${plan.highlighted ? 'text-navy-300' : 'text-navy-500'}`}>
-                  {plan.description}
-                </p>
-                {plan.trial && (
-                  <div className="mb-4 inline-block bg-teal-500/20 text-teal-400 text-xs font-semibold px-3 py-1 rounded-full">
-                    ✨ {plan.trial}
-                  </div>
-                )}
-                <ul className="space-y-3 mb-6">
-                  {plan.features.map((feature) => (
-                    <li key={feature} className="flex items-center gap-2">
-                      <Check className={`w-4 h-4 ${plan.highlighted ? 'text-teal-400' : 'text-teal-600'}`} />
-                      <span className={plan.highlighted ? 'text-navy-100' : 'text-navy-700'}>{feature}</span>
-                    </li>
-                  ))}
-                </ul>
-                {plan.name === 'Pro' ? (
-                  <Link
-                    href={loggedIn ? '/dashboard/settings' : '/login'}
-                    className={`block text-center w-full py-3 rounded-lg font-semibold transition ${
-                      plan.highlighted
-                        ? 'bg-teal-500 text-white hover:bg-teal-400'
-                        : 'bg-navy-100 text-navy-900 hover:bg-navy-200'
-                    }`}
-                  >
-                    {plan.cta}
-                  </Link>
-                ) : plan.name === 'Team' ? (
-                  <a
-                    href="mailto:hello@shiplog.io"
-                    className={`block text-center w-full py-3 rounded-lg font-semibold transition ${
-                      plan.highlighted
-                        ? 'bg-teal-500 text-white hover:bg-teal-400'
-                        : 'bg-navy-100 text-navy-900 hover:bg-navy-200'
-                    }`}
-                  >
-                    {plan.cta}
-                  </a>
-                ) : (
-                  <Link
-                    href="/login"
-                    className={`block text-center w-full py-3 rounded-lg font-semibold transition ${
-                      plan.highlighted
-                        ? 'bg-teal-500 text-white hover:bg-teal-400'
-                        : 'bg-navy-100 text-navy-900 hover:bg-navy-200'
-                    }`}
-                  >
-                    {plan.cta}
-                  </Link>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* CTA */}
-      <section className="py-20 bg-gradient-to-br from-navy-900 to-navy-950 text-white">
-        <div className="max-w-4xl mx-auto px-4 text-center">
-          <Ship className="w-16 h-16 mx-auto mb-6 text-teal-400" />
-          <h2 className="text-3xl font-bold mb-4">
-            {loggedIn ? 'Your releases are waiting' : 'Ready to ship your release notes?'}
-          </h2>
-          <p className="text-navy-300 mb-8 max-w-xl mx-auto">
-            {loggedIn
-              ? 'Head to your dashboard to connect more repos or view your changelogs.'
-              : 'Connect one repository for free and turn an existing release into your first changelog.'
-            }
-          </p>
-          <Link
-            href={loggedIn ? "/dashboard" : "/login"}
-            className="inline-flex items-center gap-2 bg-teal-500 text-white px-8 py-4 rounded-xl text-lg font-semibold hover:bg-teal-400 transition shadow-lg"
-          >
-            {loggedIn ? (
-              <>
-                <LayoutDashboard className="w-5 h-5" />
-                Go to Dashboard
-              </>
-            ) : (
-              <>
-                <GitBranch className="w-5 h-5" />
-                Connect GitHub — It&apos;s Free
-              </>
-            )}
-          </Link>
-        </div>
-      </section>
-
-      {/* Footer */}
-      <footer className="py-12 bg-navy-950 text-navy-400">
-        <div className="max-w-6xl mx-auto px-4">
-          <div className="flex flex-col md:flex-row justify-between items-center gap-6">
-            <div className="flex items-center gap-2">
-              <Ship className="w-6 h-6 text-teal-500" />
-              <span className="text-white font-semibold">ShipLog</span>
-            </div>
-            <div className="flex gap-6 text-sm">
-              <Link href="/docs" className="hover:text-white transition">Docs</Link>
-              <Link href="/changelog" className="hover:text-white transition">Changelog</Link>
-              <Link href="/privacy" className="hover:text-white transition">Privacy</Link>
-              <Link href="/terms" className="hover:text-white transition">Terms</Link>
-            </div>
-            <p className="text-sm">© 2026 ShipLog. All rights reserved.</p>
-          </div>
-        </div>
-      </footer>
+        <section className={styles.closing}><div><p className={styles.eyebrow}>NEXT RELEASE, BETTER RECEIVED.</p><h2>You did the hard part.<br /><em>Let people know.</em></h2></div><div><Link href={destination} className={styles.primary}>{loggedIn ? 'Open your dashboard' : 'Bring your first repository'}<ArrowRight size={18} /></Link><p>Connect GitHub. Find your release. Make it readable.</p></div></section>
+      </main>
+      <footer className={styles.footer}><Link href="/" className={styles.brand}><Ship size={24} strokeWidth={1.7} />ShipLog</Link><p>A proper send-off for the things you build.</p><nav aria-label="Footer navigation"><Link href="/docs">Docs</Link><Link href="/changelog">Changelog</Link><Link href="/privacy">Privacy</Link><Link href="/terms">Terms</Link></nav><small>© {new Date().getFullYear()} ShipLog</small></footer>
     </div>
   );
 }

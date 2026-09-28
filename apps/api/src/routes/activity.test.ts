@@ -52,8 +52,11 @@ describe('Activity Routes', () => {
       expect(prismaMock.release.findMany).toHaveBeenCalledWith(expect.objectContaining({
         where: expect.objectContaining({
           repo: expect.objectContaining({
-            userId: 'user-1'
-          })
+            OR: [
+              { userId: 'user-1', organizationId: null },
+              { organization: { ownerId: 'user-1' } },
+            ],
+          }),
         })
       }));
     });

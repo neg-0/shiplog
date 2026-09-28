@@ -1,106 +1,40 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import Home from './page';
+import { isAuthenticated } from '../lib/api';
 
-// Mock dependencies
-jest.mock('next/link', () => ({
-  __esModule: true,
-  default: ({ children, href, ...props }: { children: React.ReactNode; href: string }) => (
-    <a href={href} {...props}>{children}</a>
-  ),
-}));
+jest.mock('next/link', () => ({ __esModule: true, default: ({ children, href, ...props }: { children: React.ReactNode; href: string }) => <a href={href} {...props}>{children}</a> }));
+jest.mock('../lib/api', () => ({ isAuthenticated: jest.fn(() => false) }));
 
-jest.mock('../lib/api', () => ({
-  isAuthenticated: jest.fn(() => false),
-  createCheckoutSession: jest.fn(),
-}));
+beforeEach(() => { (isAuthenticated as jest.Mock).mockReturnValue(false); });
 
-jest.mock('lucide-react', () => ({
-  Ship: () => <div data-testid="icon-ship" />,
-  GitBranch: () => <div data-testid="icon-git-branch" />,
-  Users: () => <div data-testid="icon-users" />,
-  Mail: () => <div data-testid="icon-mail" />,
-  Slack: () => <div data-testid="icon-slack" />,
-  Zap: () => <div data-testid="icon-zap" />,
-  ArrowRight: () => <div data-testid="icon-arrow-right" />,
-  Check: () => <div data-testid="icon-check" />,
-  LayoutDashboard: () => <div data-testid="icon-dashboard" />,
-}));
+it('routes free signup to login and explains when the Pro trial starts', () => {
+  render(<Home />);
+  expect(screen.getByRole('link', { name: /Connect GitHub — start free/ })).toHaveAttribute('href', '/login');
+  expect(screen.getByText(/14-day Pro trial from Settings when you upgrade/)).toBeInTheDocument();
+  expect(screen.getByRole('link', { name: 'Explore Team' })).toHaveAttribute('href', '/login');
+});
 
-describe('Home Page', () => {
-  it('renders the hero section', () => {
-    render(<Home />);
+it('sends returning users to their dashboard and Pro settings', () => {
+  (isAuthenticated as jest.Mock).mockReturnValue(true);
+  render(<Home />);
+  expect(screen.getByRole('link', { name: 'Dashboard' })).toHaveAttribute('href', '/dashboard');
+  expect(screen.getByRole('link', { name: 'Upgrade to Pro' })).toHaveAttribute('href', '/dashboard/settings');
+});
 
-    expect(screen.getByText(/Release notes that/)).toBeInTheDocument();
-    expect(screen.getByText('ship themselves')).toBeInTheDocument();
-    expect(screen.getByText(/One release\. Three audiences\. Ready to share\./)).toBeInTheDocument();
-  });
+it('switches the release example between audiences', () => {
+  render(<Home />);
+  fireEvent.click(screen.getByRole('button', { name: 'Developers' }));
+  expect(screen.getByRole('heading', { name: 'PDF export is here.' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Developers' })).toHaveAttribute('aria-pressed', 'true');
+  fireEvent.click(screen.getByRole('button', { name: 'Stakeholders' }));
+  expect(screen.getByRole('heading', { name: 'Less friction in reporting.' })).toBeInTheDocument();
+});
 
-  it('renders the navigation bar with ShipLog branding', () => {
-    render(<Home />);
-
-    expect(screen.getAllByText('ShipLog').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText('Features')).toBeInTheDocument();
-    expect(screen.getByText('Pricing')).toBeInTheDocument();
-  });
-
-  it('shows Connect GitHub link when not authenticated', () => {
-    render(<Home />);
-
-    // Nav bar has "Connect GitHub" as a link; "How it works" section also has the text
-    const connectLinks = screen.getAllByText('Connect GitHub');
-    const navLink = connectLinks.find((el) => el.closest('a'));
-    expect(navLink?.closest('a')).toHaveAttribute('href', '/login');
-  });
-
-  it('renders the features section', () => {
-    render(<Home />);
-
-    expect(screen.getByText('Three audiences, three formats')).toBeInTheDocument();
-    expect(screen.getByText('Customer Changelog')).toBeInTheDocument();
-    expect(screen.getByText('Developer Changelog')).toBeInTheDocument();
-    expect(screen.getByText('Stakeholder Brief')).toBeInTheDocument();
-  });
-
-  it('renders the How it works section', () => {
-    render(<Home />);
-
-    expect(screen.getByText('How it works')).toBeInTheDocument();
-    // "Connect GitHub" appears both in the nav and in "How it works" step
-    expect(screen.getAllByText('Connect GitHub').length).toBeGreaterThanOrEqual(2);
-    expect(screen.getByText('Publish a release')).toBeInTheDocument();
-    expect(screen.getByText('Notes ship everywhere')).toBeInTheDocument();
-  });
-
-  it('renders the pricing section', () => {
-    render(<Home />);
-
-    expect(screen.getByText('Simple pricing')).toBeInTheDocument();
-    expect(screen.getByText('Free')).toBeInTheDocument();
-    expect(screen.getByText('Pro')).toBeInTheDocument();
-    expect(screen.getByText('Team')).toBeInTheDocument();
-    expect(screen.getByText('$0')).toBeInTheDocument();
-    expect(screen.getByText('$29')).toBeInTheDocument();
-    expect(screen.getByText('$79')).toBeInTheDocument();
-  });
-
-  it('renders the distribution channels section', () => {
-    render(<Home />);
-
-    expect(screen.getByText('Delivered to every port')).toBeInTheDocument();
-    expect(screen.getByText('Slack')).toBeInTheDocument();
-    expect(screen.getByText('Discord')).toBeInTheDocument();
-    expect(screen.getByText('Hosted Page')).toBeInTheDocument();
-  });
-
-  it('renders footer with links', () => {
-    render(<Home />);
-
-    expect(screen.getByText('© 2026 ShipLog. All rights reserved.')).toBeInTheDocument();
-
-    const footerLinks = ['Docs', 'Changelog', 'Privacy', 'Terms'];
-    footerLinks.forEach((linkText) => {
-      expect(screen.getAllByText(linkText).length).toBeGreaterThanOrEqual(1);
-    });
-  });
+it('lets visitors pause and resume the harbor animation', () => {
+  render(<Home />);
+  fireEvent.click(screen.getByRole('button', { name: 'Pause harbor animation' }));
+  expect(screen.getByRole('button', { name: 'Play harbor animation' })).toHaveAttribute('aria-pressed', 'true');
+  fireEvent.click(screen.getByRole('button', { name: 'Play harbor animation' }));
+  expect(screen.getByRole('button', { name: 'Pause harbor animation' })).toHaveAttribute('aria-pressed', 'false');
 });

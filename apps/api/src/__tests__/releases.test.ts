@@ -343,11 +343,159 @@ describe('Releases Routes', () => {
   });
 
   it('rejects an edit when generation claimed the observed release first', async () => {
-    prismaMock.release.findFirst.mockResolvedValue({ id: 'rel-1', status: 'READY', error: null, notes: {}, updatedAt: new Date() } as any);
+    prismaMock.release.findFirst.mockResolvedValue({ id: 'rel-1', status: 'READY', error: null, notes: {}, updatedAt: new Date(), repo: {} } as any);
     prismaMock.release.updateMany.mockResolvedValue({ count: 0 });
     const response = await releases.request('/rel-1/notes', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customer: 'Edited notes' }) });
     expect(response.status).toBe(409);
     expect(prismaMock.generatedNotes.update).not.toHaveBeenCalled();
+  });
+
+  it('does not claim a Team publication when billing revokes access after the initial read', async () => {
+    const release = {
+      id: 'rel-1', status: 'READY', error: null, updatedAt: new Date(),
+      publishedAt: new Date(), isDraft: false, notes: {},
+      repo: { organization: { ownerId: 'payer-1' }, config: null },
+    };
+    let active = true;
+    prismaMock.organizationMember.findMany.mockImplementation(async () => active ? [{
+      organization: {
+        id: 'org-1', subscriptionId: 'sub-1',
+        owner: { subscriptionTier: 'TEAM', subscriptionStatus: 'active', stripeSubscriptionId: 'sub-1' },
+      },
+    }] as any : []);
+    prismaMock.release.findFirst.mockImplementation(async ({ where }: any) =>
+      active && where.repo.OR.some((branch: any) => branch.organizationId === 'org-1') ? release as any : null);
+    prismaMock.$transaction.mockImplementation(async (callback: any) => {
+      active = false;
+      return callback(prismaMock);
+    });
+
+    const response = await releases.request('/rel-1/publish', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    });
+
+    expect(response.status).toBe(403);
+    expect(prismaMock.$queryRaw).toHaveBeenCalled();
+    expect(prismaMock.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(prismaMock.release.findFirst.mock.invocationCallOrder[1]);
+    expect(prismaMock.release.updateMany).not.toHaveBeenCalled();
+    expect(publisherService.publishReleaseNotes).not.toHaveBeenCalled();
+  });
+
+  it('abandons a Team publication if access ends after the claim but before delivery', async () => {
+    const release = {
+      id: 'rel-1', status: 'READY', error: null, updatedAt: new Date(),
+      publishedAt: new Date(), isDraft: false, notes: {},
+      repo: { organization: { ownerId: 'payer-1' }, config: null },
+    };
+    let active = true;
+    let transactions = 0;
+    prismaMock.organizationMember.findMany.mockImplementation(async () => active ? [{
+      organization: {
+        id: 'org-1', subscriptionId: 'sub-1',
+        owner: { subscriptionTier: 'TEAM', subscriptionStatus: 'active', stripeSubscriptionId: 'sub-1' },
+      },
+    }] as any : []);
+    prismaMock.release.findFirst.mockImplementation(async ({ where }: any) =>
+      active && where.repo.OR.some((branch: any) => branch.organizationId === 'org-1') ? release as any : null);
+    prismaMock.release.updateMany.mockResolvedValue({ count: 1 });
+    prismaMock.$transaction.mockImplementation(async (callback: any) => {
+      if (++transactions === 2) active = false;
+      return callback(prismaMock);
+    });
+
+    const response = await releases.request('/rel-1/publish', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    });
+
+    expect(response.status).toBe(403);
+    expect(prismaMock.release.updateMany).toHaveBeenCalledWith({
+      where: { id: 'rel-1', status: 'PROCESSING', error: expect.stringContaining(':publication:READY:') },
+      data: { status: 'READY', error: null },
+    });
+    expect(publisherService.publishReleaseNotes).not.toHaveBeenCalled();
+  });
+
+  it('does not send fetched Team repository data to generation after access ends', async () => {
+    const release = {
+      id: 'rel-1', tagName: 'v1.0.0', status: 'SKIPPED', error: null, updatedAt: new Date(),
+      repo: {
+        organization: { ownerId: 'payer-1' }, owner: 'owner', name: 'repo',
+        user: { accessToken: 'encrypted-token' }, config: null,
+      },
+    };
+    let active = true;
+    prismaMock.organizationMember.findMany.mockImplementation(async () => active ? [{
+      organization: {
+        id: 'org-1', subscriptionId: 'sub-1',
+        owner: { subscriptionTier: 'TEAM', subscriptionStatus: 'active', stripeSubscriptionId: 'sub-1' },
+      },
+    }] as any : []);
+    prismaMock.release.findFirst.mockImplementation(async ({ where }: any) =>
+      active && where.repo.OR.some((branch: any) => branch.organizationId === 'org-1') ? release as any : null);
+    prismaMock.release.updateMany.mockResolvedValue({ count: 1 });
+    githubService.fetchReleaseData.mockImplementation(async () => {
+      active = false;
+      return { release: { tagName: 'v1.0.0' }, commits: [], pullRequests: [] };
+    });
+
+    const response = await releases.request('/rel-1/regenerate', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    });
+
+    expect(response.status).toBe(403);
+    expect(githubService.fetchReleaseData).toHaveBeenCalled();
+    expect(generatorService.generateReleaseNotes).not.toHaveBeenCalled();
+    expect(prismaMock.release.update).not.toHaveBeenCalled();
+    expect(prismaMock.release.updateMany).toHaveBeenCalledWith({
+      where: { id: 'rel-1', status: 'PROCESSING', error: expect.stringContaining(':generation:SKIPPED:') },
+      data: { status: 'SKIPPED', error: null },
+    });
+  });
+
+  it('rejects a Team notes edit when access ends before the write transaction', async () => {
+    const release = {
+      id: 'rel-1', status: 'READY', error: null, updatedAt: new Date(), notes: {},
+      repo: { organization: { ownerId: 'payer-1' } },
+    };
+    let active = true;
+    prismaMock.organizationMember.findMany.mockImplementation(async () => active ? [{
+      organization: {
+        id: 'org-1', subscriptionId: 'sub-1',
+        owner: { subscriptionTier: 'TEAM', subscriptionStatus: 'active', stripeSubscriptionId: 'sub-1' },
+      },
+    }] as any : []);
+    prismaMock.release.findFirst.mockImplementation(async ({ where }: any) =>
+      active && where.repo.OR.some((branch: any) => branch.organizationId === 'org-1') ? release as any : null);
+    prismaMock.$transaction.mockImplementation(async (callback: any) => {
+      active = false;
+      return callback(prismaMock);
+    });
+
+    const response = await releases.request('/rel-1/notes', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customer: 'Edited' }),
+    });
+
+    expect(response.status).toBe(403);
+    expect(prismaMock.generatedNotes.update).not.toHaveBeenCalled();
+    expect(prismaMock.release.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('keeps organization owner cleanup available after the Team plan ends', async () => {
+    const release = {
+      id: 'rel-1', status: 'READY', error: null, updatedAt: new Date(), notes: {},
+      repo: { organization: { ownerId: 'test-user-id' } },
+    };
+    prismaMock.release.findFirst.mockImplementation(async ({ where }: any) =>
+      where.repo.OR.some((branch: any) => branch.organization?.ownerId === 'test-user-id') ? release as any : null);
+    prismaMock.release.updateMany.mockResolvedValue({ count: 1 });
+
+    const response = await releases.request('/rel-1/notes', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customer: 'Owner edit' }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(prismaMock.$queryRaw).toHaveBeenCalled();
+    expect(prismaMock.generatedNotes.update).toHaveBeenCalled();
   });
 
   it('a successful edit prevents a stale publication from sending the previous notes', async () => {
