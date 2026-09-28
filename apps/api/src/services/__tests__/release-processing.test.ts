@@ -38,6 +38,16 @@ describe('release processing claims', () => {
     expect(updateMany).not.toHaveBeenCalled();
   });
 
+  it('uses the supplied transaction client for a processing claim', async () => {
+    const transactionUpdateMany = jest.fn<any>().mockResolvedValue({ count: 1 });
+    const marker = await claimProcessing(snapshot(), 'generation', {
+      release: { updateMany: transactionUpdateMany },
+    } as any);
+    expect(marker).toContain(':generation:PUBLISHED:');
+    expect(transactionUpdateMany).toHaveBeenCalledTimes(1);
+    expect(updateMany).not.toHaveBeenCalled();
+  });
+
   it('recovers interrupted generation and fences late failures from the expired worker', async () => {
     stored.status = 'PENDING';
     const original = snapshot();

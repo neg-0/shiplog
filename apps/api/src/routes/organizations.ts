@@ -15,7 +15,7 @@ export const organizations = new Hono();
 organizations.use('*', requireAuth);
 organizations.use('*', apiLimiter);
 
-const isAdminRole = (role?: string | null) => role === 'OWNER' || role === 'ADMIN';
+const isAdminRole = (role?: string | null) => role === 'ADMIN';
 type TeamOwner = { subscriptionTier: string; stripeSubscriptionId: string | null; subscriptionStatus: string | null };
 const hasLinkedTeamSubscription = (
   owner: TeamOwner | null,
@@ -108,6 +108,9 @@ organizations.get('/', async (c) => {
       ],
     },
     include: {
+      owner: {
+        select: { subscriptionTier: true, stripeSubscriptionId: true, subscriptionStatus: true },
+      },
       _count: {
         select: { members: true, repos: true },
       },
@@ -116,7 +119,9 @@ organizations.get('/', async (c) => {
   });
 
   return c.json({
-    organizations: orgs.map((org: any) => ({
+    organizations: orgs.filter((org: any) =>
+      org.ownerId === user.id || hasLinkedTeamSubscription(org.owner, org.subscriptionId),
+    ).map((org: any) => ({
       id: org.id,
       name: org.name,
       slug: org.slug,
@@ -153,7 +158,10 @@ organizations.get('/:id', async (c) => {
     },
     include: {
       owner: {
-        select: { id: true, login: true, name: true, email: true, avatarUrl: true },
+        select: {
+          id: true, login: true, name: true, email: true, avatarUrl: true,
+          subscriptionTier: true, stripeSubscriptionId: true, subscriptionStatus: true,
+        },
       },
       members: {
         include: {
@@ -179,16 +187,28 @@ organizations.get('/:id', async (c) => {
     return c.json({ error: 'Organization not found' }, 404);
   }
 
+  if (org.ownerId !== user.id && !hasLinkedTeamSubscription(org.owner, org.subscriptionId)) {
+    return c.json({ error: 'Organization not found' }, 404);
+  }
+
   // Only OWNER/ADMIN can see member emails
   const callerMember = org.members.find((m: any) => m.user.id === user.id);
   const callerRole = callerMember?.role ?? (org.ownerId === user.id ? 'OWNER' : null);
-  const canSeeEmails = callerRole === 'OWNER' || callerRole === 'ADMIN';
+  const canSeeEmails = org.ownerId === user.id || callerRole === 'ADMIN';
 
   function stripEmail(u: { id: string; login: string; name: string | null; email: string | null; avatarUrl: string | null }) {
     if (canSeeEmails) return u;
     const { email: _email, ...rest } = u;
     return rest;
   }
+
+  const ownerProfile = {
+    id: org.owner.id,
+    login: org.owner.login,
+    name: org.owner.name,
+    email: org.owner.email,
+    avatarUrl: org.owner.avatarUrl,
+  };
 
   return c.json({
     id: org.id,
@@ -197,7 +217,7 @@ organizations.get('/:id', async (c) => {
     githubOrgId: org.githubOrgId,
     githubOrgLogin: org.githubOrgLogin,
     ownerId: org.ownerId,
-    owner: stripEmail(org.owner),
+    owner: stripEmail(ownerProfile),
     subscriptionId: org.subscriptionId,
     createdAt: org.createdAt,
     updatedAt: org.updatedAt,
@@ -235,37 +255,44 @@ organizations.patch('/:id', validate(updateOrgSchema), async (c) => {
 
   const org = await prisma.organization.findUnique({
     where: { id },
-    include: {
-      members: { where: { userId: user.id } },
-    },
+    select: { ownerId: true },
   });
 
   if (!org) {
     return c.json({ error: 'Organization not found' }, 404);
   }
 
-  const memberRole = org.members[0]?.role ?? null;
-  if (org.ownerId !== user.id && !isAdminRole(memberRole)) {
-    return c.json({ error: 'Not authorized' }, 403);
-  }
-
-  // Check slug uniqueness if updating
-  if (body.slug && body.slug !== org.slug) {
-    const existing = await prisma.organization.findUnique({
-      where: { slug: body.slug },
-      select: { id: true },
+  const result = await prisma.$transaction(async (tx) => {
+    // Serialize authorization and the edit with subscription webhook updates.
+    await tx.$queryRaw`SELECT id FROM users WHERE id = ${org.ownerId} FOR UPDATE`;
+    const currentOrg = await tx.organization.findUnique({
+      where: { id },
+      include: {
+        owner: { select: { subscriptionTier: true, stripeSubscriptionId: true, subscriptionStatus: true } },
+        members: { where: { userId: user.id }, select: { role: true } },
+      },
     });
-    if (existing) {
-      return c.json({ error: 'Organization slug already exists' }, 400);
+    if (!currentOrg) return { kind: 'missing' } as const;
+    if (currentOrg.ownerId !== user.id &&
+      (!isAdminRole(currentOrg.members[0]?.role) || !hasLinkedTeamSubscription(currentOrg.owner, currentOrg.subscriptionId))) {
+      return { kind: 'forbidden' } as const;
     }
-  }
 
-  const updated = await prisma.organization.update({
-    where: { id },
-    data: body,
+    if (body.slug && body.slug !== currentOrg.slug) {
+      const existing = await tx.organization.findUnique({
+        where: { slug: body.slug },
+        select: { id: true },
+      });
+      if (existing) return { kind: 'duplicate' } as const;
+    }
+
+    return { kind: 'updated', value: await tx.organization.update({ where: { id }, data: body }) } as const;
   });
 
-  return c.json(updated);
+  if (result.kind === 'missing') return c.json({ error: 'Organization not found' }, 404);
+  if (result.kind === 'forbidden') return c.json({ error: 'Not authorized' }, 403);
+  if (result.kind === 'duplicate') return c.json({ error: 'Organization slug already exists' }, 400);
+  return c.json(result.value);
 });
 
 const inviteSchema = z.object({
@@ -335,6 +362,15 @@ organizations.post('/:id/invite', validate(inviteSchema), async (c) => {
         select: { subscriptionTier: true, stripeSubscriptionId: true, subscriptionStatus: true },
       });
       if (currentOrg?.ownerId !== org.ownerId || !hasLinkedTeamSubscription(owner, currentOrg.subscriptionId)) return null;
+      // Membership can be revoked after the initial route check. Recheck it
+      // under the same payer lock before creating an invitation.
+      if (currentOrg.ownerId !== user.id) {
+        const currentMember = await tx.organizationMember.findFirst({
+          where: { organizationId: id, userId: user.id },
+          select: { role: true },
+        });
+        if (!isAdminRole(currentMember?.role)) return 'forbidden' as const;
+      }
       return tx.organizationInvite.create({
         data: {
           organizationId: id,
@@ -347,6 +383,7 @@ organizations.post('/:id/invite', validate(inviteSchema), async (c) => {
     });
 
     if (!invite) return c.json({ error: 'Invitations require an active Team subscription.' }, 403);
+    if (invite === 'forbidden') return c.json({ error: 'Not authorized' }, 403);
     return c.json(invite, 201);
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
@@ -367,15 +404,25 @@ organizations.get('/:id/members', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
 
-  const member = await prisma.organizationMember.findFirst({
+  const org = await prisma.organization.findUnique({
+    where: { id },
+    select: {
+      ownerId: true,
+      subscriptionId: true,
+      owner: { select: { subscriptionTier: true, stripeSubscriptionId: true, subscriptionStatus: true } },
+    },
+  });
+  if (!org) return c.json({ error: 'Organization not found' }, 404);
+
+  const isOwner = org.ownerId === user.id;
+  const member = isOwner ? null : await prisma.organizationMember.findFirst({
     where: { organizationId: id, userId: user.id },
   });
-
-  if (!member) {
+  if (!isOwner && (!member || !hasLinkedTeamSubscription(org.owner, org.subscriptionId))) {
     return c.json({ error: 'Not authorized' }, 403);
   }
 
-  const canSeeEmails = member.role === 'OWNER' || member.role === 'ADMIN';
+  const canSeeEmails = isOwner || member?.role === 'ADMIN';
 
   const members = await prisma.organizationMember.findMany({
     where: { organizationId: id },
@@ -416,34 +463,43 @@ organizations.delete('/:id/members/:userId', async (c) => {
 
   const org = await prisma.organization.findUnique({
     where: { id },
-    include: { members: { where: { userId: user.id } } },
+    select: { ownerId: true },
   });
 
   if (!org) {
     return c.json({ error: 'Organization not found' }, 404);
   }
 
-  const memberRole = org.members[0]?.role ?? null;
-  if (org.ownerId !== user.id && !isAdminRole(memberRole)) {
-    return c.json({ error: 'Not authorized' }, 403);
-  }
+  const result = await prisma.$transaction(async (tx) => {
+    // Keep the member permission check and removal on one side of a billing change.
+    await tx.$queryRaw`SELECT id FROM users WHERE id = ${org.ownerId} FOR UPDATE`;
+    const currentOrg = await tx.organization.findUnique({
+      where: { id },
+      include: {
+        owner: { select: { subscriptionTier: true, stripeSubscriptionId: true, subscriptionStatus: true } },
+        members: { where: { userId: user.id }, select: { role: true } },
+      },
+    });
+    if (!currentOrg) return 'missing' as const;
+    if (currentOrg.ownerId !== user.id &&
+      (!isAdminRole(currentOrg.members[0]?.role) || !hasLinkedTeamSubscription(currentOrg.owner, currentOrg.subscriptionId))) {
+      return 'forbidden' as const;
+    }
+    if (currentOrg.ownerId === memberId) return 'owner' as const;
 
-  if (org.ownerId === memberId) {
-    return c.json({ error: 'Cannot remove the organization owner' }, 400);
-  }
+    const existing = await tx.organizationMember.findFirst({
+      where: { organizationId: id, userId: memberId },
+    });
+    if (!existing) return 'member-missing' as const;
 
-  const existing = await prisma.organizationMember.findFirst({
-    where: { organizationId: id, userId: memberId },
+    await tx.organizationMember.delete({ where: { id: existing.id } });
+    return 'removed' as const;
   });
 
-  if (!existing) {
-    return c.json({ error: 'Member not found' }, 404);
-  }
-
-  await prisma.organizationMember.delete({
-    where: { id: existing.id },
-  });
-
+  if (result === 'missing') return c.json({ error: 'Organization not found' }, 404);
+  if (result === 'forbidden') return c.json({ error: 'Not authorized' }, 403);
+  if (result === 'owner') return c.json({ error: 'Cannot remove the organization owner' }, 400);
+  if (result === 'member-missing') return c.json({ error: 'Member not found' }, 404);
   return c.json({ removed: true });
 });
 

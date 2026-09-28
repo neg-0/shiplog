@@ -1,5 +1,5 @@
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
-import { mockDeep } from 'jest-mock-extended';
+import { mockDeep, mockReset } from 'jest-mock-extended';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { Hono } from 'hono';
 
@@ -22,6 +22,10 @@ jest.unstable_mockModule('../lib/auth.js', () => ({
   }),
 }));
 
+jest.unstable_mockModule('../lib/rate-limit.js', () => ({
+  apiLimiter: async (_c: any, next: any) => next(),
+}));
+
 const { organizations } = await import('./organizations.js');
 
 describe('Organizations Routes', () => {
@@ -30,6 +34,7 @@ describe('Organizations Routes', () => {
   beforeEach(() => {
     app = new Hono();
     app.route('/', organizations);
+    mockReset(prismaMock);
     jest.clearAllMocks();
   });
 
@@ -216,6 +221,45 @@ describe('Organizations Routes', () => {
       expect(data.organizations).toHaveLength(1);
       expect(data.organizations[0].name).toBe('Org 1');
     });
+
+    it.each([
+      ['canceled', 'TEAM', 'canceled', 'sub_team'],
+      ['past due', 'TEAM', 'past_due', 'sub_team'],
+      ['downgraded', 'PRO', 'active', 'sub_team'],
+      ['replacement subscription', 'TEAM', 'active', 'sub_new'],
+    ])('hides non-owner memberships when Team is %s', async (_case, tier, status, ownerSubscriptionId) => {
+      prismaMock.organization.findMany.mockResolvedValue([
+        {
+          id: 'owned', ownerId: mockUser.id, subscriptionId: 'sub_old',
+          _count: { members: 2, repos: 0 },
+        },
+        {
+          id: 'member', ownerId: 'payer-1', subscriptionId: 'sub_team',
+          owner: {
+            subscriptionTier: tier, stripeSubscriptionId: ownerSubscriptionId,
+            subscriptionStatus: status,
+          },
+          _count: { members: 2, repos: 1 },
+        },
+      ] as any);
+
+      const res = await app.request('/');
+      expect(res.status).toBe(200);
+      expect((await res.json()).organizations.map((org: any) => org.id)).toEqual(['owned']);
+      expect(prismaMock.organizationMember.delete).not.toHaveBeenCalled();
+    });
+
+    it('lists a linked Team membership while active', async () => {
+      prismaMock.organization.findMany.mockResolvedValue([{
+        id: 'member', ownerId: 'payer-1', subscriptionId: 'sub_team',
+        owner: { subscriptionTier: 'TEAM', stripeSubscriptionId: 'sub_team', subscriptionStatus: 'active' },
+        _count: { members: 2, repos: 1 },
+      }] as any);
+
+      const res = await app.request('/');
+      expect(res.status).toBe(200);
+      expect((await res.json()).organizations.map((org: any) => org.id)).toEqual(['member']);
+    });
   });
 
   describe('GET /:id', () => {
@@ -249,13 +293,62 @@ describe('Organizations Routes', () => {
 
       expect(res.status).toBe(404);
     });
+
+    it.each([
+      ['active', 'sub_team', 200],
+      ['trialing', 'sub_team', 200],
+      ['canceled', 'sub_team', 404],
+      ['active', 'sub_replacement', 404],
+    ])('gates non-owner organization detail for %s / %s', async (status, subscriptionId, expectedStatus) => {
+      prismaMock.organization.findFirst.mockResolvedValue({
+        id: 'org-1', ownerId: 'payer-1', subscriptionId: 'sub_team',
+        owner: {
+          id: 'payer-1', login: 'payer', name: 'Payer', email: 'payer@example.com', avatarUrl: null,
+          subscriptionTier: 'TEAM', stripeSubscriptionId: subscriptionId, subscriptionStatus: status,
+        },
+        members: [{ id: 'm1', role: 'MEMBER', user: { ...mockUser, name: 'Member', avatarUrl: null } }],
+        repos: [],
+      } as any);
+
+      const res = await app.request('/org-1');
+      expect(res.status).toBe(expectedStatus);
+      if (expectedStatus === 200) {
+        const body = await res.json();
+        expect(body.owner.email).toBeUndefined();
+        expect(body.owner.stripeSubscriptionId).toBeUndefined();
+        expect(body.owner.subscriptionStatus).toBeUndefined();
+      }
+    });
+
+    it('preserves owner detail and member visibility after cancellation', async () => {
+      prismaMock.organization.findFirst.mockResolvedValue({
+        id: 'org-1', ownerId: mockUser.id, subscriptionId: 'sub_team',
+        owner: {
+          ...mockUser, name: 'Owner', avatarUrl: null,
+          subscriptionTier: 'FREE', stripeSubscriptionId: null, subscriptionStatus: 'canceled',
+        },
+        members: [{ id: 'm2', role: 'MEMBER', user: { id: 'u2', login: 'member', name: null, email: 'member@example.com', avatarUrl: null } }],
+        repos: [],
+      } as any);
+
+      const res = await app.request('/org-1');
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.members).toHaveLength(1);
+      expect(body.owner.stripeSubscriptionId).toBeUndefined();
+    });
   });
 
   describe('PATCH /:id', () => {
+    beforeEach(() => {
+      prismaMock.$transaction.mockImplementation(async (callback: any) => callback(prismaMock));
+    });
+
     it('should update organization if owner', async () => {
       prismaMock.organization.findUnique.mockResolvedValue({
         id: 'org-1',
         ownerId: mockUser.id,
+        slug: 'org-1',
         members: [{ role: 'OWNER' }],
       } as any);
 
@@ -288,6 +381,44 @@ describe('Organizations Routes', () => {
       });
 
       expect(res.status).toBe(403);
+    });
+
+    it.each([
+      ['active', 'sub_team', 200],
+      ['trialing', 'sub_team', 200],
+      ['canceled', 'sub_team', 403],
+      ['active', 'sub_new', 403],
+    ])('allows an admin edit only with a linked Team subscription (%s / %s)', async (status, subscriptionId, expectedStatus) => {
+      prismaMock.organization.findUnique.mockResolvedValue({
+        id: 'org-1', ownerId: 'payer-1', slug: 'org-1', subscriptionId: 'sub_team',
+        members: [{ role: 'ADMIN' }],
+        owner: { subscriptionTier: 'TEAM', stripeSubscriptionId: subscriptionId, subscriptionStatus: status },
+      } as any);
+      prismaMock.organization.update.mockResolvedValue({ id: 'org-1', name: 'New name' } as any);
+
+      const response = await app.request('/org-1', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'New name' }),
+      });
+
+      expect(response.status).toBe(expectedStatus);
+      expect(prismaMock.organization.update).toHaveBeenCalledTimes(expectedStatus === 200 ? 1 : 0);
+    });
+
+    it('lets the owner edit after the Team plan ends', async () => {
+      prismaMock.organization.findUnique.mockResolvedValue({
+        id: 'org-1', ownerId: mockUser.id, slug: 'org-1', subscriptionId: 'sub_team',
+        members: [], owner: { subscriptionTier: 'FREE', stripeSubscriptionId: null, subscriptionStatus: 'canceled' },
+      } as any);
+      prismaMock.organization.update.mockResolvedValue({ id: 'org-1', name: 'Owner cleanup' } as any);
+
+      const response = await app.request('/org-1', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Owner cleanup' }),
+      });
+
+      expect(response.status).toBe(200);
+      expect(prismaMock.organization.update).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -366,6 +497,25 @@ describe('Organizations Routes', () => {
       expect(prismaMock.organizationInvite.create).not.toHaveBeenCalled();
     });
 
+    it('does not invite after an admin loses membership during the request', async () => {
+      const adminOrg = { ...team, ownerId: 'different-owner', members: [{ role: 'ADMIN' }] };
+      prismaMock.organization.findUnique.mockResolvedValue(adminOrg as any);
+      prismaMock.organizationMember.findFirst.mockResolvedValue(null);
+      prismaMock.organizationInvite.create.mockResolvedValue({ id: 'invite-1' } as any);
+
+      const response = await app.request('/org-1/invite', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'invitee@example.com' }),
+      });
+
+      expect(response.status).toBe(403);
+      expect(prismaMock.organizationMember.findFirst).toHaveBeenCalledWith({
+        where: { organizationId: 'org-1', userId: mockUser.id },
+        select: { role: true },
+      });
+      expect(prismaMock.organizationInvite.create).not.toHaveBeenCalled();
+    });
+
     it('keeps database failures distinct from duplicate invitations', async () => {
       prismaMock.organization.findUnique.mockResolvedValue(team as any);
       prismaMock.organizationInvite.create.mockRejectedValue(new Error('database unavailable'));
@@ -425,7 +575,7 @@ describe('Organizations Routes', () => {
 
   describe('GET /:id/members', () => {
     it('should list members', async () => {
-      prismaMock.organizationMember.findFirst.mockResolvedValue({ id: 'member-1' } as any);
+      prismaMock.organization.findUnique.mockResolvedValue({ id: 'org-1', ownerId: mockUser.id } as any);
       prismaMock.organizationMember.findMany.mockResolvedValue([
         { id: 'member-1', userId: mockUser.id, role: 'OWNER', user: mockUser } as any
       ]);
@@ -435,18 +585,51 @@ describe('Organizations Routes', () => {
       expect(res.status).toBe(200);
       const data = await res.json();
       expect(data.members).toHaveLength(1);
+      expect(prismaMock.organizationMember.findFirst).not.toHaveBeenCalled();
     });
 
     it('should deny if not a member', async () => {
+      prismaMock.organization.findUnique.mockResolvedValue({
+        id: 'org-1', ownerId: 'other-user', subscriptionId: 'sub_team',
+        owner: { subscriptionTier: 'TEAM', stripeSubscriptionId: 'sub_team', subscriptionStatus: 'active' },
+      } as any);
       prismaMock.organizationMember.findFirst.mockResolvedValue(null);
 
       const res = await app.request('/org-1/members');
 
       expect(res.status).toBe(403);
     });
+
+    it.each([
+      ['active', 'sub_team', 200],
+      ['trialing', 'sub_team', 200],
+      ['canceled', 'sub_team', 403],
+      ['active', 'sub_new', 403],
+    ])('gates a non-owner member list for %s / %s', async (status, subscriptionId, expectedStatus) => {
+      prismaMock.organization.findUnique.mockResolvedValue({
+        id: 'org-1', ownerId: 'payer-1', subscriptionId: 'sub_team',
+        owner: { subscriptionTier: 'TEAM', stripeSubscriptionId: subscriptionId, subscriptionStatus: status },
+      } as any);
+      prismaMock.organizationMember.findFirst.mockResolvedValue({ role: 'MEMBER' } as any);
+      prismaMock.organizationMember.findMany.mockResolvedValue([{
+        id: 'member-1', role: 'MEMBER', user: { ...mockUser, name: 'Member', avatarUrl: null },
+      }] as any);
+
+      const response = await app.request('/org-1/members');
+      expect(response.status).toBe(expectedStatus);
+      if (expectedStatus === 200) {
+        expect((await response.json()).members[0].user.email).toBeUndefined();
+      } else {
+        expect(prismaMock.organizationMember.findMany).not.toHaveBeenCalled();
+      }
+    });
   });
 
   describe('DELETE /:id/members/:userId', () => {
+    beforeEach(() => {
+      prismaMock.$transaction.mockImplementation(async (callback: any) => callback(prismaMock));
+    });
+
     it('should remove a member', async () => {
       prismaMock.organization.findUnique.mockResolvedValue({
         id: 'org-1',
@@ -474,6 +657,36 @@ describe('Organizations Routes', () => {
 
       expect(res.status).toBe(400);
       expect(await res.json()).toEqual({ error: 'Cannot remove the organization owner' });
+    });
+
+    it.each([
+      ['active', 'sub_team', 200],
+      ['trialing', 'sub_team', 200],
+      ['canceled', 'sub_team', 403],
+      ['active', 'sub_new', 403],
+    ])('allows an admin removal only with a linked Team subscription (%s / %s)', async (status, subscriptionId, expectedStatus) => {
+      prismaMock.organization.findUnique.mockResolvedValue({
+        id: 'org-1', ownerId: 'payer-1', subscriptionId: 'sub_team',
+        members: [{ role: 'ADMIN' }],
+        owner: { subscriptionTier: 'TEAM', stripeSubscriptionId: subscriptionId, subscriptionStatus: status },
+      } as any);
+      prismaMock.organizationMember.findFirst.mockResolvedValue({ id: 'target-member' } as any);
+
+      const response = await app.request('/org-1/members/target-user', { method: 'DELETE' });
+      expect(response.status).toBe(expectedStatus);
+      expect(prismaMock.organizationMember.delete).toHaveBeenCalledTimes(expectedStatus === 200 ? 1 : 0);
+    });
+
+    it('lets the owner remove a teammate after the Team plan ends', async () => {
+      prismaMock.organization.findUnique.mockResolvedValue({
+        id: 'org-1', ownerId: mockUser.id, subscriptionId: 'sub_team', members: [],
+        owner: { subscriptionTier: 'FREE', stripeSubscriptionId: null, subscriptionStatus: 'canceled' },
+      } as any);
+      prismaMock.organizationMember.findFirst.mockResolvedValue({ id: 'target-member' } as any);
+
+      const response = await app.request('/org-1/members/target-user', { method: 'DELETE' });
+      expect(response.status).toBe(200);
+      expect(prismaMock.organizationMember.delete).toHaveBeenCalledTimes(1);
     });
   });
 

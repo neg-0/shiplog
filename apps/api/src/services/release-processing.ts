@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { Release, ReleaseStatus } from '@prisma/client';
+import type { Prisma, Release, ReleaseStatus } from '@prisma/client';
 import { prisma } from '../lib/db.js';
 
 export const DELIVERY_REVIEW_PREFIX = 'Delivery outcome needs review.';
@@ -18,10 +18,14 @@ export function processingWhere(id: string, marker: string) {
 }
 
 /** Claim the exact observed state, including any delivery-review marker. */
-export async function claimProcessing(release: ProcessingRelease, operation: Operation): Promise<string | null> {
+export async function claimProcessing(
+  release: ProcessingRelease,
+  operation: Operation,
+  client: Pick<Prisma.TransactionClient, 'release'> = prisma,
+): Promise<string | null> {
   if (release.status === 'PROCESSING' || needsDeliveryReview(release.error)) return null;
   const marker = `${MARKER_PREFIX}:${operation}:${release.status}:${randomUUID()}`;
-  const claimed = await prisma.release.updateMany({
+  const claimed = await client.release.updateMany({
     where: {
       id: release.id, status: release.status,
       error: release.error ?? null, updatedAt: release.updatedAt,
