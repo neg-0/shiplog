@@ -34,6 +34,7 @@ const environment = {
   JWT_SECRET: 'local-journey-only-not-a-production-secret',
   GITHUB_CLIENT_ID: 'local-journey-client',
   GITHUB_CLIENT_SECRET: 'local-journey-client-secret',
+  ADMIN_EMAILS: 'admin@example.test',
   APP_URL: 'http://localhost:3000',
   API_URL: 'http://localhost:3001',
   NO_COLOR: '1',

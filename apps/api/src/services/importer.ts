@@ -21,7 +21,11 @@ import { claimProcessing, failProcessing, processingWhere, recoverInterruptedPro
  * @param accessToken - GitHub OAuth access token with repo scope.
  * @returns A promise that resolves when the import process is complete.
  */
-export async function importRepoHistory(repoId: string, accessToken: string): Promise<void> {
+export async function importRepoHistory(
+  repoId: string,
+  accessToken: string,
+  options: { metadataOnly?: boolean } = {},
+): Promise<{ found: number }> {
   try {
     const repo = await prisma.repo.findUnique({
       where: { id: repoId },
@@ -30,7 +34,8 @@ export async function importRepoHistory(repoId: string, accessToken: string): Pr
 
     if (!repo) {
       logger.error(`Repo ${repoId} not found`, { repoId });
-      return;
+      if (options.metadataOnly) throw new Error('Repository not found');
+      return { found: 0 };
     }
 
     logger.info(`Starting import for ${repo.fullName}`, { repoId, repo: repo.fullName });
@@ -47,10 +52,12 @@ export async function importRepoHistory(repoId: string, accessToken: string): Pr
     }
 
     logger.info(`Found ${releases.length} releases`, { repoId, count: releases.length });
+    let found = 0;
 
     for (const ghRelease of releases) {
       // Drafts have no published tag and must remain private on GitHub until released.
       if (ghRelease.draft) continue;
+      found++;
       let release = await prisma.release.upsert({
         where: { githubId: ghRelease.id },
         create: {
@@ -63,10 +70,14 @@ export async function importRepoHistory(repoId: string, accessToken: string): Pr
           isDraft: ghRelease.draft,
           isPrerelease: ghRelease.prerelease,
           publishedAt: ghRelease.published_at ? new Date(ghRelease.published_at) : null,
-          status: 'PENDING',
+          status: options.metadataOnly ? 'SKIPPED' : 'PENDING',
         },
         update: {},
       });
+
+      // A manual history retry only discovers releases. Existing work stays untouched,
+      // and generation remains an explicit action on the release page.
+      if (options.metadataOnly) continue;
 
       const previousState = release.status;
       release = await recoverInterruptedProcessing(release);
@@ -124,7 +135,10 @@ export async function importRepoHistory(repoId: string, accessToken: string): Pr
     }
 
     logger.info(`Import complete for ${repo.fullName}`, { repoId, repo: repo.fullName });
+    return { found };
   } catch (error) {
     logger.error(`Import failed for repo ${repoId}`, { repoId, error });
+    if (options.metadataOnly) throw error;
+    return { found: 0 };
   }
 }

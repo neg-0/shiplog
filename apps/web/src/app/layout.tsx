@@ -3,12 +3,12 @@ import './globals.css';
 
 export const metadata: Metadata = {
   metadataBase: new URL('https://shiplog.io'),
-  title: 'ShipLog - Release notes that ship themselves',
-  description: 'Automatically generate and distribute release notes tailored for customers, developers, and execs — from your GitHub releases.',
+  title: 'ShipLog — You ship code. We get the word out.',
+  description: 'Turn GitHub releases into drafts for customers, developers, and stakeholders. Review, edit, and publish to your changelog, Slack, and Discord.',
   keywords: ['changelog', 'release notes', 'github', 'automation', 'developer tools', 'saas', 'changelog generator', 'ai changelog'],
   authors: [{ name: 'ShipLog' }],
   openGraph: {
-    title: 'ShipLog - Release notes that ship themselves',
+    title: 'ShipLog — You ship code. We get the word out.',
     description: 'One release. Three audiences. Review and share clear updates for customers, developers, and stakeholders.',
     url: 'https://shiplog.io',
     siteName: 'ShipLog',
@@ -19,14 +19,14 @@ export const metadata: Metadata = {
         url: 'https://shiplog.io/opengraph-image',
         width: 1200,
         height: 630,
-        alt: 'ShipLog - Release notes that ship themselves',
+        alt: 'ShipLog — You ship code. We get the word out.',
       },
     ],
   },
   twitter: {
     card: 'summary_large_image',
     title: 'ShipLog',
-    description: 'Release notes that ship themselves. One release, three audiences.',
+    description: 'You ship code. We get the word out. Draft, review, and share release notes for three audiences.',
     images: ['https://shiplog.io/opengraph-image'],
   },
   robots: {

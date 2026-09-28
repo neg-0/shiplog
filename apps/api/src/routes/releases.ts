@@ -11,6 +11,7 @@ import { publishReleaseNotes } from '../services/publisher.js';
 import { claimProcessing, failProcessing, needsDeliveryReview, processingWhere, recoverInterruptedProcessing } from '../services/release-processing.js';
 import { sanitizeHtml } from '../lib/sanitize.js';
 import { rateLimit } from '../lib/rate-limit.js';
+import { readableRepo, writableRepo } from '../lib/repo-access.js';
 import {
   regenerateNotesSchema,
   publishReleaseSchema,
@@ -27,15 +28,8 @@ export const releases = new Hono();
 releases.use('*', requireAuth);
 releases.use('*', apiLimiter);
 
-// Helper for repo access (Owner or Org Member) via release
-const releaseAccess = (userId: string) => ({
-  repo: {
-    OR: [
-      { userId },
-      { organization: { members: { some: { userId } } } }
-    ]
-  }
-});
+const releaseAccess = (userId: string) => ({ repo: readableRepo(userId) });
+const releaseWriteAccess = (userId: string) => ({ repo: writableRepo(userId) });
 
 /**
  * GET /:id
@@ -63,6 +57,13 @@ releases.get('/:id', async (c) => {
           isPublic: true,
           slug: true,
           userId: true,
+          organizationId: true,
+          organization: {
+            select: {
+              ownerId: true,
+              members: { where: { userId: user.id }, select: { role: true } },
+            },
+          },
           user: { select: { subscriptionTier: true } },
           owner: true,
           name: true,
@@ -99,6 +100,9 @@ releases.get('/:id', async (c) => {
       fullName: release.repo.fullName,
       isPublic: release.repo.isPublic,
       slug: release.repo.slug,
+      canManage: !release.repo.organizationId
+        ? release.repo.userId === user.id
+        : release.repo.organization?.ownerId === user.id || ['OWNER', 'ADMIN'].includes(release.repo.organization?.members[0]?.role ?? ''),
       config: release.repo.config,
       entitlements: repoEntitlements(release.repo),
     },
@@ -145,7 +149,7 @@ releases.post(
     let release = await prisma.release.findFirst({
       where: {
         id,
-        ...releaseAccess(user.id)
+        ...releaseWriteAccess(user.id)
       },
       include: {
         repo: {
@@ -260,7 +264,7 @@ releases.post(
     let release = await prisma.release.findFirst({
       where: {
         id,
-        ...releaseAccess(user.id)
+        ...releaseWriteAccess(user.id)
       },
       include: {
         notes: true,
@@ -352,7 +356,7 @@ releases.patch(
     const release = await prisma.release.findFirst({
       where: {
         id,
-        ...releaseAccess(user.id)
+        ...releaseWriteAccess(user.id)
       },
       include: {
         notes: true,

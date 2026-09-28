@@ -46,6 +46,7 @@ globalThis.fetch = jest.fn<any>(async (input: string | URL | Request) => {
 
 const { app } = await import('../src/app.js');
 const { prisma } = await import('../src/lib/db.js');
+const { signToken } = await import('../src/lib/jwt.js');
 afterAll(async () => { await prisma.$disconnect(); });
 
 test('OAuth to reviewed, private-then-public hosted changelog with real database persistence', async () => {
@@ -117,4 +118,132 @@ test('OAuth to reviewed, private-then-public hosted changelog with real database
     releases: [{ version: 'v1.0.0', notes: { customer: '**Reviewed** customer value.', developer: 'Developer detail.', stakeholder: 'Stakeholder outcome.' } }],
   });
   expect(outboundRequests).toEqual(['https://github.com/login/oauth/access_token', 'https://api.github.com/user']);
+}, 15_000);
+
+test('organization members can read but only admins can change a repository', async () => {
+  const owner = await prisma.user.create({
+    data: { githubId: 1601, login: 'team-owner', accessToken: 'local-fixture', subscriptionTier: 'TEAM' },
+  });
+  const member = await prisma.user.create({
+    data: { githubId: 1602, login: 'team-member', accessToken: 'local-fixture', subscriptionTier: 'TEAM' },
+  });
+  const admin = await prisma.user.create({
+    data: { githubId: 1603, login: 'team-admin', accessToken: 'local-fixture', subscriptionTier: 'TEAM' },
+  });
+  const organization = await prisma.organization.create({
+    data: {
+      name: 'Journey Team', slug: 'journey-team', ownerId: owner.id,
+      members: { create: [
+        { userId: owner.id, role: 'OWNER' },
+        { userId: member.id, role: 'MEMBER' },
+        { userId: admin.id, role: 'ADMIN' },
+      ] },
+    },
+  });
+  // The MEMBER originally connected this repository. That must not grant an
+  // ownership bypass after it becomes an organization repository.
+  const repo = await prisma.repo.create({
+    data: {
+      githubId: 1801, name: 'team-repo', fullName: 'team-owner/team-repo', owner: 'team-owner',
+      userId: member.id, organizationId: organization.id, isPublic: false,
+      config: { create: { autoGenerate: false } },
+      releases: { create: {
+        githubId: 1901, tagName: 'v1.0.0', htmlUrl: 'https://github.com/team-owner/team-repo/releases/tag/v1.0.0',
+        status: 'READY', publishedAt: new Date('2026-09-01T12:00:00Z'),
+        notes: { create: { customer: 'Customer note', developer: 'Developer note', stakeholder: 'Stakeholder note' } },
+      } },
+    },
+    include: { releases: true },
+  });
+  const releaseId = repo.releases[0].id;
+  const config = await prisma.repoConfig.findUniqueOrThrow({ where: { repoId: repo.id } });
+  const channel = await prisma.channel.create({
+    data: {
+      configId: config.id, name: 'Private Slack', type: 'SLACK', audience: 'CUSTOMER',
+      webhookUrl: 'https://hooks.slack.com/services/local-fixture-secret',
+    },
+  });
+  await prisma.emailRecipient.create({
+    data: { configId: config.id, email: 'private-recipient@example.test', audience: 'STAKEHOLDER' },
+  });
+  const memberHeaders = { Authorization: `Bearer ${await signToken(member.id)}`, 'Content-Type': 'application/json' };
+  const adminHeaders = { Authorization: `Bearer ${await signToken(admin.id)}`, 'Content-Type': 'application/json' };
+
+  const list = await app.request('/repos', { headers: memberHeaders });
+  expect(list.status).toBe(200);
+  expect((await list.json() as { repos: { id: string }[] }).repos).toEqual(expect.arrayContaining([{ id: repo.id, githubId: 1801, name: 'team-repo', fullName: 'team-owner/team-repo', description: null, status: 'PENDING', lastRelease: 'v1.0.0', lastReleaseDate: expect.any(String) }]));
+  const details = await app.request(`/repos/${repo.id}`, { headers: memberHeaders });
+  expect(details.status).toBe(200);
+  const detailsBody = await details.json();
+  expect(detailsBody).toMatchObject({ id: repo.id, canManage: false, config: { channels: [{ id: channel.id, name: 'Private Slack', type: 'SLACK', audience: 'CUSTOMER', enabled: true }] } });
+  expect(JSON.stringify(detailsBody)).not.toContain('local-fixture-secret');
+  expect(JSON.stringify(detailsBody)).not.toContain('private-recipient@example.test');
+  expect(detailsBody.config.emailRecipients).toBeUndefined();
+  const memberRelease = await app.request(`/releases/${releaseId}`, { headers: memberHeaders });
+  expect(memberRelease.status).toBe(200);
+  expect(await memberRelease.json()).toMatchObject({ id: releaseId, repo: { id: repo.id, canManage: false } });
+
+  const memberSettings = await app.request(`/repos/${repo.id}/settings`, {
+    method: 'PATCH', headers: memberHeaders, body: JSON.stringify({ publicTitle: 'Unauthorized change' }),
+  });
+  expect(memberSettings.status).toBe(404);
+  expect((await app.request(`/repos/${repo.id}/config`, {
+    method: 'PATCH', headers: memberHeaders, body: JSON.stringify({ productName: 'Unauthorized change' }),
+  })).status).toBe(404);
+  expect((await app.request(`/repos/${repo.id}/channels`, {
+    method: 'POST', headers: memberHeaders,
+    body: JSON.stringify({ name: 'Second channel', type: 'SLACK', audience: 'CUSTOMER', webhookUrl: 'https://hooks.slack.com/services/local-fixture-new' }),
+  })).status).toBe(404);
+  expect((await app.request(`/repos/${repo.id}/channels/${channel.id}`, {
+    method: 'PATCH', headers: memberHeaders, body: JSON.stringify({ enabled: false }),
+  })).status).toBe(404);
+  expect((await app.request(`/repos/${repo.id}/channels/${channel.id}`, {
+    method: 'DELETE', headers: memberHeaders, body: '{}',
+  })).status).toBe(404);
+  expect((await app.request(`/releases/${releaseId}/publish`, {
+    method: 'POST', headers: memberHeaders, body: JSON.stringify({ channels: [] }),
+  })).status).toBe(404);
+  expect((await app.request(`/repos/${repo.id}/import`, {
+    method: 'POST', headers: memberHeaders, body: '{}',
+  })).status).toBe(404);
+  expect((await app.request(`/repos/${repo.id}`, { method: 'DELETE', headers: memberHeaders, body: '{}' })).status).toBe(404);
+  expect(await prisma.repo.findUnique({ where: { id: repo.id }, select: { publicTitle: true } })).toEqual({ publicTitle: null });
+  expect(await prisma.channel.findUnique({ where: { id: channel.id }, select: { enabled: true } })).toEqual({ enabled: true });
+  expect(await prisma.distribution.count({ where: { releaseId } })).toBe(0);
+
+  const adminSettings = await app.request(`/repos/${repo.id}/settings`, {
+    method: 'PATCH', headers: adminHeaders, body: JSON.stringify({ publicTitle: 'Team release notes' }),
+  });
+  expect(adminSettings.status).toBe(200);
+  expect(await prisma.repo.findUnique({ where: { id: repo.id }, select: { publicTitle: true } })).toEqual({ publicTitle: 'Team release notes' });
+  const adminDetails = await app.request(`/repos/${repo.id}`, { headers: adminHeaders });
+  expect(adminDetails.status).toBe(200);
+  expect(await adminDetails.json()).toMatchObject({ id: repo.id, canManage: true });
+  const adminRelease = await app.request(`/releases/${releaseId}`, { headers: adminHeaders });
+  expect(adminRelease.status).toBe(200);
+  expect(await adminRelease.json()).toMatchObject({ id: releaseId, repo: { id: repo.id, canManage: true } });
+  expect(outboundRequests).toEqual(['https://github.com/login/oauth/access_token', 'https://api.github.com/user']);
+}, 15_000);
+
+test('admin operational views query real PostgreSQL and remain private', async () => {
+  const operator = await prisma.user.create({
+    data: { githubId: 2601, login: 'journey-operator', email: 'admin@example.test', accessToken: 'local-fixture' },
+  });
+  const headers = { Authorization: `Bearer ${await signToken(operator.id)}` };
+  const metrics = await app.request('/admin/metrics', { headers });
+  expect(metrics.status).toBe(200);
+  expect(metrics.headers.get('Cache-Control')).toContain('no-store');
+  expect(await metrics.json()).toMatchObject({
+    users: { total: expect.any(Number) },
+    billing: { mrr: null, collectedRevenue: null },
+  });
+
+  const users = await app.request('/admin/users?limit=10', { headers });
+  expect(users.status).toBe(200);
+  expect(await users.json()).toMatchObject({
+    users: expect.arrayContaining([expect.objectContaining({ id: operator.id, login: 'journey-operator', repoCount: 0, releaseCount: 0, externalDeliveryCount: 0 })]),
+  });
+  const teams = await app.request('/admin/organizations', { headers });
+  expect(teams.status).toBe(200);
+  expect(await teams.json()).toMatchObject({ organizations: expect.arrayContaining([expect.objectContaining({ name: 'Journey Team' })]) });
 }, 15_000);

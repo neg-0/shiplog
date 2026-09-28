@@ -8,7 +8,7 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: process.env.CI ? 'github' : [['list'], ['html', { open: 'never' }]],
   use: {
-    baseURL: 'http://localhost:3000',
+    baseURL: 'http://127.0.0.1:3000',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
   },
@@ -19,9 +19,10 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'node apps/web/node_modules/next/dist/bin/next dev apps/web',
+    command: 'node node_modules/next/dist/bin/next dev --hostname 127.0.0.1',
+    cwd: './apps/web',
     env: { API_URL: 'http://127.0.0.1:3001', NEXT_PUBLIC_API_URL: 'http://127.0.0.1:3001' },
-    url: 'http://localhost:3000',
+    url: 'http://127.0.0.1:3000',
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
   },

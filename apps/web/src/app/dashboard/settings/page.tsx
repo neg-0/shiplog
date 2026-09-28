@@ -153,15 +153,16 @@ export default function SettingsPage() {
                   </p>
                 </div>
                 <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
-                  {user.subscriptionTier !== 'TEAM' && (
-                    <button
-                      onClick={() => handleUpgrade(user.subscriptionTier === 'PRO' ? 'team' : 'pro')}
-                      disabled={billingBusy}
-                      className="px-4 py-2 text-sm bg-teal-600 text-white rounded-lg hover:bg-teal-500 transition disabled:opacity-50"
-                    >
-                      Upgrade
-                    </button>
-                  )}
+                  {user.subscriptionTier === 'FREE' && <button
+                    onClick={() => handleUpgrade('pro')}
+                    disabled={billingBusy}
+                    className="px-4 py-2 text-sm bg-teal-600 text-white rounded-lg hover:bg-teal-500 transition disabled:opacity-50"
+                  >Upgrade to Pro · 14-day trial if eligible</button>}
+                  {user.subscriptionTier !== 'TEAM' && <button
+                    onClick={() => handleUpgrade('team')}
+                    disabled={billingBusy}
+                    className="px-4 py-2 text-sm text-navy-600 border border-navy-200 rounded-lg hover:bg-navy-50 transition disabled:opacity-50"
+                  >Explore Team · no trial</button>}
                   {hasSubscription && <button
                     onClick={handleManage}
                     disabled={billingBusy}

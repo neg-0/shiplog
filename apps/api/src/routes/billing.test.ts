@@ -384,9 +384,9 @@ describe('Billing Route', () => {
     });
 
     it.each([
-      ['PRO', 'price_pro_123', 'PRO'],
-      ['TeAm', 'price_team_123', 'TEAM'],
-    ])('uses the configured price for mixed-case %s', async (plan, priceId, metadataPlan) => {
+      ['PRO', 'price_pro_123', 'PRO', 14],
+      ['TeAm', 'price_team_123', 'TEAM', undefined],
+    ])('uses the configured price and advertised trial for mixed-case %s', async (plan, priceId, metadataPlan, trialDays) => {
       mockPrisma.user.findUnique.mockResolvedValue({ ...newCustomer(), stripeCustomerId: 'cus_existing' });
       mockStripe.checkout.sessions.create.mockResolvedValue({ url: 'https://checkout.stripe.test/session' });
 
@@ -398,6 +398,19 @@ describe('Billing Route', () => {
       expect(mockStripe.checkout.sessions.create).toHaveBeenCalledWith(expect.objectContaining({
         line_items: [{ price: priceId, quantity: 1 }], metadata: { userId: 'user_123', plan: metadataPlan },
       }), expect.anything());
+      const params = mockStripe.checkout.sessions.create.mock.calls[0]?.[0];
+      expect(params.subscription_data?.trial_period_days).toBe(trialDays);
+    });
+
+    it('does not grant a second Pro trial after a canceled trial subscription', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({ ...newCustomer(), stripeCustomerId: 'cus_existing' });
+      mockStripe.subscriptions.list.mockResolvedValue({
+        data: [{ id: 'sub_canceled', status: 'canceled', trial_start: 1000 }], has_more: false,
+      });
+      mockStripe.checkout.sessions.create.mockResolvedValue({ url: 'https://checkout.stripe.test/session' });
+
+      expect((await checkoutRequest()).status).toBe(200);
+      expect(mockStripe.checkout.sessions.create.mock.calls[0]?.[0].subscription_data).toBeUndefined();
     });
 
     it('creates no checkout if committing the customer identity fails', async () => {

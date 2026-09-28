@@ -12,7 +12,7 @@ jest.mock('next/navigation', () => ({ useParams: () => ({ id: 'repo-1' }), useRo
 jest.mock('@/components/DashboardLayout', () => ({ DashboardLayout: ({ children }: { children: React.ReactNode }) => <div>{children}</div> }));
 
 const repo = {
-  id: 'repo-1', fullName: 'acme/repo', isPublic: false,
+  id: 'repo-1', fullName: 'acme/repo', isPublic: false, canManage: true,
   entitlements: { automation: false, channels: false, branding: false, grandfathered: false },
   config: { autoGenerate: false, autoPublish: false, customerTone: 'friendly' },
 };
@@ -21,6 +21,16 @@ beforeEach(() => {
   jest.clearAllMocks();
   (api.getRepo as jest.Mock).mockResolvedValue(repo);
   (api.getUser as jest.Mock).mockResolvedValue({ id: 'user-1', subscriptionTier: 'FREE' });
+});
+
+it('keeps direct settings URLs read-only for organization members', async () => {
+  (api.getRepo as jest.Mock).mockResolvedValue({ ...repo, canManage: false });
+  render(<RepoSettingsPage />);
+  expect(await screen.findByText(/Ask a team owner or admin to change its settings/)).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Save Settings' })).not.toBeInTheDocument();
+  expect(screen.queryByLabelText('Public changelog')).not.toBeInTheDocument();
+  expect(api.updateRepoConfig).not.toHaveBeenCalled();
+  expect(api.updateRepoSettings).not.toHaveBeenCalled();
 });
 
 it('keeps new Free automation disabled and exposes generation provider disclosure', async () => {

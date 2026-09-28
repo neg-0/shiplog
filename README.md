@@ -8,7 +8,7 @@ Connect a repository, import or receive a release, generate three drafts, review
 - API: Node.js, Hono, Prisma/PostgreSQL; deployed on Railway.
 - Sign-in: GitHub OAuth. Billing: Stripe. Generation: OpenAI.
 
-See [readiness review](docs/READINESS.md) for verified fixes, live rollout checks, and unfinished features. [Architecture](docs/ARCHITECTURE.md) and [roadmap](docs/ROADMAP.md) contain historical plans, not a current feature guarantee.
+See [readiness review](docs/READINESS.md) for verified fixes, live rollout checks, and unfinished features. The [PRD](docs/PRD.md), [architecture](docs/ARCHITECTURE.md), and [roadmap](docs/ROADMAP.md) contain historical plans, not a current feature guarantee.
 
 ## Local development
 

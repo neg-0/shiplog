@@ -136,10 +136,12 @@ export interface Channel {
   id: string;
   type: 'SLACK' | 'DISCORD' | 'WEBHOOK';
   name: string;
-  webhookUrl: string;
+  webhookUrl?: string;
   audience: 'CUSTOMER' | 'DEVELOPER' | 'STAKEHOLDER';
   enabled: boolean;
 }
+
+export type NewChannel = Omit<Channel, 'id' | 'webhookUrl'> & { webhookUrl: string };
 
 export interface RepoEntitlements {
   automation: boolean;
@@ -150,6 +152,7 @@ export interface RepoEntitlements {
 
 export interface RepoDetail extends Repo {
   entitlements?: RepoEntitlements;
+  canManage: boolean;
   owner: string;
   webhookActive: boolean;
   isPublic?: boolean;
@@ -194,6 +197,13 @@ export async function getRepos(): Promise<{ repos: Repo[] }> {
 
 export async function getRepo(id: string): Promise<RepoDetail> {
   return fetchApi(`/repos/${id}`);
+}
+
+export async function retryRepoImport(id: string): Promise<{ status: 'complete'; found: number }> {
+  return fetchApi(`/repos/${id}/import`, {
+    method: 'POST',
+    body: '{}',
+  });
 }
 
 export async function getAvailableRepos(): Promise<{ repos: GitHubRepo[] }> {
@@ -244,7 +254,7 @@ export async function updateRepoSettings(id: string, settings: {
 
 export async function addChannel(
   repoId: string,
-  channel: Omit<Channel, 'id'>
+  channel: NewChannel
 ): Promise<Channel> {
   return fetchApi(`/repos/${repoId}/channels`, {
     method: 'POST',
@@ -297,6 +307,7 @@ export interface Release {
   repo: {
     id: string;
     fullName: string;
+    canManage: boolean;
     isPublic?: boolean;
     slug?: string | null;
     entitlements?: RepoEntitlements;

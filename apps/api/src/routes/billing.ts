@@ -66,14 +66,18 @@ const shouldDowngrade = (status?: Stripe.Subscription.Status) => {
 
 const lifecycleRequestOptions = { timeout: 10_000, maxNetworkRetries: 0 };
 
-async function hasUnfinishedSubscription(customerId: string): Promise<boolean> {
+async function getSubscriptionState(customerId: string): Promise<{ unfinished: boolean; trialUsed: boolean }> {
   let startingAfter: string | undefined;
+  let trialUsed = false;
   for (let page = 0; page < 20; page++) {
     const subscriptions = await stripe!.subscriptions.list(
       { customer: customerId, status: 'all', limit: 100, starting_after: startingAfter }, lifecycleRequestOptions,
     );
-    if (subscriptions.data.some(subscription => !['canceled', 'incomplete_expired'].includes(subscription.status))) return true;
-    if (!subscriptions.has_more) return false;
+    trialUsed ||= subscriptions.data.some(subscription => subscription.trial_start != null);
+    if (subscriptions.data.some(subscription => !['canceled', 'incomplete_expired'].includes(subscription.status))) {
+      return { unfinished: true, trialUsed };
+    }
+    if (!subscriptions.has_more) return { unfinished: false, trialUsed };
     startingAfter = subscriptions.data.at(-1)?.id;
     if (!startingAfter) break;
   }
@@ -93,7 +97,7 @@ export async function accountDeletionBillingBlock(customerId: string): Promise<{
       return { error: 'An unfinished checkout is still open. Let it expire or contact support to close it before deleting your account.', status: 409 };
     }
 
-    if (await hasUnfinishedSubscription(customerId)) {
+    if ((await getSubscriptionState(customerId)).unfinished) {
       return { error: 'Stripe still has an unfinished subscription. Cancel it in the billing portal before deleting your account.', status: 409 };
     }
     return null;
@@ -184,7 +188,8 @@ billing.post(
           const openSessions = await stripe.checkout.sessions.list(
             { customer: dbUser.stripeCustomerId, status: 'open', limit: 1 }, lifecycleRequestOptions,
           );
-          if (await hasUnfinishedSubscription(dbUser.stripeCustomerId)) {
+          const subscriptionState = await getSubscriptionState(dbUser.stripeCustomerId);
+          if (subscriptionState.unfinished) {
             return c.json({ error: 'You already have a subscription. Please manage it in the billing portal.', redirect: '/dashboard/settings' }, 409);
           }
           const openSession = openSessions.data[0];
@@ -208,7 +213,7 @@ billing.post(
             customer: dbUser.stripeCustomerId,
             line_items: [{ price: priceId, quantity: 1 }],
             allow_promotion_codes: true,
-            subscription_data: { trial_period_days: 14 },
+            ...(plan === 'pro' && !subscriptionState.trialUsed ? { subscription_data: { trial_period_days: 14 } } : {}),
             success_url: `${APP_URL}/dashboard/settings?checkout=success`,
             cancel_url: `${APP_URL}/dashboard/settings?checkout=cancel`,
             client_reference_id: dbUser.id,

@@ -9,6 +9,7 @@ import { repoEntitlements } from '../lib/entitlements.js';
 import { validateWebhookUrl } from '../services/distributor.js';
 import { listUserRepos, getRepository, createWebhook, deleteWebhook } from '../services/github.js';
 import { importRepoHistory } from '../services/importer.js';
+import { readableRepo, writableRepo } from '../lib/repo-access.js';
 import {
   connectRepoSchema,
   updateRepoConfigSchema,
@@ -29,14 +30,6 @@ const API_URL = process.env.API_URL || 'https://api.shiplog.io';
 repos.use('*', requireAuth);
 repos.use('*', apiLimiter);
 
-// Helper for repo access (Owner or Org Member)
-const repoAccess = (userId: string) => ({
-  OR: [
-    { userId },
-    { organization: { members: { some: { userId } } } }
-  ]
-});
-
 // Helper for admin/owner access check (for deletion/critical updates)
 const checkRepoAdmin = async (repoId: string, userId: string) => {
   const repo = await prisma.repo.findUnique({
@@ -54,17 +47,16 @@ const checkRepoAdmin = async (repoId: string, userId: string) => {
 
   if (!repo) return null;
 
-  // If personal repo, userId must match
-  if (repo.userId === userId && !repo.organizationId) return repo;
+  // Personal repositories belong to the connecting user.
+  if (!repo.organizationId) return repo.userId === userId ? repo : null;
 
-  // If org repo, user must be owner/admin
-  if (repo.organizationId && repo.organization?.members.length) {
+  // Organization membership, not the original connecting user ID, grants
+  // management rights after a repository is moved into a team.
+  if (repo.organization?.ownerId === userId) return repo;
+  if (repo.organization?.members.length) {
     const role = repo.organization.members[0].role;
     if (role === 'OWNER' || role === 'ADMIN') return repo;
   }
-
-  // If user is the direct owner (even if in org, usually userId is the creator/owner)
-  if (repo.userId === userId) return repo;
 
   return null;
 };
@@ -79,7 +71,7 @@ repos.get('/', async (c) => {
   const user = c.get('user');
   
   const connectedRepos = await prisma.repo.findMany({
-    where: repoAccess(user.id),
+    where: readableRepo(user.id),
     include: {
       releases: {
         orderBy: { publishedAt: 'desc' },
@@ -121,14 +113,29 @@ repos.get('/:id', async (c) => {
   const repo = await prisma.repo.findFirst({
     where: { 
       id,
-      ...repoAccess(user.id),
+      ...readableRepo(user.id),
     },
     include: {
       user: { select: { subscriptionTier: true } },
+      organization: {
+        select: {
+          ownerId: true,
+          members: { where: { userId: user.id }, select: { role: true } },
+        },
+      },
       config: {
-        include: {
-          channels: true,
-          emailRecipients: true,
+        select: {
+          autoGenerate: true,
+          autoPublish: true,
+          generateCustomer: true,
+          generateDeveloper: true,
+          generateStakeholder: true,
+          customerTone: true,
+          companyName: true,
+          productName: true,
+          channels: {
+            select: { id: true, type: true, name: true, audience: true, enabled: true },
+          },
         },
       },
       releases: {
@@ -158,6 +165,9 @@ repos.get('/:id', async (c) => {
     description: repo.description,
     status: repo.status,
     webhookActive: repo.webhookActive,
+    canManage: !repo.organizationId
+      ? repo.userId === user.id
+      : repo.organization?.ownerId === user.id || ['OWNER', 'ADMIN'].includes(repo.organization?.members[0]?.role ?? ''),
     entitlements: repoEntitlements(repo),
     isPublic: repo.isPublic,
     slug: repo.slug,
@@ -363,6 +373,30 @@ repos.post(
   }
 );
 
+/** Retry GitHub release discovery without regenerating notes or sending channels. */
+repos.post('/:id/import', async (c) => {
+  const user = c.get('user');
+  const repo = await checkRepoAdmin(c.req.param('id'), user.id);
+  if (!repo) return c.json({ error: 'Repository not found or unauthorized' }, 404);
+
+  const owner = await prisma.user.findUnique({
+    where: { id: repo.userId },
+    select: { accessToken: true },
+  });
+  if (!owner?.accessToken) {
+    return c.json({ error: 'The connecting GitHub account must sign in again before importing releases.' }, 409);
+  }
+
+  try {
+    const accessToken = await decrypt(owner.accessToken);
+    const result = await importRepoHistory(repo.id, accessToken, { metadataOnly: true });
+    return c.json({ status: 'complete', found: result.found });
+  } catch (error) {
+    logger.warn('GitHub history retry failed', { repoId: repo.id, error });
+    return c.json({ error: 'Could not import GitHub releases. Check repository access and try again.' }, 502);
+  }
+});
+
 /**
  * PATCH /:id/config
  * @description Update repository configuration (AI generation settings).
@@ -380,7 +414,7 @@ repos.patch(
       const repo = await prisma.repo.findFirst({
         where: {
           id,
-          ...repoAccess(user.id),
+          ...writableRepo(user.id),
         },
         select: { id: true, user: { select: { subscriptionTier: true } } },
       });
@@ -429,7 +463,7 @@ repos.patch(
       const repo = await prisma.repo.findFirst({
         where: {
           id,
-          ...repoAccess(user.id),
+          ...writableRepo(user.id),
         },
         select: { id: true, user: { select: { subscriptionTier: true } } },
       });
@@ -484,7 +518,7 @@ repos.post(
     }
 
     const repo = await prisma.repo.findFirst({
-      where: { id, ...repoAccess(user.id) },
+      where: { id, ...writableRepo(user.id) },
       include: { config: true, user: { select: { subscriptionTier: true } } },
     });
 
@@ -533,7 +567,7 @@ repos.patch(
 
     // Check repo access
     const repo = await prisma.repo.findFirst({
-      where: { id, ...repoAccess(user.id) },
+      where: { id, ...writableRepo(user.id) },
       include: { user: { select: { subscriptionTier: true } } },
     });
 
@@ -582,7 +616,7 @@ repos.delete('/:id/channels/:channelId', async (c) => {
   const channelId = c.req.param('channelId');
 
   const repo = await prisma.repo.findFirst({
-    where: { id, ...repoAccess(user.id) },
+    where: { id, ...writableRepo(user.id) },
   });
 
   if (!repo) {

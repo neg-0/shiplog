@@ -184,6 +184,38 @@ describe('Repos Routes', () => {
     });
   });
 
+  describe('POST /:id/import', () => {
+    it('reports a GitHub failure and permits a safe metadata retry', async () => {
+      prismaMock.repo.findUnique.mockResolvedValue({
+        id: 'repo-1', userId: 'test-user-id', organizationId: null, fullName: 'owner/repo',
+      } as any);
+      prismaMock.user.findUnique.mockResolvedValue({ accessToken: 'enc-token' } as any);
+      importerService.importRepoHistory
+        .mockRejectedValueOnce(new Error('GitHub unavailable'))
+        .mockResolvedValueOnce({ found: 2 });
+
+      const first = await repos.request('/repo-1/import', { method: 'POST' });
+      expect(first.status).toBe(502);
+      expect(await first.json()).toMatchObject({ error: expect.stringContaining('Could not import') });
+
+      const retry = await repos.request('/repo-1/import', { method: 'POST' });
+      expect(retry.status).toBe(200);
+      expect(await retry.json()).toEqual({ status: 'complete', found: 2 });
+      expect(importerService.importRepoHistory).toHaveBeenCalledWith('repo-1', 'decrypted-access-token', { metadataOnly: true });
+    });
+
+    it('rejects an ordinary team member even if they connected the repository', async () => {
+      prismaMock.repo.findUnique.mockResolvedValue({
+        id: 'repo-1', userId: 'test-user-id', organizationId: 'org-1',
+        organization: { ownerId: 'team-owner', members: [{ role: 'MEMBER' }] },
+      } as any);
+
+      const response = await repos.request('/repo-1/import', { method: 'POST' });
+      expect(response.status).toBe(404);
+      expect(importerService.importRepoHistory).not.toHaveBeenCalled();
+    });
+  });
+
   describe('PATCH /:id/config', () => {
     it('updates repo config', async () => {
       prismaMock.repo.findFirst.mockResolvedValue({ id: 'repo-1', user: { subscriptionTier: 'PRO' } } as any);

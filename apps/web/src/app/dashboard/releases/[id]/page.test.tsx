@@ -21,7 +21,7 @@ jest.mock('next/dynamic', () => ({
 const release = {
   id: 'release-1', tagName: 'v1.0', name: 'First release', status: 'READY', publishedAt: null,
   htmlUrl: 'https://github.com/acme/repo/releases/v1.0',
-  repo: { id: 'repo-1', fullName: 'acme/repo', isPublic: true, entitlements: { channels: true }, config: { channels: [] } },
+  repo: { id: 'repo-1', fullName: 'acme/repo', canManage: true, isPublic: true, entitlements: { channels: true }, config: { channels: [] } },
   notes: { customer: 'Original customer notes', developer: 'Technical details', stakeholder: 'Summary' },
 };
 
@@ -30,6 +30,26 @@ beforeEach(() => {
   (api.getRelease as jest.Mock).mockResolvedValue(release);
   (api.getUser as jest.Mock).mockResolvedValue({ id: 'user-1' });
   (api.publishRelease as jest.Mock).mockResolvedValue({ status: 'published' });
+});
+
+it('shows notes without edit, generation, or publish controls to organization members', async () => {
+  (api.getRelease as jest.Mock).mockResolvedValue({ ...release, repo: { ...release.repo, canManage: false } });
+  render(<ReleaseDetailPage />);
+  expect(await screen.findByText('Original customer notes')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Copy' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Regenerate' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Publish' })).not.toBeInTheDocument();
+  expect(api.publishRelease).not.toHaveBeenCalled();
+  expect(api.regenerateNotes).not.toHaveBeenCalled();
+  expect(api.updateReleaseNotes).not.toHaveBeenCalled();
+});
+
+it('does not offer generation to members when notes are missing', async () => {
+  (api.getRelease as jest.Mock).mockResolvedValue({ ...release, repo: { ...release.repo, canManage: false }, notes: null });
+  render(<ReleaseDetailPage />);
+  expect(await screen.findByText(/A team owner or admin can generate release notes/)).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Generate Notes' })).not.toBeInTheDocument();
 });
 
 it('can publish a hosted changelog without any notification channels', async () => {

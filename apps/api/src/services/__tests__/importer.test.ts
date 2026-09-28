@@ -195,4 +195,27 @@ describe('importRepoHistory', () => {
     expect(mockGenerateReleaseNotes).not.toHaveBeenCalled();
   });
 
+  it('surfaces a failed manual history fetch and retries metadata without AI or delivery', async () => {
+    mockPrisma.repo.findUnique.mockResolvedValue({
+      id: 'repo-1', owner: 'owner', name: 'repo', fullName: 'owner/repo',
+      user: { subscriptionTier: 'PRO' }, config: { autoGenerate: true, autoPublish: true },
+    } as any);
+    mockListReleases
+      .mockRejectedValueOnce(new Error('GitHub unavailable'))
+      .mockResolvedValueOnce([{ id: 100, tag_name: 'v1.0', draft: false, published_at: '2026-09-27T00:00:00Z' }]);
+    mockPrisma.release.upsert.mockResolvedValue({ id: 'rel-1', status: 'SKIPPED' } as any);
+
+    await expect(importRepoHistory('repo-1', 'token', { metadataOnly: true })).rejects.toThrow('GitHub unavailable');
+    await expect(importRepoHistory('repo-1', 'token', { metadataOnly: true })).resolves.toEqual({ found: 1 });
+
+    expect(mockPrisma.release.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { githubId: 100 },
+      create: expect.objectContaining({ status: 'SKIPPED' }),
+      update: {},
+    }));
+    expect(mockFetchReleaseData).not.toHaveBeenCalled();
+    expect(mockGenerateReleaseNotes).not.toHaveBeenCalled();
+    expect(mockPrisma.release.updateMany).not.toHaveBeenCalled();
+  });
+
 });
