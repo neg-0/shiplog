@@ -1,6 +1,6 @@
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { mockDeep } from 'jest-mock-extended';
-import type { PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
 import { Hono } from 'hono';
 
 const prismaMock = mockDeep<PrismaClient>();
@@ -292,12 +292,17 @@ describe('Organizations Routes', () => {
   });
 
   describe('POST /:id/invite', () => {
-    it('should invite a user', async () => {
-      prismaMock.organization.findUnique.mockResolvedValue({
-        id: 'org-1',
-        ownerId: mockUser.id,
-        members: [{ role: 'OWNER' }],
+    const team = { id: 'org-1', ownerId: mockUser.id, subscriptionId: 'sub_team', members: [{ role: 'OWNER' }] };
+
+    beforeEach(() => {
+      prismaMock.$transaction.mockImplementation(async (callback: any) => callback(prismaMock));
+      prismaMock.user.findUnique.mockResolvedValue({
+        subscriptionTier: 'TEAM', stripeSubscriptionId: 'sub_team', subscriptionStatus: 'active',
       } as any);
+    });
+
+    it('should invite a user', async () => {
+      prismaMock.organization.findUnique.mockResolvedValue(team as any);
 
       prismaMock.user.findFirst.mockResolvedValue(null);
 
@@ -314,14 +319,84 @@ describe('Organizations Routes', () => {
 
       expect(res.status).toBe(201);
       expect(prismaMock.organizationInvite.create).toHaveBeenCalled();
+      expect(prismaMock.$queryRaw.mock.invocationCallOrder[0])
+        .toBeLessThan(prismaMock.organization.findUnique.mock.invocationCallOrder[1]);
+    });
+
+    it('allows a trialing linked Team subscription', async () => {
+      prismaMock.organization.findUnique.mockResolvedValue(team as any);
+      prismaMock.user.findUnique.mockResolvedValue({
+        subscriptionTier: 'TEAM', stripeSubscriptionId: 'sub_team', subscriptionStatus: 'trialing',
+      } as any);
+      prismaMock.organizationInvite.create.mockResolvedValue({ id: 'invite-1' } as any);
+
+      const response = await app.request('/org-1/invite', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'invitee@example.com' }),
+      });
+
+      expect(response.status).toBe(201);
+    });
+
+    it.each(['canceled', 'past_due'])('blocks invite creation after a %s subscription', async status => {
+      prismaMock.organization.findUnique.mockResolvedValue(team as any);
+      prismaMock.user.findUnique.mockResolvedValue({
+        subscriptionTier: 'TEAM', stripeSubscriptionId: 'sub_team', subscriptionStatus: status,
+      } as any);
+
+      const response = await app.request('/org-1/invite', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'invitee@example.com' }),
+      });
+
+      expect(response.status).toBe(403);
+      expect(prismaMock.organizationInvite.create).not.toHaveBeenCalled();
+    });
+
+    it('uses the team subscription after locking, not a stale earlier copy', async () => {
+      prismaMock.organization.findUnique.mockResolvedValueOnce(team as any)
+        .mockResolvedValueOnce({ ...team, subscriptionId: null } as any);
+
+      const response = await app.request('/org-1/invite', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'invitee@example.com' }),
+      });
+
+      expect(response.status).toBe(403);
+      expect(prismaMock.organizationInvite.create).not.toHaveBeenCalled();
+    });
+
+    it('keeps database failures distinct from duplicate invitations', async () => {
+      prismaMock.organization.findUnique.mockResolvedValue(team as any);
+      prismaMock.organizationInvite.create.mockRejectedValue(new Error('database unavailable'));
+      const errorOutput = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+      const response = await app.request('/org-1/invite', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'invitee@example.com' }),
+      });
+
+      errorOutput.mockRestore();
+      expect(response.status).toBe(500);
+    });
+
+    it('reports a duplicate invitation on Prisma unique conflict', async () => {
+      prismaMock.organization.findUnique.mockResolvedValue(team as any);
+      prismaMock.organizationInvite.create.mockRejectedValue(new Prisma.PrismaClientKnownRequestError(
+        'Unique constraint failed', { code: 'P2002', clientVersion: '5.10.0' },
+      ));
+
+      const response = await app.request('/org-1/invite', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'invitee@example.com' }),
+      });
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ error: 'Invite already exists for this email' });
     });
 
     it('should fail if user is already a member', async () => {
-      prismaMock.organization.findUnique.mockResolvedValue({
-        id: 'org-1',
-        ownerId: mockUser.id,
-        members: [{ role: 'OWNER' }],
-      } as any);
+      prismaMock.organization.findUnique.mockResolvedValue(team as any);
 
       prismaMock.user.findFirst.mockResolvedValue({ id: 'existing-user' } as any);
       prismaMock.organizationMember.findFirst.mockResolvedValue({ id: 'member-1' } as any);
@@ -403,17 +478,27 @@ describe('Organizations Routes', () => {
   });
 
   describe('POST /invites/:id/accept', () => {
+    beforeEach(() => {
+      prismaMock.$transaction.mockImplementation(async (callback: any) => callback(prismaMock));
+      prismaMock.user.findUnique.mockResolvedValue({
+        subscriptionTier: 'TEAM', stripeSubscriptionId: 'sub_team', subscriptionStatus: 'active',
+      } as any);
+      prismaMock.organization.findUnique.mockResolvedValue({
+        ownerId: 'payer-1', subscriptionId: 'sub_team',
+      } as any);
+    });
+
     const invite = (role: 'OWNER' | 'ADMIN' | 'MEMBER' = 'MEMBER') => ({
       id: 'invite-1',
       organizationId: 'org-1',
       email: mockUser.email,
       role,
       expiresAt: new Date(Date.now() + 100000),
+      organization: { ownerId: 'payer-1', subscriptionId: 'sub_team' },
     });
 
     it('accepts a member invite with a single insert and consumes it atomically', async () => {
       prismaMock.organizationInvite.findUnique.mockResolvedValue(invite() as any);
-      prismaMock.$transaction.mockImplementation(async (callback: any) => callback(prismaMock));
       prismaMock.organizationMember.createMany.mockResolvedValue({ count: 1 });
       prismaMock.organizationInvite.delete.mockResolvedValue(invite() as any);
 
@@ -426,6 +511,45 @@ describe('Organizations Routes', () => {
       });
       expect(prismaMock.organizationInvite.delete).toHaveBeenCalledWith({ where: { id: 'invite-1' } });
       expect(prismaMock.organizationMember.upsert).not.toHaveBeenCalled();
+      expect(prismaMock.$queryRaw.mock.invocationCallOrder[0])
+        .toBeLessThan(prismaMock.organization.findUnique.mock.invocationCallOrder[0]);
+    });
+
+    it('accepts an invite while the linked Team subscription is trialing', async () => {
+      prismaMock.organizationInvite.findUnique.mockResolvedValue(invite() as any);
+      prismaMock.user.findUnique.mockResolvedValue({
+        subscriptionTier: 'TEAM', stripeSubscriptionId: 'sub_team', subscriptionStatus: 'trialing',
+      } as any);
+      prismaMock.organizationMember.createMany.mockResolvedValue({ count: 1 });
+      prismaMock.organizationInvite.delete.mockResolvedValue(invite() as any);
+
+      const response = await app.request('/invites/invite-1/accept', { method: 'POST' });
+
+      expect(response.status).toBe(200);
+      expect(prismaMock.organizationMember.createMany).toHaveBeenCalled();
+    });
+
+    it.each(['canceled', 'past_due'])('blocks joining after a %s subscription', async status => {
+      prismaMock.organizationInvite.findUnique.mockResolvedValue(invite() as any);
+      prismaMock.user.findUnique.mockResolvedValue({
+        subscriptionTier: 'TEAM', stripeSubscriptionId: 'sub_team', subscriptionStatus: status,
+      } as any);
+
+      const response = await app.request('/invites/invite-1/accept', { method: 'POST' });
+
+      expect(response.status).toBe(403);
+      expect(prismaMock.organizationMember.createMany).not.toHaveBeenCalled();
+      expect(prismaMock.organizationInvite.delete).not.toHaveBeenCalled();
+    });
+
+    it('uses the organization subscription after locking the owner', async () => {
+      prismaMock.organizationInvite.findUnique.mockResolvedValue(invite() as any);
+      prismaMock.organization.findUnique.mockResolvedValue({ ownerId: 'payer-1', subscriptionId: null } as any);
+
+      const response = await app.request('/invites/invite-1/accept', { method: 'POST' });
+
+      expect(response.status).toBe(403);
+      expect(prismaMock.organizationMember.createMany).not.toHaveBeenCalled();
     });
 
     it('rejects a legacy OWNER invite without changing membership', async () => {
@@ -441,7 +565,6 @@ describe('Organizations Routes', () => {
 
     it('does not overwrite an existing member role or consume the invite', async () => {
       prismaMock.organizationInvite.findUnique.mockResolvedValue(invite('ADMIN') as any);
-      prismaMock.$transaction.mockImplementation(async (callback: any) => callback(prismaMock));
       prismaMock.organizationMember.createMany.mockResolvedValue({ count: 0 });
 
       const res = await app.request('/invites/invite-1/accept', { method: 'POST' });

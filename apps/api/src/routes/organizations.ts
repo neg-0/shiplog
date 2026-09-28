@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/db.js';
 import { requireAuth } from '../lib/auth.js';
 import { validate } from '../lib/validation.js';
@@ -15,6 +16,13 @@ organizations.use('*', requireAuth);
 organizations.use('*', apiLimiter);
 
 const isAdminRole = (role?: string | null) => role === 'OWNER' || role === 'ADMIN';
+type TeamOwner = { subscriptionTier: string; stripeSubscriptionId: string | null; subscriptionStatus: string | null };
+const hasLinkedTeamSubscription = (
+  owner: TeamOwner | null,
+  subscriptionId?: string | null,
+): owner is TeamOwner & { stripeSubscriptionId: string } => owner?.subscriptionTier === 'TEAM' && Boolean(owner.stripeSubscriptionId) &&
+  ['active', 'trialing'].includes(owner.subscriptionStatus ?? '') &&
+  (subscriptionId === undefined || subscriptionId === owner.stripeSubscriptionId);
 
 const createOrgSchema = z.object({
   name: z.string().min(1),
@@ -53,8 +61,7 @@ organizations.post('/', validate(createOrgSchema), async (c) => {
       where: { id: user.id },
       select: { subscriptionTier: true, stripeSubscriptionId: true, subscriptionStatus: true },
     });
-    if (owner?.subscriptionTier !== 'TEAM' || !owner.stripeSubscriptionId ||
-      !['active', 'trialing'].includes(owner.subscriptionStatus ?? '')) return null;
+    if (!hasLinkedTeamSubscription(owner)) return null;
 
     const created = await tx.organization.create({
       data: {
@@ -316,19 +323,36 @@ organizations.post('/:id/invite', validate(inviteSchema), async (c) => {
   const expiresAt = body.expiresAt ? new Date(body.expiresAt) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
   try {
-    const invite = await prisma.organizationInvite.create({
-      data: {
-        organizationId: id,
-        email: body.email,
-        role: body.role ?? 'MEMBER',
-        invitedById: user.id,
-        expiresAt,
-      },
+    const invite = await prisma.$transaction(async (tx) => {
+      // A webhook changing the payer's subscription holds the same user row.
+      await tx.$queryRaw`SELECT id FROM users WHERE id = ${org.ownerId} FOR UPDATE`;
+      const currentOrg = await tx.organization.findUnique({
+        where: { id },
+        select: { ownerId: true, subscriptionId: true },
+      });
+      const owner = await tx.user.findUnique({
+        where: { id: org.ownerId },
+        select: { subscriptionTier: true, stripeSubscriptionId: true, subscriptionStatus: true },
+      });
+      if (currentOrg?.ownerId !== org.ownerId || !hasLinkedTeamSubscription(owner, currentOrg.subscriptionId)) return null;
+      return tx.organizationInvite.create({
+        data: {
+          organizationId: id,
+          email: body.email,
+          role: body.role ?? 'MEMBER',
+          invitedById: user.id,
+          expiresAt,
+        },
+      });
     });
 
+    if (!invite) return c.json({ error: 'Invitations require an active Team subscription.' }, 403);
     return c.json(invite, 201);
   } catch (error) {
-    return c.json({ error: 'Invite already exists for this email' }, 400);
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      return c.json({ error: 'Invite already exists for this email' }, 400);
+    }
+    throw error;
   }
 });
 
@@ -459,18 +483,30 @@ organizations.post('/invites/:id/accept', async (c) => {
   }
 
   const accepted = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM users WHERE id = ${invite.organization.ownerId} FOR UPDATE`;
+    const currentOrg = await tx.organization.findUnique({
+      where: { id: invite.organizationId },
+      select: { ownerId: true, subscriptionId: true },
+    });
+    const owner = await tx.user.findUnique({
+      where: { id: invite.organization.ownerId },
+      select: { subscriptionTier: true, stripeSubscriptionId: true, subscriptionStatus: true },
+    });
+    if (currentOrg?.ownerId !== invite.organization.ownerId || !hasLinkedTeamSubscription(owner, currentOrg.subscriptionId)) return 'inactive';
+
     // The unique organization/user constraint also handles a concurrent join.
     // An existing member keeps their current role and the invite remains unused.
     const created = await tx.organizationMember.createMany({
       data: { organizationId: invite.organizationId, userId: user.id, role: invite.role },
       skipDuplicates: true,
     });
-    if (created.count !== 1) return false;
+    if (created.count !== 1) return 'member';
     await tx.organizationInvite.delete({ where: { id: inviteId } });
-    return true;
+    return 'accepted';
   });
 
-  if (!accepted) return c.json({ error: 'User is already a member' }, 409);
+  if (accepted === 'inactive') return c.json({ error: 'Joining requires an active Team subscription.' }, 403);
+  if (accepted === 'member') return c.json({ error: 'User is already a member' }, 409);
 
   return c.json({ accepted: true, organizationId: invite.organizationId });
 });
