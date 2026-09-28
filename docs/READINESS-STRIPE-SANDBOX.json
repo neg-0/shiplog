@@ -1,0 +1,185 @@
+{
+  "sourceRevision": "f73310e647db1a4c752a6c541668bcfc0861db5a with billing ordering working-tree fix",
+  "billingSourceSha256": "c39eb6c467cf1e1d03af86039a5b6a1525a8868299b81ba73aedf25b675fd1e4",
+  "startedAt": "2026-09-28T04:57:23.138Z",
+  "isolation": {
+    "mode": "Stripe test",
+    "databaseHost": "127.0.0.1",
+    "database": "shiplog_billing_sandbox",
+    "providerPayload": "synthetic only"
+  },
+  "webhookEvidence": "Authentic Stripe sandbox Event objects posted to actual local route with SDK-generated HMAC using configured ignored webhook secret. Does not prove hosted endpoint/CLI delivery or that this secret matches a registered endpoint.",
+  "checks": [
+    {
+      "name": "Pro price test/active/USD/monthly/expected amount",
+      "passed": true
+    },
+    {
+      "name": "Team price test/active/USD/monthly/expected amount",
+      "passed": true
+    },
+    {
+      "name": "actual checkout route accepts mixed-case Pro",
+      "passed": true
+    },
+    {
+      "name": "created customer is sandbox",
+      "passed": true
+    },
+    {
+      "name": "one actual open test Checkout session",
+      "passed": true
+    },
+    {
+      "name": "Checkout has configured Pro price and local return URL",
+      "passed": true
+    },
+    {
+      "name": "duplicate checkout resumes same session",
+      "passed": true
+    },
+    {
+      "name": "different-plan concurrent checkout refused",
+      "passed": true,
+      "httpStatus": 409
+    },
+    {
+      "name": "account deletion blocked by actual open Stripe checkout",
+      "passed": true,
+      "httpStatus": 409
+    },
+    {
+      "name": "actual Pro sandbox trial lasts14days without a payment method",
+      "passed": true
+    },
+    {
+      "name": "provider event is sandbox",
+      "passed": true
+    },
+    {
+      "name": "invalid signature rejected before local entitlement change",
+      "passed": true
+    },
+    {
+      "name": "signed customer.subscription.created handled",
+      "passed": true,
+      "httpStatus": 200,
+      "eventCreated": 1790571446
+    },
+    {
+      "name": "signed sandbox trial event grants Pro and persists trial end",
+      "passed": true
+    },
+    {
+      "name": "trial blocks a second subscription checkout",
+      "passed": true,
+      "httpStatus": 400
+    },
+    {
+      "name": "trial blocks account deletion",
+      "passed": true
+    },
+    {
+      "name": "actual sandbox billing portal session created",
+      "passed": true
+    },
+    {
+      "name": "provider subscription upgraded to Team while trial remains",
+      "passed": true
+    },
+    {
+      "name": "provider event is sandbox",
+      "passed": true
+    },
+    {
+      "name": "signed customer.subscription.updated handled",
+      "passed": true,
+      "httpStatus": 200,
+      "eventCreated": 1790571448
+    },
+    {
+      "name": "signed Team upgrade grants TEAM and syncs organization",
+      "passed": true,
+      "trialEventCreated": 1790571446,
+      "upgradeEventCreated": 1790571448
+    },
+    {
+      "name": "signed customer.subscription.updated handled",
+      "passed": true,
+      "httpStatus": 200,
+      "eventCreated": 1790571448
+    },
+    {
+      "name": "signed customer.subscription.created handled",
+      "passed": true,
+      "httpStatus": 200,
+      "eventCreated": 1790571446
+    },
+    {
+      "name": "duplicate/older provider events do not regress entitlement timestamp",
+      "passed": true
+    },
+    {
+      "name": "provider event is sandbox",
+      "passed": true
+    },
+    {
+      "name": "signed customer.subscription.updated handled",
+      "passed": true,
+      "httpStatus": 200,
+      "eventCreated": 1790571450
+    },
+    {
+      "name": "scheduled cancellation retains TEAM until cancellation",
+      "passed": true
+    },
+    {
+      "name": "provider event is sandbox",
+      "passed": true
+    },
+    {
+      "name": "signed customer.subscription.deleted handled",
+      "passed": true,
+      "httpStatus": 200,
+      "eventCreated": 1790571452
+    },
+    {
+      "name": "signed cancellation downgrades to FREE and clears organization subscription",
+      "passed": true
+    },
+    {
+      "name": "all sandbox invoices have zero amount paid",
+      "passed": true,
+      "invoiceCount": 1
+    },
+    {
+      "name": "new checkout allowed after terminal canceled subscription",
+      "passed": true,
+      "httpStatus": 200
+    },
+    {
+      "name": "account deletion succeeds after cancellation and checkout expiration",
+      "passed": true
+    }
+  ],
+  "cleanup": {
+    "stripe": {
+      "customersDeleted": 1,
+      "customerDeletionReadback": true,
+      "subscriptionsTerminated": 1,
+      "checkoutSessionsExpired": 2
+    },
+    "local": {
+      "remainingUsers": 0,
+      "remainingOrganizations": 0
+    }
+  },
+  "limitations": [
+    "No hosted Stripe Checkout form/payment completion was exercised. Trial was created via Stripe test API after checking and expiring actual Checkout.",
+    "No payment failure/dunning lifecycle was exercised.",
+    "Locally signed sandbox events validate actual route signature handling, Stripe retrieval, and Postgres updates; Stripe-to-deployed-endpoint delivery remains unverified.",
+    "Stripe retains immutable test events/invoices and expired sessions; cleanup removes customers and active billable test state."
+  ],
+  "finishedAt": "2026-09-28T04:57:35.159Z",
+  "passed": true
+}

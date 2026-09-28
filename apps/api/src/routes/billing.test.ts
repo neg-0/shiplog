@@ -90,6 +90,7 @@ describe('Billing Route', () => {
     mockPrisma.user.updateMany.mockResolvedValue({ count: 1 });
     mockPrisma.user.findMany.mockResolvedValue([{ id: 'user_123' }]);
     mockPrisma.organization.findMany.mockResolvedValue([]);
+    mockPrisma.user.findUnique.mockResolvedValue({ stripeCustomerId: 'cus_123', stripeSubscriptionId: null, subscriptionStatus: null, stripeLastEventTimestamp: null });
   });
 
 
@@ -165,10 +166,6 @@ describe('Billing Route', () => {
         where: {
           id: 'user_123',
           stripeCustomerId: 'cus_123',
-          OR: [
-            { stripeLastEventTimestamp: { lt: 1000 } },
-            { stripeLastEventTimestamp: null },
-          ],
         },
         data: expect.objectContaining({
           subscriptionTier: 'TEAM',
@@ -211,10 +208,6 @@ describe('Billing Route', () => {
         where: {
           id: 'user_123',
           stripeCustomerId: 'cus_123',
-          OR: [
-            { stripeLastEventTimestamp: { lt: 1000 } },
-            { stripeLastEventTimestamp: null },
-          ],
         },
         data: expect.objectContaining({
           subscriptionTier: 'TEAM',
@@ -262,10 +255,10 @@ describe('Billing Route', () => {
       });
     });
 
-    it('does not change an organization when a stale event did not update its owner', async () => {
+    it('does not change an organization when its owner was not updated', async () => {
       mockStripe.webhooks.constructEvent.mockReturnValue({
         type: 'customer.subscription.updated', created: 1000,
-        data: { object: { id: 'sub_123' } },
+        data: { object: { id: 'sub_123', customer: 'cus_123' } },
       });
       mockStripe.subscriptions.retrieve.mockResolvedValue({
         id: 'sub_123', customer: 'cus_123', status: 'canceled',
@@ -284,7 +277,7 @@ describe('Billing Route', () => {
     it('returns a retryable error instead of downgrading an unrecognized paid price to FREE', async () => {
       mockStripe.webhooks.constructEvent.mockReturnValue({
         type: 'customer.subscription.updated', created: 1000,
-        data: { object: { id: 'sub_123' } },
+        data: { object: { id: 'sub_123', customer: 'cus_123' } },
       });
       mockStripe.subscriptions.retrieve.mockResolvedValue({
         id: 'sub_123', customer: 'cus_123', status: 'active',
@@ -303,7 +296,7 @@ describe('Billing Route', () => {
     it('returns a retryable error when organization entitlement synchronization fails', async () => {
       mockStripe.webhooks.constructEvent.mockReturnValue({
         type: 'customer.subscription.updated', created: 1000,
-        data: { object: { id: 'sub_123' } },
+        data: { object: { id: 'sub_123', customer: 'cus_123' } },
       });
       mockStripe.subscriptions.retrieve.mockResolvedValue({
         id: 'sub_123', customer: 'cus_123', status: 'active',
@@ -337,7 +330,7 @@ describe('Billing Route', () => {
 
       mockStripe.webhooks.constructEvent.mockReturnValue(event);
       mockStripe.subscriptions.retrieve.mockResolvedValue({
-        id: 'sub_123',
+        id: 'sub_123', customer: 'cus_123',
         status: 'active',
         items: { data: [{ price: { id: 'price_pro_123' } }] },
       });
@@ -355,10 +348,6 @@ describe('Billing Route', () => {
       expect(mockPrisma.user.updateMany).toHaveBeenCalledWith({
         where: {
           id: 'user_123',
-          OR: [
-            { stripeLastEventTimestamp: { lt: 1000 } },
-            { stripeLastEventTimestamp: null },
-          ],
         },
         data: expect.objectContaining({
           stripeLastEventTimestamp: 1000,
@@ -366,6 +355,165 @@ describe('Billing Route', () => {
           subscriptionTier: 'PRO',
         }),
       });
+    });
+  });
+
+  describe('Webhook ordering at Stripe second precision', () => {
+    let state: any;
+    let organizationSubscription: string | null;
+    let providerSubscriptions: Record<string, any>;
+    const matches = (where: any): boolean => Object.entries(where).every(([key, value]: [string, any]) => {
+      if (key === 'AND') return (Array.isArray(value) ? value : [value]).every(matches);
+      if (key === 'OR') return value.some(matches);
+      if (value && typeof value === 'object') {
+        if ('lt' in value) return state[key] !== null && state[key] < value.lt;
+        if ('lte' in value) return state[key] !== null && state[key] <= value.lte;
+        if ('in' in value) return value.in.includes(state[key]);
+        if ('equals' in value) return state[key] === value.equals;
+      }
+      return state[key] === value;
+    });
+    const send = (subscriptionId = 'sub_current', created = 1000) => {
+      mockStripe.webhooks.constructEvent.mockReturnValue({
+        type: 'customer.subscription.updated', created,
+        data: { object: { id: subscriptionId, customer: 'cus_123' } },
+      });
+      return billingRoute.request('/webhook', { method: 'POST', headers: { 'stripe-signature': 'sig' }, body: '{}' });
+    };
+    beforeEach(() => {
+      state = {
+        id: 'user_123', stripeCustomerId: 'cus_123', stripeSubscriptionId: 'sub_current',
+        subscriptionTier: 'PRO', subscriptionStatus: 'active', stripeLastEventTimestamp: 1000,
+      };
+      organizationSubscription = null;
+      providerSubscriptions = {
+        sub_current: { id: 'sub_current', customer: 'cus_123', status: 'active', items: { data: [{ price: { id: 'price_team_123' } }] } },
+        sub_old: { id: 'sub_old', customer: 'cus_123', status: 'canceled', items: { data: [{ price: { id: 'price_pro_123' } }] } },
+      };
+      mockPrisma.user.findUnique.mockImplementation(async () => ({ ...state }));
+      mockStripe.subscriptions.retrieve.mockImplementation(async (id: string) => structuredClone(providerSubscriptions[id]));
+      mockPrisma.user.updateMany.mockImplementation(async ({ where, data }: any) => {
+        if (!matches(where)) return { count: 0 };
+        state = { ...state, ...data };
+        return { count: 1 };
+      });
+      mockPrisma.organization.updateMany.mockImplementation(async ({ data }: any) => {
+        organizationSubscription = data.subscriptionId;
+        return { count: 1 };
+      });
+    });
+
+    it('applies a same-second Team upgrade to the current subscription and organization', async () => {
+      expect((await send()).status).toBe(200);
+      expect(state).toMatchObject({ subscriptionTier: 'TEAM', stripeSubscriptionId: 'sub_current', stripeLastEventTimestamp: 1000 });
+      expect(organizationSubscription).toBe('sub_current');
+    });
+
+    it('duplicate and older same-subscription events do not regress current entitlements', async () => {
+      expect((await send('sub_current', 1001)).status).toBe(200);
+      expect((await send('sub_current', 1001)).status).toBe(200);
+      expect((await send('sub_current', 999)).status).toBe(200);
+      expect(state).toMatchObject({ subscriptionTier: 'TEAM', stripeLastEventTimestamp: 1001 });
+      expect(organizationSubscription).toBe('sub_current');
+    });
+
+    it.each([1000, 1001])('cannot replace an active subscription with a different canceled subscription at timestamp %s', async timestamp => {
+      state.subscriptionTier = 'TEAM';
+      organizationSubscription = 'sub_current';
+      expect((await send('sub_old', timestamp)).status).toBe(200);
+      expect(state).toMatchObject({ subscriptionTier: 'TEAM', stripeSubscriptionId: 'sub_current', stripeLastEventTimestamp: 1000 });
+      expect(organizationSubscription).toBe('sub_current');
+    });
+
+    it('does not admit an unrelated active subscription in the same second', async () => {
+      providerSubscriptions.sub_old.status = 'active';
+      expect((await send('sub_old')).status).toBe(200);
+      expect(state.stripeSubscriptionId).toBe('sub_current');
+    });
+
+    it.each(['canceled', 'incomplete_expired', null])('admits a new active subscription in the same second after terminal/empty state (%s)', async status => {
+      state.subscriptionStatus = status;
+      state.stripeSubscriptionId = status === null ? null : 'sub_old';
+      state.subscriptionTier = 'FREE';
+      expect((await send()).status).toBe(200);
+      expect(state).toMatchObject({ subscriptionTier: 'TEAM', stripeSubscriptionId: 'sub_current', stripeLastEventTimestamp: 1000 });
+    });
+
+    it('does not let a different terminal subscription replace the recorded terminal identity', async () => {
+      state.subscriptionStatus = 'canceled';
+      state.subscriptionTier = 'FREE';
+      expect((await send('sub_old', 1001)).status).toBe(200);
+      expect(state.stripeSubscriptionId).toBe('sub_current');
+    });
+
+    it('reconciles latest provider state even when an older event is delivered', async () => {
+      expect((await send('sub_current', 999)).status).toBe(200);
+      expect(state).toMatchObject({ subscriptionTier: 'TEAM', stripeLastEventTimestamp: 1000 });
+    });
+
+    it('accepts a replacement when the previous cancellation has not reached local state', async () => {
+      state.stripeSubscriptionId = 'sub_old';
+      expect((await send()).status).toBe(200);
+      expect(mockStripe.subscriptions.retrieve).toHaveBeenCalledWith('sub_old', {}, { timeout: 10_000, maxNetworkRetries: 0 });
+      expect(state).toMatchObject({ subscriptionTier: 'TEAM', stripeSubscriptionId: 'sub_current' });
+    });
+
+    it('fails closed if the previous subscription cannot be verified', async () => {
+      state.stripeSubscriptionId = 'sub_old';
+      mockStripe.subscriptions.retrieve.mockImplementation(async (id: string) => {
+        if (id === 'sub_old') throw new Error('Stripe temporarily unavailable');
+        return providerSubscriptions[id];
+      });
+      expect((await send()).status).toBe(500);
+      expect(state).toMatchObject({ subscriptionTier: 'PRO', stripeSubscriptionId: 'sub_old' });
+      expect(mockPrisma.user.updateMany).not.toHaveBeenCalled();
+      expect(mockPrisma.organization.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('rejects provider identity mismatch without changing billing state', async () => {
+      providerSubscriptions.sub_current.customer = 'cus_someone_else';
+      expect((await send()).status).toBe(500);
+      expect(mockPrisma.user.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('serializes fresh provider reads so an earlier snapshot cannot overwrite a same-second upgrade', async () => {
+      state.stripeLastEventTimestamp = 999;
+      let unlock!: () => void;
+      const firstFetch = new Promise<void>(resolve => { unlock = resolve; });
+      let announce!: () => void;
+      const started = new Promise<void>(resolve => { announce = resolve; });
+      mockStripe.subscriptions.retrieve.mockImplementationOnce(async () => {
+        announce(); await firstFetch;
+        return { ...providerSubscriptions.sub_current, items: { data: [{ price: { id: 'price_pro_123' } }] } };
+      });
+      let previous = Promise.resolve();
+      mockPrisma.$transaction.mockImplementation(async (callback: any) => {
+        const wait = previous;
+        let release!: () => void;
+        previous = new Promise<void>(resolve => { release = resolve; });
+        await wait;
+        try { return await callback(mockPrisma); } finally { release(); }
+      });
+      const first = send();
+      await started;
+      const second = send();
+      await new Promise(resolve => setImmediate(resolve));
+      const fetchesBeforeUnlock = mockStripe.subscriptions.retrieve.mock.calls.length;
+      unlock();
+      expect((await first).status).toBe(200);
+      expect((await second).status).toBe(200);
+      expect(fetchesBeforeUnlock).toBe(1);
+      expect(state.subscriptionTier).toBe('TEAM');
+      expect(mockPrisma.$queryRaw).toHaveBeenCalledTimes(2);
+      expect(mockPrisma.$transaction).toHaveBeenCalledWith(expect.any(Function), { maxWait: 10_000, timeout: 30_000 });
+    });
+
+    it('returns a retryable failure without advancing state when provider retrieval fails', async () => {
+      mockStripe.subscriptions.retrieve.mockRejectedValueOnce(new Error('Stripe temporarily unavailable'));
+      expect((await send()).status).toBe(500);
+      expect(state).toMatchObject({ subscriptionTier: 'PRO', stripeLastEventTimestamp: 1000 });
+      expect(mockPrisma.user.updateMany).not.toHaveBeenCalled();
+      expect(mockPrisma.organization.updateMany).not.toHaveBeenCalled();
     });
   });
 

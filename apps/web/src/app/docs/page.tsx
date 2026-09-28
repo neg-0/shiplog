@@ -46,7 +46,7 @@ export default function DocsPage() {
               <h3 className="font-semibold text-navy-900 mb-2">3. Publish a Release</h3>
               <p className="text-navy-600">
                 Recent releases are imported when you connect a repository. You can also publish a new release on GitHub.
-                Generate notes, review each audience, and publish when you are ready. Enable automatic generation and publishing in repository settings when you want to automate this flow.
+                Generate notes, review each audience, and publish when you are ready. Paid plans can enable automatic generation in repository settings; automatic publishing is optional.
               </p>
             </div>
           </div>
@@ -68,7 +68,7 @@ export default function DocsPage() {
                 GitHub Integration
               </h3>
               <p className="text-navy-600 text-sm">
-                Automatically triggered when you publish a release. Works with public and private repos.
+                Connect a repository and import existing releases. Paid plans can opt into automatic drafting for new GitHub releases.
               </p>
             </div>
 
@@ -88,7 +88,7 @@ export default function DocsPage() {
                 Slack & Discord
               </h3>
               <p className="text-navy-600 text-sm">
-                Set up webhooks to automatically post release notes to your team channels.
+                Paid plans can connect Slack or Discord webhooks and send reviewed release notes to those channels.
               </p>
             </div>
 

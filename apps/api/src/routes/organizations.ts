@@ -47,11 +47,14 @@ organizations.post('/', validate(createOrgSchema), async (c) => {
   }
 
   const org = await prisma.$transaction(async (tx: any) => {
+    // Serialize the entitlement check with Stripe webhook updates to this user.
+    await tx.$queryRaw`SELECT id FROM users WHERE id = ${user.id} FOR UPDATE`;
     const owner = await tx.user.findUnique({
       where: { id: user.id },
-      select: { subscriptionTier: true, stripeSubscriptionId: true },
+      select: { subscriptionTier: true, stripeSubscriptionId: true, subscriptionStatus: true },
     });
-    if (owner?.subscriptionTier !== 'TEAM') return null;
+    if (owner?.subscriptionTier !== 'TEAM' || !owner.stripeSubscriptionId ||
+      !['active', 'trialing'].includes(owner.subscriptionStatus ?? '')) return null;
 
     const created = await tx.organization.create({
       data: {
@@ -60,7 +63,7 @@ organizations.post('/', validate(createOrgSchema), async (c) => {
         githubOrgId: body.githubOrgId ?? null,
         githubOrgLogin: body.githubOrgLogin ?? null,
         ownerId: user.id,
-        subscriptionId: owner?.subscriptionTier === 'TEAM' ? owner.stripeSubscriptionId : null,
+        subscriptionId: owner.stripeSubscriptionId,
       },
     });
 
@@ -76,7 +79,7 @@ organizations.post('/', validate(createOrgSchema), async (c) => {
   });
 
   if (!org) {
-    return c.json({ error: 'Organization creation requires a Team plan.' }, 403);
+    return c.json({ error: 'Organization creation requires an active Team subscription.' }, 403);
   }
 
   return c.json(org, 201);
@@ -260,7 +263,7 @@ organizations.patch('/:id', validate(updateOrgSchema), async (c) => {
 
 const inviteSchema = z.object({
   email: z.string().email(),
-  role: z.enum(['OWNER', 'ADMIN', 'MEMBER']).optional(),
+  role: z.enum(['ADMIN', 'MEMBER']).optional(),
   expiresAt: z.string().datetime().optional(),
 });
 
@@ -269,7 +272,7 @@ const inviteSchema = z.object({
  * @description Invite a user to the organization by email.
  * @param {string} id - Organization UUID.
  * @body {string} email - Email address to invite.
- * @body {string} [role=MEMBER] - Role to assign (OWNER, ADMIN, MEMBER).
+ * @body {string} [role=MEMBER] - Role to assign (ADMIN or MEMBER).
  * @returns {object} Created invite.
  * @throws 403 if user is not an owner/admin.
  * @throws 400 if user is already a member.
@@ -292,11 +295,6 @@ organizations.post('/:id/invite', validate(inviteSchema), async (c) => {
   const memberRole = org.members[0]?.role ?? null;
   if (org.ownerId !== user.id && !isAdminRole(memberRole)) {
     return c.json({ error: 'Not authorized' }, 403);
-  }
-
-  // Prevent role escalation: ADMINs cannot grant OWNER role
-  if (memberRole === 'ADMIN' && body.role === 'OWNER') {
-    return c.json({ error: 'Admins cannot grant owner role' }, 403);
   }
 
   const existingUser = await prisma.user.findFirst({
@@ -455,26 +453,24 @@ organizations.post('/invites/:id/accept', async (c) => {
     return c.json({ error: 'Invite email does not match current user' }, 403);
   }
 
-  await prisma.organizationMember.upsert({
-    where: {
-      organizationId_userId: {
-        organizationId: invite.organizationId,
-        userId: user.id,
-      },
-    },
-    create: {
-      organizationId: invite.organizationId,
-      userId: user.id,
-      role: invite.role,
-    },
-    update: {
-      role: invite.role,
-    },
+  // Old invitations may still carry OWNER. Ownership must never change via an invite.
+  if (invite.role === 'OWNER') {
+    return c.json({ error: 'Owner invitations are not allowed' }, 403);
+  }
+
+  const accepted = await prisma.$transaction(async (tx) => {
+    // The unique organization/user constraint also handles a concurrent join.
+    // An existing member keeps their current role and the invite remains unused.
+    const created = await tx.organizationMember.createMany({
+      data: { organizationId: invite.organizationId, userId: user.id, role: invite.role },
+      skipDuplicates: true,
+    });
+    if (created.count !== 1) return false;
+    await tx.organizationInvite.delete({ where: { id: inviteId } });
+    return true;
   });
 
-  await prisma.organizationInvite.delete({
-    where: { id: inviteId },
-  });
+  if (!accepted) return c.json({ error: 'User is already a member' }, 409);
 
   return c.json({ accepted: true, organizationId: invite.organizationId });
 });

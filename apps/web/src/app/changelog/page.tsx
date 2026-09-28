@@ -11,9 +11,9 @@ const releases = [
     version: 'v1.1.0',
     date: 'February 2026',
     changes: [
-      { type: 'feature', text: 'Added Organizations for team collaboration' },
-      { type: 'feature', text: 'Admin dashboard for platform management' },
-      { type: 'feature', text: 'Public changelog pages with custom branding (Pro)' },
+      { type: 'feature', text: 'Added organization records and role-aware repository access' },
+      { type: 'feature', text: 'Admin dashboard with account and operational views' },
+      { type: 'feature', text: 'Public hosted changelog pages' },
       { type: 'feature', text: 'Activity feed showing recent releases' },
       { type: 'improvement', text: 'Improved markdown rendering in release notes' },
       { type: 'improvement', text: 'Better mobile responsiveness across dashboard' },

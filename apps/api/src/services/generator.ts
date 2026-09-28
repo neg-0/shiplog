@@ -34,7 +34,7 @@ export interface GeneratedNotes {
   customer: string;
   developer: string;
   stakeholder: string;
-  tokensUsed: number;
+  tokensUsed: number | null;
   model: string;
 }
 
@@ -97,7 +97,7 @@ async function generateOne(args: {
     throw new Error('OpenAI returned empty content');
   }
 
-  const tokens = res.usage?.total_tokens ?? 0;
+  const tokens = res.usage?.total_tokens ?? null;
 
   return { content, tokens, model: res.model ?? args.model };
 }
@@ -132,7 +132,9 @@ export async function generateReleaseNotes(input: ReleaseInput): Promise<Generat
       customer: customer.content.trim(),
       developer: developer.content.trim(),
       stakeholder: stakeholder.content.trim(),
-      tokensUsed: customer.tokens + developer.tokens + stakeholder.tokens,
+      tokensUsed: [customer, developer, stakeholder].every(note => note.tokens !== null)
+        ? customer.tokens! + developer.tokens! + stakeholder.tokens!
+        : null,
       model,
     };
   } catch (error) {

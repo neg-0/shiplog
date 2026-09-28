@@ -5,7 +5,7 @@ import styles from './landing.module.css';
 const plans = [
   { name: 'Free', price: '$0', desc: 'For the project you’re proud of.', features: ['1 repository', 'Manual release generation', 'Hosted changelog'] },
   { name: 'Pro', price: '$29', desc: 'For a steady shipping rhythm.', features: ['5 repositories', 'Opt-in automatic release drafts', 'Slack + Discord delivery', 'Edit before you publish'] },
-  { name: 'Team', price: '$79', desc: 'For products with many repositories.', features: ['Unlimited repositories', 'Everything in Pro', 'Branding options by request'] },
+  { name: 'Team', price: '$79', desc: 'For products with many repositories.', features: ['Unlimited repositories', 'Everything in Pro'] },
 ];
 
 export default function Plans({ loggedIn = false }: { loggedIn?: boolean }) {
