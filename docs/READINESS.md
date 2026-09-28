@@ -6,7 +6,13 @@ ShipLog has a useful core: turn a GitHub release into three audience-specific dr
 
 The cleanup was merged through [PR #40](https://github.com/neg-0/shiplog/pull/40) and deployed at **`39586840803d6f9a8f759167dcbc5f702022869a`** on September 20, 2026 UTC. Independent review and all six required CI jobs passed on that exact revision before a fast-forward integration to main. Both production platforms reported terminal success for the same SHA.
 
-**Deployment verified; full production readiness remains unproven.** The released cleanup addresses reliability and presentation problems that would obstruct activation. It does not establish customer demand or prove the production OAuth → release → payment journey end to end. Hosted-only activation needs a dedicated test account/repository. Billing needs isolated Stripe test credentials and separate live-price read access. External delivery additionally needs an approved channel destination. Keep the first rollout a small, observed pilot.
+**Deployment verified; full production readiness remains unproven.** The released cleanup addresses reliability and presentation problems that would obstruct activation. It does not establish customer demand or prove the production OAuth → release → payment journey end to end. Hosted-only activation needs a dedicated test account/repository. At this review, billing still needed isolated Stripe test credentials and separate live-price read access. External delivery additionally needs an approved channel destination. Keep the first rollout a small, observed pilot.
+
+## Local sandbox follow-up — 2026-09-27
+
+The current checkout now has an isolated PostgreSQL 14 cluster listening only on `127.0.0.1:5433`. Its `shiplog_local` database has the 12 application tables. The ignored `apps/api/.env` points to it with development cookies, and the ignored `apps/web/.env.local` points the frontend at the local API. A local API request queried that database and returned the expected 404 for a nonexistent changelog. No Railway database command was run.
+
+Read-only Stripe sandbox requests confirmed the configured Pro and Team prices are active, have active products, are test-mode USD monthly prices, and match the advertised $29 and $79 amounts. This does not validate the webhook signing secret, complete a checkout, test subscription events, or verify the separate production prices. The mixed-case checkout plan validation bug found during this follow-up was fixed locally and passed the 42-test billing suite and API typecheck; this worktree change has not been deployed. The dedicated GitHub fixture, signed-in live journey, and approved channel destination remain open gates.
 
 ## Released revision and production evidence
 

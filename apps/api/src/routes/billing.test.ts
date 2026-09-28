@@ -383,6 +383,23 @@ describe('Billing Route', () => {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plan: 'pro' }),
     });
 
+    it.each([
+      ['PRO', 'price_pro_123', 'PRO'],
+      ['TeAm', 'price_team_123', 'TEAM'],
+    ])('uses the configured price for mixed-case %s', async (plan, priceId, metadataPlan) => {
+      mockPrisma.user.findUnique.mockResolvedValue({ ...newCustomer(), stripeCustomerId: 'cus_existing' });
+      mockStripe.checkout.sessions.create.mockResolvedValue({ url: 'https://checkout.stripe.test/session' });
+
+      const response = await billingRoute.request('/checkout', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plan }),
+      });
+
+      expect(response.status).toBe(200);
+      expect(mockStripe.checkout.sessions.create).toHaveBeenCalledWith(expect.objectContaining({
+        line_items: [{ price: priceId, quantity: 1 }], metadata: { userId: 'user_123', plan: metadataPlan },
+      }), expect.anything());
+    });
+
     it('creates no checkout if committing the customer identity fails', async () => {
       mockPrisma.user.findUnique.mockResolvedValue(newCustomer());
       mockStripe.customers.list.mockResolvedValue({ data: [] });

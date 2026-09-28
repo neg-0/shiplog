@@ -64,7 +64,7 @@ export const updateChannelSchema = z.object({
 
 // Billing Schemas
 export const checkoutSchema = z.object({
-  plan: z.string().refine((val) => ['pro', 'team'].includes(val.toLowerCase()), {
+  plan: z.string().toLowerCase().refine((val) => ['pro', 'team'].includes(val), {
     message: "Plan must be 'pro' or 'team'",
   }),
 });
